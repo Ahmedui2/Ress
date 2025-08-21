@@ -29,42 +29,14 @@ async function execute(message, args, { responsibilities, BOT_OWNERS, client, sa
     const path = require('path');
     const botConfigFile = path.join(__dirname, '..', 'data', 'botConfig.json');
     let currentPrefix = null;
-    let currentActivityText = null;
-    const streamUrl = 'https://www.twitch.tv/example';
 
-    // تحميل الحالة المحفوظة عند بدء التشغيل
-    function restoreBotStatus(client) {
-        try {
-            const savedStatus = loadBotStatus();
-
-            if (savedStatus.activityText && savedStatus.status !== 'offline') {
-                if (savedStatus.activityType === ActivityType.Streaming) {
-                    client.user.setActivity(savedStatus.activityText, {
-                        type: ActivityType.Streaming,
-                        url: savedStatus.streamUrl || streamUrl
-                    });
-                } else if (savedStatus.activityType === ActivityType.Watching) {
-                    client.user.setActivity(savedStatus.activityText, { type: ActivityType.Watching });
-                } else if (savedStatus.activityType === ActivityType.Listening) {
-                    client.user.setActivity(savedStatus.activityText, { type: ActivityType.Listening });
-                }
-            }
-
-            client.user.setStatus(savedStatus.status);
-            currentActivityText = savedStatus.activityText;
-
-            console.log(`✅ تم استعادة حالة البوت: ${savedStatus.status} - ${savedStatus.activityText || 'بدون نشاط'}`);
-        } catch (error) {
-            console.error('خطأ في استعادة حالة البوت:', error);
-        }
-    }
-
+    let botConfig = {};
     if (fs.existsSync(botConfigFile)) {
         try {
-            const botConfig = JSON.parse(fs.readFileSync(botConfigFile, 'utf8'));
+            botConfig = JSON.parse(fs.readFileSync(botConfigFile, 'utf8'));
             currentPrefix = botConfig.prefix || null;
         } catch (error) {
-            console.error('خطأ في قراءة البرفكس:', error);
+            console.error('خطأ في قراءة botConfig:', error);
             currentPrefix = null;
         }
     }
@@ -604,6 +576,28 @@ async function execute(message, args, { responsibilities, BOT_OWNERS, client, sa
 
                     await client.user.setPresence(presenceOptions);
 
+                    // حفظ الحالة الجديدة في الملف
+                    try {
+                        const botConfigPath = path.join(__dirname, '..', 'data', 'botConfig.json');
+                        let botConfig = {};
+                        if (fs.existsSync(botConfigPath)) {
+                            botConfig = JSON.parse(fs.readFileSync(botConfigPath, 'utf8'));
+                        }
+
+                        botConfig.status = {
+                            activityText: activityText,
+                            activityType: activityTypes[activityType],
+                            streamUrl: presenceOptions.activities[0].url // قد يكون undefined وهذا جيد
+                        };
+
+                        fs.writeFileSync(botConfigPath, JSON.stringify(botConfig, null, 2));
+                        console.log('✅ تم حفظ حالة البوت الجديدة بنجاح.');
+
+                    } catch (error) {
+                        console.error('❌ فشل في حفظ حالة البوت:', error);
+                        // لا نرسل خطأ للمستخدم هنا، لأن الحالة تغيرت بالفعل
+                    }
+
                     const activityLabels = {
                         'playing': 'يلعب',
                         'watching': 'يشاهد',
@@ -724,4 +718,38 @@ async function execute(message, args, { responsibilities, BOT_OWNERS, client, sa
     });
 }
 
-module.exports = { name, execute };
+// Function to be called from bot.js on startup
+async function restoreBotStatus(client) {
+    const fs = require('fs');
+    const path = require('path');
+    const { ActivityType } = require('discord.js');
+    const botConfigFile = path.join(__dirname, '..', 'data', 'botConfig.json');
+
+    try {
+        if (fs.existsSync(botConfigFile)) {
+            const botConfig = JSON.parse(fs.readFileSync(botConfigFile, 'utf8'));
+            const savedStatus = botConfig.status;
+
+            if (savedStatus && savedStatus.activityText) {
+                const presenceOptions = {
+                    activities: [{
+                        name: savedStatus.activityText,
+                        type: savedStatus.activityType,
+                    }],
+                    status: 'online'
+                };
+
+                if (savedStatus.activityType === ActivityType.Streaming && savedStatus.streamUrl) {
+                    presenceOptions.activities[0].url = savedStatus.streamUrl;
+                }
+
+                await client.user.setPresence(presenceOptions);
+                console.log(`✅ تم استعادة حالة البوت: ${savedStatus.activityText}`);
+            }
+        }
+    } catch (error) {
+        console.error('❌ خطأ في استعادة حالة البوت:', error);
+    }
+}
+
+module.exports = { name, execute, restoreBotStatus };

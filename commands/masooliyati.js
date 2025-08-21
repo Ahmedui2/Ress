@@ -5,7 +5,7 @@ const { isUserBlocked } = require('./block.js');
 const fs = require('fs');
 const path = require('path');
 
-const name = 'مسؤوليات';
+const name = 'مسؤولياتي';
 
 async function execute(message, args, { responsibilities, client, BOT_OWNERS, ADMIN_ROLES }) {
     // فحص البلوك أولاً
