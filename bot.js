@@ -570,33 +570,15 @@ client.on('messageCreate', async message => {
     const CURRENT_ADMIN_ROLES = getCachedAdminRoles();
     const hasAdminRole = CURRENT_ADMIN_ROLES.length > 0 && member.roles.cache.some(role => CURRENT_ADMIN_ROLES.includes(role.id));
 
-    // Commands for everyone (help, top, مسؤولياتي)
-    if (commandName === 'help' || commandName === 'top' || commandName === 'مسؤولياتي') {
-      if (commandName === 'مسؤولياتي') {
-        await showUserResponsibilities(message, message.author, responsibilities, client);
-      } else {
+    // Commands for everyone (help, top)
+    if (commandName === 'help' || commandName === 'top') {
         await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
-      }
     }
-    // Commands for admins and owners (مسؤول)
-    else if (commandName === 'مسؤول') {
-      console.log(`🔍 التحقق من صلاحيات المستخدم ${message.author.id} لأمر مسؤول:`);
-      console.log(`- isOwner: ${isOwner}`);
-      console.log(`- hasAdministrator: ${hasAdministrator}`);
-      console.log(`- hasAdminRole: ${hasAdminRole}`);
-      console.log(`- CURRENT_ADMIN_ROLES count: ${CURRENT_ADMIN_ROLES.length}`);
-      console.log(`- CURRENT_ADMIN_ROLES: ${JSON.stringify(CURRENT_ADMIN_ROLES)}`);
-      console.log(`- User roles: ${member.roles.cache.map(r => r.id).join(', ')}`);
-      console.log(`- User roles names: ${member.roles.cache.map(r => r.name).join(', ')}`);
-      
-      if (hasAdminRole || isOwner || hasAdministrator) {
-        console.log(`✅ تم منح الصلاحية للمستخدم ${message.author.id}`);
-        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
-      } else {
-        console.log(`❌ المستخدم ${message.author.id} لا يملك الصلاحيات المطلوبة لأمر مسؤول`);
-        await message.react('❌');
-        return;
-      }
+    // Commands for admins and owners (مسؤول, مسؤولياتي)
+    else if (commandName === 'مسؤول' || commandName === 'مسؤولياتي') {
+      // The permission check is now inside the command files themselves.
+      // We just need to execute the command and pass the necessary roles.
+      await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
     }
     // Commands for owners only (call, stats, setup)
     else if (commandName === 'call' || commandName === 'stats' || commandName === 'setup') {
@@ -1428,53 +1410,6 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 });
-
-// دالة لعرض مسؤوليات المستخدم
-async function showUserResponsibilities(message, targetUser, responsibilities, client) {
-    // البحث عن مسؤوليات المستخدم
-    const userResponsibilities = [];
-
-    for (const [respName, respData] of Object.entries(responsibilities)) {
-        if (respData.responsibles && respData.responsibles.includes(targetUser.id)) {
-            // حساب عدد المسؤولين الآخرين (غير المستخدم الحالي)
-            const otherResponsibles = respData.responsibles.filter(id => id !== targetUser.id);
-            userResponsibilities.push({
-                name: respName,
-                otherResponsiblesCount: otherResponsibles.length
-            });
-        }
-    }
-
-    // إنشاء الرد
-    if (userResponsibilities.length === 0) {
-        const noRespEmbed = colorManager.createEmbed()
-            .setDescription(`**${targetUser.username} ليس لديك أي مسؤوليات**`)
-            .setColor('#000000')
-            .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400390144795738175/download__2_-removebg-preview.png?ex=688d1f34&is=688bcdb4&hm=40da8d91a92062c95eb9d48f307697ec0010860aca64dd3f8c3c045f3c2aa13a&');
-
-        await message.channel.send({ embeds: [noRespEmbed] });
-    } else {
-        // إنشاء قائمة المسؤوليات
-        let responsibilitiesList = '';
-        userResponsibilities.forEach((resp, index) => {
-            responsibilitiesList += `**${index + 1}.** ${resp.name}\n${resp.otherResponsiblesCount} مسؤولون غيرك\n\n`;
-        });
-
-        const respEmbed = colorManager.createEmbed()
-            .setTitle(`مسؤولياتك`)
-            .setDescription(`**مسؤولياتك هي:**\n\n${responsibilitiesList}`)
-            .setColor('#00ff00')
-            .setThumbnail(targetUser.displayAvatarURL({ dynamic: true }))
-            .addFields([
-                { name: 'Total Res', value: `${userResponsibilities.length}`, inline: true },
-                { name: 'User', value: `<@${targetUser.id}>`, inline: true }
-            ])
-            .setFooter({ text: 'By Ahmed.' })
-            .setTimestamp();
-
-        await message.channel.send({ embeds: [respEmbed] });
-    }
-}
 
 // Helper function for safe replies مع معالجة محسنة
 async function safeReply(interaction, content, options = {}) {
