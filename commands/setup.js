@@ -415,7 +415,7 @@ async function handleImageSelection(interaction, imageUrl, responsibilities, mes
     if (!client.setupImageData) {
       client.setupImageData = new Map();
     }
-    client.setupImageData.set(message.author.id, imageUrl);
+    client.setupImageData.set(sentMessage.id, imageUrl);
 
     // Function to update menu with current responsibilities
     async function updateMenu() {
@@ -666,7 +666,7 @@ async function handleImageSelection(interaction, imageUrl, responsibilities, mes
               responsiblesList.push(`${i + 1}. ${displayName}`);
               buttons.push(
                 new ButtonBuilder()
-                  .setCustomId(`setup_contact_${selected}_${userId}`)
+                  .setCustomId(`setup_contact_${selected}_${userId}_${interaction.message.id}`)
                   .setLabel(`${i + 1}`)
                   .setStyle(ButtonStyle.Primary)
               );
@@ -675,7 +675,7 @@ async function handleImageSelection(interaction, imageUrl, responsibilities, mes
               responsiblesList.push(`${i + 1}. User ${userId}`);
               buttons.push(
                 new ButtonBuilder()
-                  .setCustomId(`setup_contact_${selected}_${userId}`)
+                  .setCustomId(`setup_contact_${selected}_${userId}_${interaction.message.id}`)
                   .setLabel(`${i + 1}`)
                   .setStyle(ButtonStyle.Primary)
               );
@@ -686,7 +686,7 @@ async function handleImageSelection(interaction, imageUrl, responsibilities, mes
         if (buttons.length > 0) {
           buttons.push(
             new ButtonBuilder()
-              .setCustomId(`setup_contact_${selected}_all`)
+              .setCustomId(`setup_contact_${selected}_all_${interaction.message.id}`)
               .setLabel('الكل')
               .setStyle(ButtonStyle.Success)
           );
@@ -754,15 +754,16 @@ async function handleImageSelection(interaction, imageUrl, responsibilities, mes
             }
 
             const parts = buttonInteraction.customId.split('_');
-            if (parts.length < 4) {
+            if (parts.length < 5) {
               console.error('خطأ في تحليل customId:', buttonInteraction.customId);
               return await safeReply(buttonInteraction, '**خطأ في معرف الزر!**');
             }
 
             const responsibilityName = parts[2];
             const target = parts[3]; // userId or 'all'
+            const setupMessageId = parts[4];
 
-            console.log(`📋 المسؤولية: ${responsibilityName}, الهدف: ${target}`);
+            console.log(`📋 المسؤولية: ${responsibilityName}, الهدف: ${target}, رسالة السيتب: ${setupMessageId}`);
 
             // Check cooldown before showing modal
             const cooldownTime = checkCooldown(buttonInteraction.user.id, responsibilityName);
@@ -772,7 +773,7 @@ async function handleImageSelection(interaction, imageUrl, responsibilities, mes
 
             // Show modal to enter reason only
             const modal = new ModalBuilder()
-              .setCustomId(`setup_reason_modal_${responsibilityName}_${target}_${Date.now()}`)
+              .setCustomId(`setup_reason_modal_${responsibilityName}_${target}_${setupMessageId}_${Date.now()}`)
               .setTitle('call reason');
 
             const reasonInput = new TextInputBuilder()

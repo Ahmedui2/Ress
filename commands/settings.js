@@ -5,7 +5,14 @@ const { isUserBlocked } = require('./block.js');
 
 const name = 'settings';
 
+const activeCommandCollectors = new Map();
+
 async function execute(message, args, { responsibilities, client, scheduleSave, BOT_OWNERS }) {
+  if (activeCommandCollectors.has(message.author.id)) {
+    const oldCollector = activeCommandCollectors.get(message.author.id);
+    oldCollector.stop('new_command');
+  }
+
   // فحص البلوك أولاً
   if (isUserBlocked(message.author.id)) {
     const blockedEmbed = colorManager.createEmbed()
@@ -83,11 +90,12 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
 
   const sentMessage = await sendSettingsMenu();
 
-  // Persistent collector that never ends
+  // Collector with a 5-minute timeout
   const filter = i => i.user.id === message.author.id;
-  const collector = message.channel.createMessageComponentCollector({ filter });
+  const collector = message.channel.createMessageComponentCollector({ filter, time: 300000 });
 
-  // Auto-refresh every 60 seconds to keep alive
+  activeCommandCollectors.set(message.author.id, collector);
+
   const refreshInterval = setInterval(async () => {
     try {
       await updateMainMenu();
@@ -95,6 +103,15 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
       console.error('خطأ في التحديث التلقائي:', error);
     }
   }, 60000);
+
+  collector.on('end', (collected, reason) => {
+    clearInterval(refreshInterval);
+    activeCommandCollectors.delete(message.author.id);
+    console.log(`Settings collector for ${message.author.id} ended. Reason: ${reason}`);
+    if (reason !== 'new_command') {
+      sentMessage.edit({ content: '**انتهت صلاحية هذه القائمة.**', components: [] }).catch(() => {});
+    }
+  });
 
   async function updateMainMenu() {
     try {
@@ -138,7 +155,6 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
         return await safeReply(interaction, '**المسؤولية غير موجودة!**');
       }
 
-      // إيقاف أي collector سابق لنفس المسؤولية
       const existingCollector = activeCollectors.get(responsibilityName);
       if (existingCollector) {
         existingCollector.stop('new_session');
@@ -163,7 +179,7 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
 
       const embed = colorManager.createEmbed()
         .setTitle(`**إدارة المسؤولين: ${responsibilityName}**`)
-        .setDescription(`**المسؤولون الحاليون:**\n${responsiblesText}\n\n**للإضافة:** منشن المستخدم أو اكتب الآي دي\n**للحذف:** اكتب رقم المسؤول من القائمة أعلاه`)
+        .setDescription(`**المسؤولون الحاليون:**\n${responsiblesText}\n\n**للإضافة:** منشن المستخدم أو اكتب الآي دي\n**للحذف:** اكتب رقم المسؤول من القائمة أعلاه\n\n**اكتب "تم" أو "done" للعودة للقائمة الرئيسية**`)
         .setFooter({ text: 'اكتب رسالة للإضافة/الحذف أو اضغط "رجوع"' });
 
       const backButton = new ButtonBuilder()
@@ -179,15 +195,12 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
         await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
       }
 
-      // Create message collector for managing responsibles
       const messageFilter = m => m.author.id === interaction.user.id && m.channel.id === message.channel.id;
       const messageCollector = message.channel.createMessageCollector({
         filter: messageFilter,
-        time: 120000, // تقليل الوقت إلى دقيقتين
-        max: 1 // السماح برسالة واحدة فقط
+        time: 300000 // 5 minutes
       });
 
-      // حفظ الـ collector في الخريطة
       activeCollectors.set(responsibilityName, messageCollector);
 
       messageCollector.on('collect', async (msg) => {
@@ -195,8 +208,14 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
           await msg.delete().catch(() => {});
 
           const content = msg.content.trim();
+          const lowerContent = content.toLowerCase();
 
-          // Check if it's a number (for removal)
+          if (lowerContent === 'تم' || lowerContent === 'done') {
+            messageCollector.stop('user_done');
+            await updateMainMenu();
+            return;
+          }
+
           if (/^\d+$/.test(content)) {
             const index = parseInt(content) - 1;
             const currentResponsibles = responsibility.responsibles || [];
@@ -204,7 +223,6 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
             if (index >= 0 && index < currentResponsibles.length) {
               const removedUserId = currentResponsibles[index];
 
-              // جلب معلومات المستخدم المحذوف قبل الحذف
               let removedMember = null;
               try {
                 removedMember = await message.guild.members.fetch(removedUserId);
@@ -215,7 +233,6 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
               responsibility.responsibles.splice(index, 1);
               await saveResponsibilities();
 
-              // إرسال رسالة للمسؤول المحذوف
               if (removedMember) {
                 try {
                   const removalEmbed = colorManager.createEmbed()
@@ -236,7 +253,6 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
 
               await safeFollowUp(interaction, `**✅ تم حذف المسؤول رقم ${content} بنجاح**`);
 
-              // تسجيل الحدث
               logEvent(client, message.guild, {
                 type: 'RESPONSIBILITY_MANAGEMENT',
                 title: 'تم إزالة مسؤول',
@@ -248,21 +264,12 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
                 ]
               });
 
-              // إيقاف الـ collector الحالي وإعادة عرض القائمة
-              messageCollector.stop('operation_completed');
-              setTimeout(() => {
-                showResponsibleManagement({ update: async (options) => sentMessage.edit(options) }, responsibilityName);
-              }, 1500);
+              await showResponsibleManagement(interaction, responsibilityName);
+
             } else {
               await safeFollowUp(interaction, '**رقم غير صحيح. يرجى اختيار رقم من القائمة.**');
-              // إعادة عرض القائمة بعد الخطأ
-              messageCollector.stop('invalid_input');
-              setTimeout(() => {
-                showResponsibleManagement({ update: async (options) => sentMessage.edit(options) }, responsibilityName);
-              }, 2000);
             }
           } else {
-            // Adding new responsible
             let userId = null;
 
             if (msg.mentions.users.size > 0) {
@@ -285,7 +292,6 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
                   responsibility.responsibles.push(userId);
                   await saveResponsibilities();
 
-                  // إرسال رسالة للمسؤول الجديد
                   try {
                     const welcomeEmbed = colorManager.createEmbed()
                       .setTitle('🎉 تم تعيينك كمسؤول!')
@@ -304,7 +310,6 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
 
                   await safeFollowUp(interaction, `**✅ تم إضافة ${member.displayName || member.user.username} كمسؤول**`);
 
-                  // تسجيل الحدث
                   logEvent(client, message.guild, {
                     type: 'RESPONSIBILITY_MANAGEMENT',
                     title: 'تم إضافة مسؤول جديد',
@@ -316,37 +321,27 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
                     ]
                   });
 
-                  // إيقاف الـ collector وإعادة عرض القائمة
-                  messageCollector.stop('operation_completed');
-                  setTimeout(() => {
-                    showResponsibleManagement({ update: async (options) => sentMessage.edit(options) }, responsibilityName);
-                  }, 1500);
+                  await showResponsibleManagement(interaction, responsibilityName);
                 }
               } catch (error) {
                 await safeFollowUp(interaction, '**لم يتم العثور على المستخدم!**');
-                messageCollector.stop('invalid_user');
-                setTimeout(() => {
-                  showResponsibleManagement({ update: async (options) => sentMessage.edit(options) }, responsibilityName);
-                }, 2000);
               }
             } else {
               await safeFollowUp(interaction, '**يرجى منشن المستخدم أو كتابة الآي دي الصحيح**');
-              messageCollector.stop('invalid_format');
-              setTimeout(() => {
-                showResponsibleManagement({ update: async (options) => sentMessage.edit(options) }, responsibilityName);
-              }, 2000);
             }
           }
         } catch (error) {
           console.error('خطأ في معالجة رسالة إدارة المسؤولين:', error);
           await safeFollowUp(interaction, '**حدث خطأ أثناء المعالجة**');
-          messageCollector.stop('error');
         }
       });
 
       messageCollector.on('end', (collected, reason) => {
         console.log(`انتهى collector إدارة المسؤولين للمسؤولية ${responsibilityName} - السبب: ${reason}`);
         activeCollectors.delete(responsibilityName);
+        if (reason !== 'user_done' && reason !== 'new_session') {
+            interaction.editReply({ content: '**انتهت مهلة هذا الإجراء.**', embeds:[], components: [] }).catch(()=>{});
+        }
       });
 
     } catch (error) {

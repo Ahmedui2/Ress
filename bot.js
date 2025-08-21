@@ -779,6 +779,15 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
+    // Handle settings modal submissions
+    if (interaction.isModalSubmit() && (interaction.customId === 'add_responsibility_modal' || interaction.customId.startsWith('edit_desc_modal_'))) {
+        const settingsCommand = client.commands.get('settings');
+        if (settingsCommand && settingsCommand.handleModal) {
+            await settingsCommand.handleModal(interaction, responsibilities, client, scheduleSave);
+        }
+        return;
+    }
+
     // Handle claim buttons - استخدام المعالج الجديد من masoul.js
     if (interaction.isButton() && interaction.customId.startsWith('claim_task_')) {
         const masoulCommand = client.commands.get('مسؤول');
@@ -1223,6 +1232,7 @@ client.on('interactionCreate', async (interaction) => {
       const customIdParts = interaction.customId.replace('setup_reason_modal_', '').split('_');
       const responsibilityName = customIdParts[0];
       const target = customIdParts[1]; // This is the target user ID from the button click
+      const setupMessageId = customIdParts[2];
       let reason = interaction.fields.getTextInputValue('reason').trim();
 
       // التعامل مع المنشن في النص
@@ -1278,8 +1288,8 @@ client.on('interactionCreate', async (interaction) => {
       // Start cooldown for user
       startCooldown(interaction.user.id, responsibilityName);
 
-      // Get stored image URL for this user
-      const storedImageUrl = client.setupImageData?.get(interaction.user.id);
+      // Get stored image URL for this setup message
+      const storedImageUrl = client.setupImageData?.get(setupMessageId);
 
       const embed = colorManager.createEmbed()
         .setTitle(`**طلب مساعدة في المسؤولية: ${responsibilityName}**`)
