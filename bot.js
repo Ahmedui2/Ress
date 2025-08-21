@@ -957,7 +957,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // Handle modal submissions for masoul - استخدام المعالج الجديد من masoul.js
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('masoul_reason_modal_')) {
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('masoul_modal_')) {
         const masoulCommand = client.commands.get('مسؤول');
         if (masoulCommand && masoulCommand.handleInteraction) {
             await masoulCommand.handleInteraction(interaction, client, responsibilities, points, scheduleSave);
