@@ -5,9 +5,9 @@ const { isUserBlocked } = require('./block.js');
 const fs = require('fs');
 const path = require('path');
 
-const name = 'مسؤوليات';
+const name = 'مسؤولياتي';
 
-async function execute(message, args, { responsibilities, client, BOT_OWNERS }) {
+async function execute(message, args, { responsibilities, client, BOT_OWNERS, ADMIN_ROLES }) {
     // فحص البلوك أولاً
     if (isUserBlocked(message.author.id)) {
         const blockedEmbed = colorManager.createEmbed()
@@ -17,25 +17,7 @@ async function execute(message, args, { responsibilities, client, BOT_OWNERS }) 
         await message.channel.send({ embeds: [blockedEmbed] });
         return;
     }
-
-    // تحميل admin roles من الملف مباشرة للتأكد من أحدث البيانات
-    function loadAdminRoles() {
-        try {
-            const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
-            if (fs.existsSync(adminRolesPath)) {
-                const data = fs.readFileSync(adminRolesPath, 'utf8');
-                const adminRoles = JSON.parse(data);
-                return Array.isArray(adminRoles) ? adminRoles : [];
-            }
-            return [];
-        } catch (error) {
-            console.error('خطأ في قراءة adminRoles:', error);
-            return [];
-        }
-    }
     
-    const CURRENT_ADMIN_ROLES = loadAdminRoles();
-
     // التحقق من وجود منشن
     let targetUser = null;
     let userId = message.author.id;
@@ -43,7 +25,7 @@ async function execute(message, args, { responsibilities, client, BOT_OWNERS }) 
     if (message.mentions.users.size > 0) {
         // التحقق من صلاحية رؤية مسؤوليات الآخرين - نفس نظام أمر مسؤول
         const member = await message.guild.members.fetch(message.author.id);
-        const hasAdminRole = member.roles.cache.some(role => CURRENT_ADMIN_ROLES.includes(role.id));
+        const hasAdminRole = ADMIN_ROLES && ADMIN_ROLES.length > 0 && member.roles.cache.some(role => ADMIN_ROLES.includes(role.id));
         const hasAdministrator = member.permissions.has('Administrator');
         const isOwner = BOT_OWNERS.includes(message.author.id) || message.guild.ownerId === message.author.id;
 
@@ -51,7 +33,7 @@ async function execute(message, args, { responsibilities, client, BOT_OWNERS }) 
         console.log(`- isOwner: ${isOwner}`);
         console.log(`- hasAdministrator: ${hasAdministrator}`);
         console.log(`- hasAdminRole: ${hasAdminRole}`);
-        console.log(`- CURRENT_ADMIN_ROLES: ${JSON.stringify(CURRENT_ADMIN_ROLES)}`);
+        console.log(`- ADMIN_ROLES: ${JSON.stringify(ADMIN_ROLES)}`);
         console.log(`- User roles: ${member.roles.cache.map(r => r.id)}`);
 
         if (!hasAdminRole && !isOwner && !hasAdministrator) {

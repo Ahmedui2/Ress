@@ -115,20 +115,6 @@ function createCallEmbed(responsibilityName, reason, userId) {
     .setTimestamp();
 }
 
-function loadAdminRolesOnce() {
-  try {
-    const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
-    if (fs.existsSync(adminRolesPath)) {
-      const data = fs.readFileSync(adminRolesPath, 'utf8');
-      const adminRoles = JSON.parse(data);
-      return Array.isArray(adminRoles) ? adminRoles : [];
-    }
-    return [];
-  } catch (error) {
-    console.error('خطأ في قراءة adminRoles:', error);
-    return [];
-  }
-}
 
 function ensureClientMaps(client) {
   if (!client.modalData) client.modalData = new Map();
@@ -299,27 +285,30 @@ async function execute(message, args, { responsibilities, points, scheduleSave, 
 
   // اختصار: مسؤوليات
   if (args[0] === 'مسؤوليات') {
-    await handleResponsibilitiesCommand(message, args.slice(1), responsibilities, client, BOT_OWNERS);
+    await handleResponsibilitiesCommand(message, args.slice(1), responsibilities, client, BOT_OWNERS, ADMIN_ROLES);
     return;
   }
 
+  const member = await message.guild.members.fetch(message.author.id);
+  const hasAdminRole = ADMIN_ROLES && ADMIN_ROLES.length > 0 && member.roles.cache.some(role => ADMIN_ROLES.includes(role.id));
+  const hasAdministrator = member.permissions.has('Administrator');
+  const isOwner = BOT_OWNERS.includes(message.author.id) || message.guild.ownerId === message.author.id;
+
   // منشن مباشر = عرض مسؤولياته
   if (message.mentions.users.size > 0) {
-    const isOwner = BOT_OWNERS.includes(message.author.id) || message.guild.ownerId === message.author.id;
-    if (!isOwner) { await message.react('❌'); return; }
+    // هذا الأمر متاح للأدمن رولز، الأدمنستريتر، والأونر
+    if (!hasAdminRole && !isOwner && !hasAdministrator) {
+      await message.react('❌');
+      return;
+    }
     const targetUser = message.mentions.users.first();
     await showUserResponsibilities(message, targetUser, responsibilities, client);
     return;
   }
 
-  // صلاحيات
-  const CURRENT_ADMIN_ROLES = loadAdminRolesOnce();
-  const member = await message.guild.members.fetch(message.author.id);
-  const hasAdminRole = member.roles.cache.some(role => CURRENT_ADMIN_ROLES.includes(role.id));
-  const hasAdministrator = member.permissions.has('Administrator');
-  const isOwner = BOT_OWNERS.includes(message.author.id) || message.guild.ownerId === message.author.id;
-
-  if (!hasAdminRole && !isOwner && !hasAdministrator) {
+  // صلاحيات الأمر الرئيسي (مسؤول)
+  // هذا الأمر متاح فقط للأدمنستريتر والأونر
+  if (!isOwner && !hasAdministrator) {
     await message.react('❌');
     return;
   }
@@ -562,10 +551,9 @@ async function execute(message, args, { responsibilities, points, scheduleSave, 
   });
 }
 
-async function handleResponsibilitiesCommand(message, args, responsibilities, client, BOT_OWNERS) {
-  const CURRENT_ADMIN_ROLES = loadAdminRolesOnce();
+async function handleResponsibilitiesCommand(message, args, responsibilities, client, BOT_OWNERS, ADMIN_ROLES) {
   const member = await message.guild.members.fetch(message.author.id);
-  const hasAdminRole = member.roles.cache.some(role => CURRENT_ADMIN_ROLES.includes(role.id));
+  const hasAdminRole = ADMIN_ROLES && ADMIN_ROLES.length > 0 && member.roles.cache.some(role => ADMIN_ROLES.includes(role.id));
   const hasAdministrator = member.permissions.has('Administrator');
   const isOwner = BOT_OWNERS.includes(message.author.id) || message.guild.ownerId === message.author.id;
 
