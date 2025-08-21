@@ -696,7 +696,7 @@ client.on('interactionCreate', async (interaction) => {
 
         const logCommand = client.commands.get('log');
         if (logCommand && logCommand.handleInteraction) {
-            await logCommand.handleInteraction(interaction, client, saveData, BOT_OWNERS);
+            await logCommand.handleInteraction(interaction, client, scheduleSave, BOT_OWNERS);
         }
         return;
     }
@@ -713,7 +713,7 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.customId && interaction.customId.startsWith('cooldown_')) {
         const cooldownCommand = client.commands.get('cooldown');
         if (cooldownCommand && cooldownCommand.handleInteraction) {
-            await cooldownCommand.handleInteraction(interaction, client, saveData, responsibilities);
+            await cooldownCommand.handleInteraction(interaction, client, scheduleSave, responsibilities, BOT_OWNERS);
         }
         return;
     }
@@ -723,7 +723,7 @@ client.on('interactionCreate', async (interaction) => {
         interaction.customId === 'select_responsibility_time')) {
         const notificationsCommand = client.commands.get('notifications');
         if (notificationsCommand && notificationsCommand.handleInteraction) {
-            await notificationsCommand.handleInteraction(interaction, client, responsibilities, saveData);
+            await notificationsCommand.handleInteraction(interaction, client, responsibilities, scheduleSave, BOT_OWNERS);
         }
         return;
     }
