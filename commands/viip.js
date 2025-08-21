@@ -122,7 +122,7 @@ async function execute(message, args, { responsibilities, BOT_OWNERS, client, sa
 
             } else if (interaction.customId === 'vip_change_avatar') {
                 const embed = colorManager.createEmbed()
-                    .setDescription('**ارسل الافتار **')
+                    .setDescription('**أرسل الأفتار الجديد أو أرسل `0` أو `remove` لإزالته.**')
                     .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400660696072589312/images__8_-removebg-preview.png?ex=688d726c&is=688c20ec&hm=3b2bebab178bae617041b9c2d4959a25e1013421f63ed17fa99b27d1a0113508&');
 
                 await interaction.reply({
@@ -135,61 +135,67 @@ async function execute(message, args, { responsibilities, BOT_OWNERS, client, sa
 
                 collector.on('collect', async (msg) => {
                     try {
-                        let avatarUrl = null;
+                        await msg.delete().catch(() => { });
+                        const content = msg.content.trim().toLowerCase();
 
-                        // Check if message has attachment
+                        if (content === '0' || content === 'remove') {
+                            // إزالة الأفتار
+                            try {
+                                await client.user.setAvatar(null);
+                                logEvent(client, message.guild, {
+                                    type: 'ADMIN_ACTIONS',
+                                    title: 'Bot Avatar Removed',
+                                    user: message.author,
+                                });
+                                const successEmbed = colorManager.createEmbed().setDescription('**✅ تم إزالة الأفتار بنجاح.**');
+                                await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
+                            } catch (error) {
+                                console.error('Error removing bot avatar:', error);
+                                let errorMessage = '**❌ حدث خطأ أثناء إزالة الأفتار.**';
+                                if (error.code === 50035 || (error.message && error.message.toLowerCase().includes('rate limit'))) {
+                                    errorMessage = '**❌ لقد حاولت تغيير الأفتار عدة مرات. يرجى الانتظار فترة قبل المحاولة مرة أخرى.**';
+                                }
+                                const errorEmbed = colorManager.createEmbed().setDescription(errorMessage);
+                                await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+                            }
+                            return;
+                        }
+
+                        let avatarUrl = null;
                         if (msg.attachments.size > 0) {
                             const attachment = msg.attachments.first();
                             if (attachment.contentType && attachment.contentType.startsWith('image/')) {
                                 avatarUrl = attachment.url;
                             }
-                        } else if (msg.content.trim()) {
-                            const url = msg.content.trim();
-                            if (url.startsWith('http://') || url.startsWith('https://')) {
-                                avatarUrl = url;
+                        } else if (content) {
+                            if (content.startsWith('http://') || content.startsWith('https://')) {
+                                avatarUrl = content;
                             }
                         }
 
                         if (!avatarUrl) {
-                            const errorEmbed = colorManager.createEmbed()
-                                .setDescription('**يرجى إرسال رابط صورة صالح أو إرفاق صورة !**')
-                                .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400390888416608286/download__3_-removebg-preview.png?ex=688d1fe5&is=688bce65&hm=55055a587668561ce27baf0665663f801e14662d4bf849351564a563b1e53b41&');
-
+                            const errorEmbed = colorManager.createEmbed().setDescription('**يرجى إرسال رابط صورة صالح أو إرفاق صورة !**');
                             return interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
                         }
 
-                        await msg.delete().catch(() => { });
-
                         try {
                             await client.user.setAvatar(avatarUrl);
-
-                            // تحديث ألوان الـ embeds تلقائياً
-                            setTimeout(async () => {
-                                await colorManager.forceUpdateColor();
-                            }, 2000); // انتظار ثانيتين للتأكد من تحديث الأفتار
-
+                            setTimeout(async () => { await colorManager.forceUpdateColor(); }, 2000);
                             logEvent(client, message.guild, {
                                 type: 'ADMIN_ACTIONS',
                                 title: 'Bot Avatar Changed',
-                                description: 'The bot avatar has been updated',
                                 user: message.author,
-                                fields: [
-                                    { name: 'New Avatar URL', value: avatarUrl, inline: false }
-                                ]
+                                fields: [{ name: 'New Avatar URL', value: avatarUrl, inline: false }]
                             });
-
-                            const successEmbed = colorManager.createEmbed()
-                                .setDescription('**Comblete change ✅️**')
-                                .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400645490118234132/download__8_-removebg-preview.png?ex=688d6443&is=688c12c3&hm=217945651e6a5f649ede7719b4572da60d009a8aa461a507b72e2f82ea59a4cd&');
-
+                            const successEmbed = colorManager.createEmbed().setDescription('**✅ تم تغيير الأفتار بنجاح.**');
                             await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
-
                         } catch (error) {
                             console.error('Error changing bot avatar:', error);
-                            const errorEmbed = colorManager.createEmbed()
-                                .setDescription('**❌ حدث خطأ أثناء تغيير الأفتار ! تأكد من صحة الرابط.**')
-                                .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400390888416608286/download__3_-removebg-preview.png?ex=688d1fe5&is=688bce65&hm=55055a587668561ce27baf0665663f801e14662d4bf849351564a563b1e53b41&');
-
+                            let errorMessage = '**❌ حدث خطأ أثناء تغيير الأفتار ! تأكد من صحة الرابط.**';
+                            if (error.code === 50035 || (error.message && error.message.toLowerCase().includes('rate limit'))) {
+                                errorMessage = '**❌ لقد حاولت تغيير الأفتار عدة مرات. يرجى الانتظار فترة قبل المحاولة مرة أخرى.**';
+                            }
+                            const errorEmbed = colorManager.createEmbed().setDescription(errorMessage);
                             await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
                         }
                     } catch (error) {
@@ -205,7 +211,7 @@ async function execute(message, args, { responsibilities, BOT_OWNERS, client, sa
 
             } else if (interaction.customId === 'vip_change_banner') {
                 const embed = colorManager.createEmbed()
-                    .setDescription('**ارسل البنر**')
+                    .setDescription('**أرسل البنر الجديد أو أرسل `0` أو `remove` لإزالته.**')
                     .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400660696072589312/images__8_-removebg-preview.png?ex=688d726c&is=688c20ec&hm=3b2bebab178bae617041b9c2d4959a25e1013421f63ed17fa99b27d1a0113508&');
 
                 await interaction.reply({
@@ -218,55 +224,65 @@ async function execute(message, args, { responsibilities, BOT_OWNERS, client, sa
 
                 collector.on('collect', async (msg) => {
                     try {
-                        let bannerUrl = null;
+                        await msg.delete().catch(() => { });
+                        const content = msg.content.trim().toLowerCase();
 
+                        if (content === '0' || content === 'remove') {
+                            try {
+                                await client.user.setBanner(null);
+                                logEvent(client, message.guild, {
+                                    type: 'ADMIN_ACTIONS',
+                                    title: 'Bot Banner Removed',
+                                    user: message.author,
+                                });
+                                const successEmbed = colorManager.createEmbed().setDescription('**✅ تم إزالة البنر بنجاح.**');
+                                await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
+                            } catch (error) {
+                                console.error('Error removing bot banner:', error);
+                                let errorMessage = '**❌ حدث خطأ أثناء إزالة البنر.**';
+                                if (error.code === 50035 || (error.message && error.message.toLowerCase().includes('rate limit'))) {
+                                    errorMessage = '**❌ لقد حاولت تغيير البنر عدة مرات. يرجى الانتظار فترة قبل المحاولة مرة أخرى.**';
+                                }
+                                const errorEmbed = colorManager.createEmbed().setDescription(errorMessage);
+                                await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+                            }
+                            return;
+                        }
+
+                        let bannerUrl = null;
                         if (msg.attachments.size > 0) {
                             const attachment = msg.attachments.first();
                             if (attachment.contentType && attachment.contentType.startsWith('image/')) {
                                 bannerUrl = attachment.url;
                             }
-                        } else if (msg.content.trim()) {
-                            const url = msg.content.trim();
-                            if (url.startsWith('http://') || url.startsWith('https://')) {
-                                bannerUrl = url;
+                        } else if (content) {
+                            if (content.startsWith('http://') || content.startsWith('https://')) {
+                                bannerUrl = content;
                             }
                         }
 
                         if (!bannerUrl) {
-                            const errorEmbed = colorManager.createEmbed()
-                                .setDescription('**يرجى إرسال رابط صورة صالح أو إرفاق صورة !**')
-                                .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400390888416608286/download__3_-removebg-preview.png?ex=688d1fe5&is=688bce65&hm=55055a587668561ce27baf0665663f801e14662d4bf849351564a563b1e53b41&');
-
+                            const errorEmbed = colorManager.createEmbed().setDescription('**يرجى إرسال رابط صورة صالح أو إرفاق صورة !**');
                             return interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
                         }
 
-                        await msg.delete().catch(() => { });
-
                         try {
                             await client.user.setBanner(bannerUrl);
-
                             logEvent(client, message.guild, {
                                 type: 'ADMIN_ACTIONS',
                                 title: 'Bot Banner Changed',
-                                description: 'The bot banner has been updated',
                                 user: message.author,
-                                fields: [
-                                    { name: 'New Banner URL', value: bannerUrl, inline: false }
-                                ]
+                                fields: [{ name: 'New Banner URL', value: bannerUrl, inline: false }]
                             });
-
-                            const successEmbed = colorManager.createEmbed()
-                                .setDescription('**✅ Complete change**')
-                                .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400645490118234132/download__8_-removebg-preview.png?ex=688d6443&is=688c12c3&hm=217945651e6a5f649ede7719b4572da60d009a8aa461a507b72e2f82ea59a4cd&');
-
+                            const successEmbed = colorManager.createEmbed().setDescription('**✅ تم تغيير البنر بنجاح.**');
                             await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
-
                         } catch (error) {
                             console.error('Error changing bot banner:', error);
-                            const errorEmbed = colorManager.createEmbed()
-                                .setDescription('**❌ حدث خطأ أثناء تغيير البنر ! تأكد من صحة الرابط.**')
-                                .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400390888416608286/download__3_-removebg-preview.png?ex=688d1fe5&is=688bce65&hm=55055a587668561ce27baf0665663f801e14662d4bf849351564a563b1e53b41&');
-
+                            let errorMessage = '**❌ حدث خطأ أثناء تغيير البنر ! تأكد من صحة الرابط.**';
+                            if (error.code === 50035 || (error.message && error.message.toLowerCase().includes('rate limit'))) {
+                                errorMessage = '**❌ لقد حاولت تغيير البنر عدة مرات. يرجى الانتظار فترة قبل المحاولة مرة أخرى.**';
+                            }
+                            const errorEmbed = colorManager.createEmbed().setDescription(errorMessage);
                             await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
                         }
                     } catch (error) {
