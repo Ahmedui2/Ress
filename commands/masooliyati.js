@@ -17,33 +17,22 @@ async function execute(message, args, { responsibilities, client, BOT_OWNERS, AD
         await message.channel.send({ embeds: [blockedEmbed] });
         return;
     }
+
+    const member = await message.guild.members.fetch(message.author.id);
+    const hasAdminRole = ADMIN_ROLES && ADMIN_ROLES.length > 0 && member.roles.cache.some(role => ADMIN_ROLES.includes(role.id));
+    const hasAdministrator = member.permissions.has('Administrator');
+    const isOwner = BOT_OWNERS.includes(message.author.id) || message.guild.ownerId === message.author.id;
+
+    if (!hasAdminRole && !isOwner && !hasAdministrator) {
+        await message.react('❌');
+        return;
+    }
     
     // التحقق من وجود منشن
     let targetUser = null;
     let userId = message.author.id;
 
     if (message.mentions.users.size > 0) {
-        // التحقق من صلاحية رؤية مسؤوليات الآخرين - نفس نظام أمر مسؤول
-        const member = await message.guild.members.fetch(message.author.id);
-        const hasAdminRole = ADMIN_ROLES && ADMIN_ROLES.length > 0 && member.roles.cache.some(role => ADMIN_ROLES.includes(role.id));
-        const hasAdministrator = member.permissions.has('Administrator');
-        const isOwner = BOT_OWNERS.includes(message.author.id) || message.guild.ownerId === message.author.id;
-
-        console.log(`التحقق من صلاحيات أمر مسؤولياتي للمستخدم ${message.author.id}:`);
-        console.log(`- isOwner: ${isOwner}`);
-        console.log(`- hasAdministrator: ${hasAdministrator}`);
-        console.log(`- hasAdminRole: ${hasAdminRole}`);
-        console.log(`- ADMIN_ROLES: ${JSON.stringify(ADMIN_ROLES)}`);
-        console.log(`- User roles: ${member.roles.cache.map(r => r.id)}`);
-
-        if (!hasAdminRole && !isOwner && !hasAdministrator) {
-            console.log(`رفض الوصول لأمر مسؤولياتي للمستخدم ${message.author.id}`);
-            await message.react('❌');
-            return;
-        }
-        
-        console.log(`تم منح الوصول لأمر مسؤولياتي للمستخدم ${message.author.id}`);
-
         targetUser = message.mentions.users.first();
         userId = targetUser.id;
     } else {
@@ -92,19 +81,10 @@ async function execute(message, args, { responsibilities, client, BOT_OWNERS, AD
 
         await message.channel.send({ embeds: [noRespEmbed] });
     } else {
-        // إنشاء قائمة المسؤوليات مع التفاصيل
-        let responsibilitiesList = '';
-        userResponsibilities.forEach((resp, index) => {
-            responsibilitiesList += `**${index + 1}.** ${resp.name}\n`;
-            if (resp.description && resp.description !== 'لا يوجد وصف') {
-                responsibilitiesList += `   ${resp.description}\n`;
-            }
-            if (resp.otherResponsiblesCount > 0) {
-                responsibilitiesList += `   ${resp.otherResponsiblesCount} مسؤولون آخرون\n\n`;
-            } else {
-                responsibilitiesList += `   أنت المسؤول الوحيد\n\n`;
-            }
-        });
+        const { StringSelectMenuBuilder, ActionRowBuilder } = require('discord.js');
+
+        // إنشاء قائمة المسؤوليات بدون تفاصيل
+        const responsibilitiesList = userResponsibilities.map((resp, index) => `**${index + 1}.** ${resp.name}`).join('\n');
         
         const displayName = targetUser.displayName || targetUser.username;
         const respEmbed = colorManager.createEmbed()
@@ -117,10 +97,43 @@ async function execute(message, args, { responsibilities, client, BOT_OWNERS, AD
                 { name: 'إجمالي المسؤوليات', value: `${userResponsibilities.length}`, inline: true },
                 { name: 'المستخدم', value: `<@${userId}>`, inline: true }
             ])
-            .setFooter({ text: 'نظام إدارة المسؤوليات • By Ahmed' })
+            .setFooter({ text: 'اختر مسؤولية من القائمة أدناه لعرض شرحها' })
             .setTimestamp();
 
-        await message.channel.send({ embeds: [respEmbed] });
+        // إنشاء القائمة المنسدلة
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('masooliyati_select_desc')
+            .setPlaceholder('اختر مسؤولية لعرض شرحها')
+            .addOptions(userResponsibilities.map(resp => ({
+                label: resp.name.substring(0, 100),
+                value: resp.name,
+            })));
+
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+
+        const sentMessage = await message.channel.send({ embeds: [respEmbed], components: [row] });
+
+        // إنشاء collector للتفاعل مع القائمة
+        const filter = (interaction) => interaction.customId === 'masooliyati_select_desc' && interaction.user.id === message.author.id;
+        const collector = sentMessage.createMessageComponentCollector({ filter, time: 60000 });
+
+        collector.on('collect', async (interaction) => {
+            const selectedRespName = interaction.values[0];
+            const selectedResp = userResponsibilities.find(r => r.name === selectedRespName);
+
+            if (selectedResp) {
+                const desc = selectedResp.description || 'لا يوجد وصف لهذه المسؤولية.';
+                await interaction.reply({ content: `**شرح مسؤولية "${selectedRespName}":**\n${desc}`, ephemeral: true });
+            }
+        });
+
+        collector.on('end', () => {
+            // تعطيل القائمة بعد انتهاء الوقت
+            const disabledRow = new ActionRowBuilder().addComponents(
+                StringSelectMenuBuilder.from(selectMenu).setDisabled(true)
+            );
+            sentMessage.edit({ components: [disabledRow] }).catch(() => {});
+        });
     }
 }
 
