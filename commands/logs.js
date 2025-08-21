@@ -30,7 +30,6 @@ async function sendLogSettings(channel, client) {
 
     const embed = colorManager.createEmbed()
         .setTitle('إعدادات نظام اللوق')
-        .setColor('#0099ff')
         .setDescription('** Log system.**')
         .setThumbnail('https://cdn.discordapp.com/attachments/1393840634149736508/1398105756800389283/images__3_-removebg-preview.png?ex=688426f3&is=6882d573&hm=045681f140e43e60026fe068aaca3da588784bd5d8a60112ef19444fc48857e9&');
 
@@ -622,7 +621,6 @@ async function handleInteraction(interaction, client, scheduleSave) {
             const embed = colorManager.createEmbed()
                 .setTitle('إضافة رولات للوق')
                 .setDescription('**منشن الرولات أو اكتب الآي دي**')
-                .setColor('#00ff00')
                 .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400645490118234132/download__8_-removebg-preview.png?ex=688d6443&is=688c12c3&hm=217945651e6a5f649ede7719b4572da60d009a8aa461a507b72e2f82ea59a4cd&');
 
             const row = new ActionRowBuilder().addComponents(
@@ -689,7 +687,6 @@ async function handleInteraction(interaction, client, scheduleSave) {
 
                     // Create response embed
                     const responseEmbed = colorManager.createEmbed()
-                        .setColor('#0099ff')
                         .setTitle('نتائج إضافة رولات اللوق')
                         .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400645490118234132/download__8_-removebg-preview.png?ex=688d6443&is=688c12c3&hm=217945651e6a5f649ede7719b4572da60d009a8aa461a507b72e2f82ea59a4cd&');
 
@@ -804,7 +801,6 @@ async function handleInteraction(interaction, client, scheduleSave) {
             const removeEmbed = colorManager.createEmbed()
                 .setTitle('Delete all')
                 .setDescription(rolesList)
-                .setColor('#ff4444')
                 .setFooter({ text: `إجمالي الرولات : ${currentLogRoles.length}` });
 
             await interaction.reply({ 
@@ -891,7 +887,6 @@ async function handleInteraction(interaction, client, scheduleSave) {
                     const successEmbed = colorManager.createEmbed()
                         .setTitle('✅ ')
                         .setDescription(`**Comoletly Delete __${rolesToRemove.length}__**`)
-                        .setColor('#00ff44')
                         .setFooter({ text: `**By Ahmed **` });
 
                     // إرسال رسالة تأكيد مؤقتة
@@ -967,8 +962,7 @@ async function handleInteraction(interaction, client, scheduleSave) {
 
                 if (selectedRoles.length === 0) {
                     const errorEmbed = colorManager.createEmbed()
-                        .setDescription('❌ **لم يتم اختيار أي رولات للإزالة**')
-                        .setColor('#ff0000');
+                        .setDescription('❌ **لم يتم اختيار أي رولات للإزالة**');
 
                     return interaction.followUp({ 
                         embeds: [errorEmbed], 
@@ -981,8 +975,7 @@ async function handleInteraction(interaction, client, scheduleSave) {
 
                 if (validRoles.length === 0) {
                     const errorEmbed = colorManager.createEmbed()
-                        .setDescription('❌ **الرولات المحددة غير موجودة في قائمة اللوق!**')
-                        .setColor('#ff0000');
+                        .setDescription('❌ **الرولات المحددة غير موجودة في قائمة اللوق!**');
 
                     return interaction.followUp({ 
                         embeds: [errorEmbed], 
@@ -1014,7 +1007,6 @@ async function handleInteraction(interaction, client, scheduleSave) {
                     .addFields([
                         { name: ' الرولات المُزالة', value: removedRoleNames, inline: false }
                     ])
-                    .setColor('#00ff00')
                     .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400645486272057364/download__7_-removebg-preview.png?ex=688d6442&is=688c12c2&hm=2375cd57724a3ffe3b0073bef7fa7d1aa08f3b79200e33f346cdce03cfd27e9a&');
 
                 await interaction.followUp({
@@ -1027,7 +1019,6 @@ async function handleInteraction(interaction, client, scheduleSave) {
 
                 const errorEmbed = colorManager.createEmbed()
                     .setDescription('❌ **حدث خطأ أثناء إزالة الرولات!**')
-                    .setColor('#ff0000')
     .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400390144795738175/download__2_-removebg-preview.png?ex=688d1f34&is=688bcdb4&hm=40da8d91a92062c95eb9d48f307697ec0010860aca64dd3f8c3c045f3c2aa13a&');
                 await interaction.followUp({ 
                     embeds: [errorEmbed], 
@@ -1076,8 +1067,7 @@ async function handleInteraction(interaction, client, scheduleSave) {
                 if (adminRoleIds.length === 0) {
                     const noAdminEmbed = colorManager.createEmbed()
                         .setDescription('❌ **لا توجد رولات إدارية محددة في النظام!**')
-                        .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400637278900191312/images__7_-removebg-preview.png?ex=688d5c9d&is=688c0b1d&hm=8d5c6d761dcf9bda65af44b9de09a2817cbc273f061eb1e39cc8ac20de37cfc0&')
-                        .setColor('#ff0000');
+                        .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400637278900191312/images__7_-removebg-preview.png?ex=688d5c9d&is=688c0b1d&hm=8d5c6d761dcf9bda65af44b9de09a2817cbc273f061eb1e39cc8ac20de37cfc0&');
 
                     return interaction.followUp({ 
                         embeds: [noAdminEmbed], 
@@ -1090,7 +1080,6 @@ async function handleInteraction(interaction, client, scheduleSave) {
                 if (newRoles.length === 0) {
                     const alreadyAddedEmbed = colorManager.createEmbed()
                         .setDescription('✅ **جميع الرولات الإدارية مضافة بالفعل للوق!**')
-                        .setColor('#00ff00')
 .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400390888416608286/download__3_-removebg-preview.png?ex=688d1fe5&is=688bce65&hm=55055a587668561ce27baf0665663f801e14662d4bf849351564a563b1e53b41&');
                     return interaction.followUp({ 
                         embeds: [alreadyAddedEmbed], 
@@ -1116,7 +1105,6 @@ async function handleInteraction(interaction, client, scheduleSave) {
                     .addFields([
                         { name: 'الرولات المضافة', value: addedRoleNames, inline: false }
                     ])
-                    .setColor('#00ff00')
                     .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400645490118234132/download__8_-removebg-preview.png?ex=688d6443&is=688c12c3&hm=217945651e6a5f649ede7719b4572da60d009a8aa461a507b72e2f82ea59a4cd&');
 
                 await interaction.followUp({ 
@@ -1128,8 +1116,7 @@ async function handleInteraction(interaction, client, scheduleSave) {
                 console.error('خطأ في إضافة الرولات الإدارية:', error);
 
                 const errorEmbed = colorManager.createEmbed()
-                    .setDescription('❌ **حدث خطأ أثناء إضافة الرولات الإدارية!**')
-                    .setColor('#ff0000');
+                    .setDescription('❌ **حدث خطأ أثناء إضافة الرولات الإدارية!**');
 
                 await interaction.followUp({ 
                     embeds: [errorEmbed], 
@@ -1146,8 +1133,7 @@ async function handleInteraction(interaction, client, scheduleSave) {
 
                 if (currentLogRoles.length === 0) {
                     const noRolesEmbed = colorManager.createEmbed()
-                        .setDescription('❌ **لا توجد رولات محددة للوق حالياً!**')
-                        .setColor('#ff0000');
+                        .setDescription('❌ **لا توجد رولات محددة للوق حالياً!**');
 
                     return interaction.followUp({ 
                         embeds: [noRolesEmbed], 
@@ -1174,7 +1160,6 @@ async function handleInteraction(interaction, client, scheduleSave) {
                         { name: ' Roles', value: `${removedCount} رول`, inline: true },
                         { name: 'Perms', value: 'تم ازاله جميع البرمشنات', inline: false }
                     ])
-                    .setColor('#00ff00')
                     .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400645486272057364/download__7_-removebg-preview.png?ex=688d6442&is=688c12c2&hm=2375cd57724a3ffe3b0073bef7fa7d1aa08f3b79200e33f346cdce03cfd27e9a&');
 
                 await interaction.followUp({ 
@@ -1186,8 +1171,7 @@ async function handleInteraction(interaction, client, scheduleSave) {
                 console.error('خطأ في إزالة جميع الرولات:', error);
 
                 const errorEmbed = colorManager.createEmbed()
-                    .setDescription('❌ **حدث خطأ أثناء إزالة جميع الرولات!**')
-                    .setColor('#ff0000');
+                    .setDescription('❌ **حدث خطأ أثناء إزالة جميع الرولات!**');
 
                 await interaction.followUp({ 
                     embeds: [errorEmbed], 
@@ -1333,7 +1317,6 @@ async function showLogRolesMenu(interaction, client) {
         const embed = colorManager.createEmbed()
             .setTitle('Roles for logs')
             .setDescription('* اختر رولات اللوق *')
-            .setColor('#0099ff')
             .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400652380726493264/1320524609342410792.png?ex=688d6aae&is=688c192e&hm=391503bd0a7f5d393d8fc79f5f430bc458cfe1747b44f8dd5053b80159653346&');
 
         if (currentLogRoles.length > 0) {
