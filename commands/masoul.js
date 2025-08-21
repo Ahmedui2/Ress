@@ -294,22 +294,16 @@ async function execute(message, args, { responsibilities, points, scheduleSave, 
   const hasAdministrator = member.permissions.has('Administrator');
   const isOwner = BOT_OWNERS.includes(message.author.id) || message.guild.ownerId === message.author.id;
 
-  // منشن مباشر = عرض مسؤولياته
-  if (message.mentions.users.size > 0) {
-    // هذا الأمر متاح للأدمن رولز، الأدمنستريتر، والأونر
-    if (!hasAdminRole && !isOwner && !hasAdministrator) {
-      await message.react('❌');
-      return;
-    }
-    const targetUser = message.mentions.users.first();
-    await showUserResponsibilities(message, targetUser, responsibilities, client);
+  // صلاحيات موحدة لجميع أوامر مسؤول
+  if (!hasAdminRole && !isOwner && !hasAdministrator) {
+    await message.react('❌');
     return;
   }
 
-  // صلاحيات الأمر الرئيسي (مسؤول)
-  // هذا الأمر متاح فقط للأدمنستريتر والأونر
-  if (!isOwner && !hasAdministrator) {
-    await message.react('❌');
+  // منشن مباشر = عرض مسؤولياته
+  if (message.mentions.users.size > 0) {
+    const targetUser = message.mentions.users.first();
+    await showUserResponsibilities(message, targetUser, responsibilities, client);
     return;
   }
 

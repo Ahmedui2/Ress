@@ -148,6 +148,38 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
   // إدارة الـ collectors النشطة لكل مسؤولية
   const activeCollectors = new Map();
 
+  async function generateManagementContent(responsibilityName) {
+    const responsibility = responsibilities[responsibilityName];
+    const responsiblesList = responsibility.responsibles || [];
+    let responsiblesText = '';
+
+    if (responsiblesList.length > 0) {
+      for (let i = 0; i < responsiblesList.length; i++) {
+        try {
+          const member = await message.guild.members.fetch(responsiblesList[i]);
+          responsiblesText += `**${i + 1}.** ${member.displayName || member.user.username} (<@${responsiblesList[i]}>)\n`;
+        } catch (error) {
+          responsiblesText += `**${i + 1}.** مستخدم محذوف (${responsiblesList[i]})\n`;
+        }
+      }
+    } else {
+      responsiblesText = '**لا يوجد مسؤولين معينين**';
+    }
+
+    const embed = colorManager.createEmbed()
+      .setTitle(`**إدارة المسؤولين: ${responsibilityName}**`)
+      .setDescription(`**المسؤولون الحاليون:**\n${responsiblesText}\n\n**للإضافة:** منشن المستخدم أو اكتب الآي دي\n**للحذف:** اكتب رقم المسؤول من القائمة أعلاه\n\n**اكتب "تم" أو "done" للعودة للقائمة الرئيسية**`)
+      .setFooter({ text: 'اكتب رسالة للإضافة/الحذف أو اضغط "رجوع"' });
+
+    const backButton = new ButtonBuilder()
+      .setCustomId(`back_to_main_${responsibilityName}`)
+      .setLabel('رجوع للقائمة الرئيسية')
+      .setStyle(ButtonStyle.Secondary);
+
+    const row = new ActionRowBuilder().addComponents(backButton);
+    return { embeds: [embed], components: [row] };
+  }
+
   async function showResponsibleManagement(interaction, responsibilityName) {
     try {
       const responsibility = responsibilities[responsibilityName];
@@ -161,38 +193,11 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
         activeCollectors.delete(responsibilityName);
       }
 
-      const responsiblesList = responsibility.responsibles || [];
-      let responsiblesText = '';
+      const content = await generateManagementContent(responsibilityName);
 
-      if (responsiblesList.length > 0) {
-        for (let i = 0; i < responsiblesList.length; i++) {
-          try {
-            const member = await message.guild.members.fetch(responsiblesList[i]);
-            responsiblesText += `**${i + 1}.** ${member.displayName || member.user.username} (<@${responsiblesList[i]}>)\n`;
-          } catch (error) {
-            responsiblesText += `**${i + 1}.** مستخدم محذوف (${responsiblesList[i]})\n`;
-          }
-        }
-      } else {
-        responsiblesText = '**لا يوجد مسؤولين معينين**';
-      }
-
-      const embed = colorManager.createEmbed()
-        .setTitle(`**إدارة المسؤولين: ${responsibilityName}**`)
-        .setDescription(`**المسؤولون الحاليون:**\n${responsiblesText}\n\n**للإضافة:** منشن المستخدم أو اكتب الآي دي\n**للحذف:** اكتب رقم المسؤول من القائمة أعلاه\n\n**اكتب "تم" أو "done" للعودة للقائمة الرئيسية**`)
-        .setFooter({ text: 'اكتب رسالة للإضافة/الحذف أو اضغط "رجوع"' });
-
-      const backButton = new ButtonBuilder()
-        .setCustomId(`back_to_main_${responsibilityName}`)
-        .setLabel('رجوع للقائمة الرئيسية')
-        .setStyle(ButtonStyle.Secondary);
-
-      const row = new ActionRowBuilder().addComponents(backButton);
-
-      if (interaction.update) {
-        await interaction.update({ embeds: [embed], components: [row] });
-      } else {
-        await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+      // We need to reply to the interaction first, then we can edit that reply later.
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.update(content);
       }
 
       const messageFilter = m => m.author.id === interaction.user.id && m.channel.id === message.channel.id;
@@ -264,7 +269,9 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
                 ]
               });
 
-              await showResponsibleManagement(interaction, responsibilityName);
+              // Regenerate and edit the message
+              const newContent = await generateManagementContent(responsibilityName);
+              await interaction.editReply(newContent);
 
             } else {
               await safeFollowUp(interaction, '**رقم غير صحيح. يرجى اختيار رقم من القائمة.**');
@@ -321,7 +328,9 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
                     ]
                   });
 
-                  await showResponsibleManagement(interaction, responsibilityName);
+                  // Regenerate and edit the message
+                  const newContent = await generateManagementContent(responsibilityName);
+                  await interaction.editReply(newContent);
                 }
               } catch (error) {
                 await safeFollowUp(interaction, '**لم يتم العثور على المستخدم!**');
