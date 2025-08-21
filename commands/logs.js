@@ -129,8 +129,8 @@ async function handleInteraction(interaction, client, scheduleSave) {
         const BOT_OWNERS = process.env.BOT_OWNERS ? process.env.BOT_OWNERS.split(',') : [];
         const isOwner = BOT_OWNERS.includes(interaction.user.id) || interaction.guild.ownerId === interaction.user.id;
         if (!isOwner) {
-            await message.react('❌');
-                        return;
+        await interaction.reply({ content: '❌ **أنت لا تملك الصلاحية الكافية.**', ephemeral: true });
+        return;
         }
 
         if (customId === 'auto_set_logs') {
