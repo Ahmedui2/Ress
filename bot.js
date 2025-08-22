@@ -812,9 +812,11 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      const customIdParts = interaction.customId.replace('call_reason_modal_', '').split('_');
-      const responsibilityName = customIdParts[0];
-      const target = customIdParts[1];
+      const payload = interaction.customId.replace('call_reason_modal_', '');
+      const parts = payload.split('_');
+      const target = parts.shift();
+      const timestamp = parts.shift(); // Not used, but we need to shift it.
+      const responsibilityName = parts.join('_');
       const reason = interaction.fields.getTextInputValue('reason').trim() || 'لا يوجد سبب محدد';
 
       if (!responsibilities[responsibilityName]) {

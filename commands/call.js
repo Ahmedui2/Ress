@@ -145,7 +145,7 @@ module.exports = {
 
         // Show modal to enter reason
         const modal = new ModalBuilder()
-          .setCustomId(`call_reason_modal_${responsibilityName}_${target}_${Date.now()}`)
+          .setCustomId(`call_reason_modal_${target}_${Date.now()}_${responsibilityName}`)
           .setTitle('Owners Call');
 
         const reasonInput = new TextInputBuilder()
