@@ -134,18 +134,9 @@ function ensureClientMaps(client) {
   if (!client.modalData) client.modalData = new Map();
 }
 
-/** تقليم customId إذا تجاوز الحد حتى لا يفشل */
-function buildClaimCustomId(responsibilityName, timestamp, requesterId, originalChannelId, originalMessageId) {
-  let cid = `claim_task_${responsibilityName}_${timestamp}_${requesterId}_${originalChannelId}_${originalMessageId}`;
-  if (cid.length > CLAIM_ID_HARD_LIMIT) {
-    // نسقط messageId أولاً (أقل شيء يؤثر)
-    cid = `claim_task_${responsibilityName}_${timestamp}_${requesterId}_${originalChannelId}_unknown`;
-    if (cid.length > CLAIM_ID_HARD_LIMIT) {
-      // نسقط أيضًا channelId كحل أخير
-      cid = `claim_task_${responsibilityName}_${timestamp}_${requesterId}_unknown_unknown`;
-    }
-  }
-  return cid;
+/** Builds a short, reliable customId for the claim button using the modal's shortId. */
+function buildClaimCustomId(shortId) {
+  return `claim_task_${shortId}`;
 }
 
 // ===== معالج زر الاستلام =====
@@ -156,16 +147,14 @@ async function handleClaimButton(interaction, client, responsibilities, points, 
     // منع التكرار
     if (interaction.replied || interaction.deferred) return;
 
-    const parts = interaction.customId.split('_');
-    if (parts.length < 4) {
-      return safeReply(interaction, '**خطأ في معرف المهمة!**');
+    const shortId = interaction.customId.replace('claim_task_', '');
+    const modalData = client.modalData?.get(shortId);
+
+    if (!modalData) {
+        return safeReply(interaction, '**انتهت صلاحية هذه المهمة أو تم التعامل معها بالفعل.**');
     }
 
-    const responsibilityName = parts[2];
-    const timestamp = parts[3];
-    const requesterId = parts[4] || '0';
-    const originalChannelId = parts[5] || null;
-    const originalMessageId = parts[6] || 'unknown';
+    const { responsibilityName, userId: requesterId, timestamp, originalChannelId, originalMessageId } = modalData;
     const taskId = `${responsibilityName}_${timestamp}`;
 
     if (!responsibilities[responsibilityName]) {
@@ -673,13 +662,7 @@ async function handleInteraction(interaction, client, responsibilities, points, 
 
       const embed = createCallEmbed(responsibilityName, reason, userId);
 
-      const claimCustomId = buildClaimCustomId(
-        responsibilityName,
-        timestamp,
-        userId,
-        originalChannelId,
-        originalMessageId || 'unknown'
-      );
+      const claimCustomId = buildClaimCustomId(shortId);
 
       const claimButton = new ButtonBuilder().setCustomId(claimCustomId).setLabel('Claim').setStyle(ButtonStyle.Success);
 
