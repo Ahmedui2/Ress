@@ -222,7 +222,8 @@ async function handleClaimButton(interaction, client, context) {
             displayName: displayName,
             responsibilityName,
             requesterId,
-            timestamp
+            timestamp,
+            createdAt: Date.now() // Add timestamp for reminder tracking
         });
         scheduleSave(); // Save the pending report state
 

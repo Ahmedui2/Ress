@@ -494,7 +494,7 @@ if (client.modalData) {
   const cooldownData = readJSONFile(DATA_FILES.cooldowns, {});
   console.log(`✅ نظام الكولداون جاهز - الافتراضي: ${(cooldownData.default || 60000) / 1000} ثانية`);
 
-  startReminderSystem(client, responsibilities);
+  startReminderSystem(client);
 
         // تحديث صلاحيات اللوق عند بدء البوت
         setTimeout(async () => {
