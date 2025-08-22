@@ -439,6 +439,9 @@ client.once('ready', async () => {
     }
   }, 30000);
 
+  // Check for expired reports every 5 minutes
+  setInterval(checkExpiredReports, 5 * 60 * 1000);
+
   // حفظ البيانات فقط عند الحاجة - كل 5 دقائق أو عند وجود تغييرات
   setInterval(() => {
     if (isDataDirty) {
@@ -692,6 +695,45 @@ function savePendingReports() {
   } catch (error) {
     console.error('❌ خطأ في تجهيز التقارير المعلقة للحفظ:', error);
   }
+}
+
+async function checkExpiredReports() {
+    const now = Date.now();
+    const twentyFourHours = 24 * 60 * 60 * 1000;
+    let changed = false;
+
+    for (const [reportId, reportData] of client.pendingReports.entries()) {
+        if (reportData.submittedAt && (now - reportData.submittedAt > twentyFourHours)) {
+            console.log(`Report ${reportId} has expired. Automatically rejecting.`);
+
+            if (reportData.approvalMessageIds) {
+                for (const [channelId, messageId] of Object.entries(reportData.approvalMessageIds)) {
+                    try {
+                        const channel = await client.channels.fetch(channelId);
+                        const message = await channel.messages.fetch(messageId);
+
+                        const originalEmbed = message.embeds[0];
+                        if (originalEmbed) {
+                            const newEmbed = new EmbedBuilder.from(originalEmbed)
+                                .setFields(
+                                    ...originalEmbed.fields.filter(f => f.name !== 'الحالة'),
+                                    { name: 'الحالة', value: '❌ تم الرفض تلقائياً لمرور 24 ساعة' }
+                                );
+                            await message.edit({ embeds: [newEmbed], components: [] });
+                        }
+                    } catch(e) {
+                        console.error(`Could not edit expired report message ${messageId} in channel ${channelId}:`, e);
+                    }
+                }
+            }
+
+            client.pendingReports.delete(reportId);
+            changed = true;
+        }
+    }
+    if (changed) {
+        scheduleSave();
+    }
 }
 
 // معالج التفاعلات المحسن للأداء

@@ -2,5 +2,6 @@
   "enabled": false,
   "pointsOnReport": false,
   "reportChannel": null,
-  "requiredFor": []
+  "requiredFor": [],
+  "approvalRequiredFor": []
 }

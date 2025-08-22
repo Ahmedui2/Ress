@@ -26,7 +26,10 @@ async function sendReportSettings(target, reportsConfig, responsibilities) {
     }
     const requiredForCount = Array.isArray(reportsConfig.requiredFor) ? reportsConfig.requiredFor.length : 0;
     const responsibilitiesList = requiredForCount > 0
-        ? reportsConfig.requiredFor.map(r => `• ${r}`).join('\n')
+        ? reportsConfig.requiredFor.map(r => {
+            const approvalNeeded = reportsConfig.approvalRequiredFor && reportsConfig.approvalRequiredFor.includes(r) ? ' (🔒 مطلوب موافقة)' : '';
+            return `• ${r}${approvalNeeded}`;
+          }).join('\n')
         : 'لا يوجد';
 
     const embed = new EmbedBuilder()
@@ -128,10 +131,29 @@ async function handleInteraction(interaction, context) {
         scheduleSave();
         await sendReportSettings(interaction.message, reportsConfig, responsibilities);
     } else if (customId === 'report_manage_resps') {
+        const manageButtons = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId('report_manage_report_req')
+                .setLabel('إدارة طلب التقرير')
+                .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+                .setCustomId('report_manage_approval_req')
+                .setLabel('إدارة طلب الموافقة')
+                .setStyle(ButtonStyle.Primary)
+        );
+        const backButton = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('report_back_to_main').setLabel('العودة').setStyle(ButtonStyle.Secondary)
+        );
+        await interaction.editReply({ content: 'اختر الإجراء الذي تريد القيام به:', embeds: [], components: [manageButtons, backButton] });
+
+    } else if (customId === 'report_manage_report_req' || customId === 'report_manage_approval_req') {
+        const isForApproval = customId === 'report_manage_approval_req';
+        const targetArray = isForApproval ? reportsConfig.approvalRequiredFor : reportsConfig.requiredFor;
+
         const respOptions = Object.keys(responsibilities).map(name => ({
             label: name.substring(0, 100),
             value: name,
-            default: reportsConfig.requiredFor.includes(name)
+            default: targetArray.includes(name)
         }));
 
         if (respOptions.length === 0) {
@@ -207,21 +229,7 @@ async function handleInteraction(interaction, context) {
         const reportText = interaction.fields.getTextInputValue('report_text');
         const givenRoleId = interaction.fields.getTextInputValue('given_role_id');
 
-        // Award point if configured to do so
         const { responsibilityName, claimerId, timestamp, requesterId } = reportData;
-        if (reportsConfig.pointsOnReport) {
-            if (!points[responsibilityName]) points[responsibilityName] = {};
-            if (!points[responsibilityName][claimerId]) points[responsibilityName][claimerId] = {};
-            if (typeof points[responsibilityName][claimerId] === 'number') {
-                const oldPoints = points[responsibilityName][claimerId];
-                points[responsibilityName][claimerId] = { [Date.now() - (35 * 24 * 60 * 60 * 1000)]: oldPoints };
-            }
-            if (!points[responsibilityName][claimerId][timestamp]) {
-                points[responsibilityName][claimerId][timestamp] = 0;
-            }
-            points[responsibilityName][claimerId][timestamp] += 1;
-            scheduleSave();
-        }
 
         // Prepare report embed
         const { displayName } = reportData;
@@ -238,43 +246,162 @@ async function handleInteraction(interaction, context) {
             .setTimestamp()
             .setFooter({ text: 'By Ahmed.' });
 
-        if (givenRoleId && /^\d{17,19}$/.test(givenRoleId)) {
-            reportEmbed.addFields({ name: 'الرول المعطى', value: `<@&${givenRoleId}>`, inline: false });
-        }
-
-        // Send report
-        if (reportsConfig.reportChannel === '0') { // DM to owners
-            for (const ownerId of BOT_OWNERS) {
-                try {
-                    const owner = await client.users.fetch(ownerId);
-                    await owner.send({ embeds: [reportEmbed] });
-                } catch (e) {
-                    console.error(`Failed to send report DM to owner ${ownerId}:`, e);
-                }
-            }
-        } else {
+        if (givenRoleId) {
+            let roleText = givenRoleId;
             try {
-                const channel = await client.channels.fetch(reportsConfig.reportChannel);
-                await channel.send({ embeds: [reportEmbed] });
-            } catch(e) {
-                console.error(`Failed to send report to channel ${reportsConfig.reportChannel}:`, e);
+                const role = await interaction.guild.roles.fetch(givenRoleId).catch(() => null) || interaction.guild.roles.cache.find(r => r.name === givenRoleId);
+                if (role) {
+                    roleText = `<@&${role.id}>`;
+                }
+            } catch (e) {
+                console.error("Could not resolve role for report:", e);
             }
+            reportEmbed.addFields({ name: 'الرول المعطى', value: roleText, inline: false });
         }
 
-        // Log the event
-        quickLog.reportSubmitted(client, interaction.guild, interaction.user, requesterId, responsibilityName);
+        const needsApproval = reportsConfig.approvalRequiredFor && reportsConfig.approvalRequiredFor.includes(responsibilityName);
+
+        if (needsApproval) {
+            reportData.submittedAt = Date.now();
+            reportData.reportText = reportText;
+            reportData.givenRoleId = givenRoleId;
+            client.pendingReports.set(reportId, reportData); // Update with new data
+            scheduleSave();
+
+            reportEmbed.addFields({ name: 'الحالة', value: 'بانتظار موافقة الأونر' });
+            const approvalButtons = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(`report_approve_${reportId}`).setLabel('موافقة').setStyle(ButtonStyle.Success),
+                new ButtonBuilder().setCustomId(`report_reject_${reportId}`).setLabel('رفض').setStyle(ButtonStyle.Danger)
+            );
+
+            // Send report for approval
+            const approvalMessageContent = { embeds: [reportEmbed], components: [approvalButtons], fetchReply: true };
+             if (reportsConfig.reportChannel === '0') {
+                for (const ownerId of BOT_OWNERS) {
+                    try {
+                        const owner = await client.users.fetch(ownerId);
+                        const msg = await owner.send(approvalMessageContent);
+                        reportData.approvalMessageIds = reportData.approvalMessageIds || {};
+                        reportData.approvalMessageIds[ownerId] = msg.id;
+                    } catch(e) { console.error(e); }
+                }
+            } else {
+                try {
+                    const channel = await client.channels.fetch(reportsConfig.reportChannel);
+                    const msg = await channel.send(approvalMessageContent);
+                    reportData.approvalMessageIds = { [channel.id]: msg.id };
+                } catch(e) { console.error(e); }
+            }
+            client.pendingReports.set(reportId, reportData); // Re-set the data with message IDs
+
+            // Confirm to user
+            const pendingEmbed = new EmbedBuilder()
+                .setTitle('تم تقديم التقرير')
+                .setDescription('**تم إرسال تقريرك للمراجعة من قبل الإدارة. سيتم إعلامك بالنتيجة.**')
+                .setColor(colorManager.getColor(client));
+            await interaction.editReply({ embeds: [pendingEmbed], components: [] });
+
+        } else {
+            // --- NO APPROVAL NEEDED ---
+            // Award point if configured to do so
+            if (reportsConfig.pointsOnReport) {
+                if (!points[responsibilityName]) points[responsibilityName] = {};
+                if (!points[responsibilityName][claimerId]) points[responsibilityName][claimerId] = {};
+                if (typeof points[responsibilityName][claimerId] === 'number') {
+                    const oldPoints = points[responsibilityName][claimerId];
+                    points[responsibilityName][claimerId] = { [Date.now() - (35 * 24 * 60 * 60 * 1000)]: oldPoints };
+                }
+                if (!points[responsibilityName][claimerId][timestamp]) {
+                    points[responsibilityName][claimerId][timestamp] = 0;
+                }
+                points[responsibilityName][claimerId][timestamp] += 1;
+                scheduleSave();
+            }
+
+            // Send final report
+            if (reportsConfig.reportChannel === '0') {
+                for (const ownerId of BOT_OWNERS) {
+                    try { await client.users.send(ownerId, { embeds: [reportEmbed] }); } catch (e) { console.error(e); }
+                }
+            } else {
+                try {
+                    const channel = await client.channels.fetch(reportsConfig.reportChannel);
+                    await channel.send({ embeds: [reportEmbed] });
+                } catch(e) { console.error(e); }
+            }
+
+            // Log the event
+            quickLog.reportSubmitted(client, interaction.guild, interaction.user, requesterId, responsibilityName);
+
+            // Clean up
+            client.pendingReports.delete(reportId);
+            scheduleSave();
+
+            // Confirm to user by editing original message
+            const finalEmbed = new EmbedBuilder()
+                .setTitle('تم استلام المهمة')
+                .setDescription('**تم إرسال تقريرك بنجاح ✅**')
+                .setColor(colorManager.getColor(client));
+            await interaction.editReply({ embeds: [finalEmbed], components: [] });
+    } else if (customId.startsWith('report_approve_') || customId.startsWith('report_reject_')) {
+        const isApproval = customId.startsWith('report_approve_');
+        const reportId = customId.replace(isApproval ? 'report_approve_' : 'report_reject_', '');
+        const reportData = client.pendingReports.get(reportId);
+
+        if (!reportData) {
+            return interaction.update({ content: 'لم يعد هذا التقرير صالحاً أو قد تم التعامل معه بالفعل.', embeds: [], components: [] });
+        }
+
+        const { claimerId, responsibilityName, timestamp, requesterId, displayName } = reportData;
+
+        if (isApproval) {
+            // Award point
+            if (!points[responsibilityName]) points[responsibilityName] = {};
+            if (!points[responsibilityName][claimerId]) points[responsibilityName][claimerId] = {};
+            if (typeof points[responsibilityName][claimerId] === 'number') {
+                const oldPoints = points[responsibilityName][claimerId];
+                points[responsibilityName][claimerId] = { [Date.now() - (35 * 24 * 60 * 60 * 1000)]: oldPoints };
+            }
+            if (!points[responsibilityName][claimerId][timestamp]) {
+                points[responsibilityName][claimerId][timestamp] = 0;
+            }
+            points[responsibilityName][claimerId][timestamp] += 1;
+            scheduleSave();
+        }
+
+        // Edit original report message
+        const originalEmbed = interaction.message.embeds[0];
+        const newEmbed = EmbedBuilder.from(originalEmbed)
+            .setFields(
+                ...originalEmbed.fields.filter(f => f.name !== 'الحالة'), // Remove previous status
+                { name: 'الحالة', value: isApproval ? `✅ تم القبول بواسطة <@${interaction.user.id}>` : `❌ تم الرفض بواسطة <@${interaction.user.id}>` }
+            );
+        if (isApproval) {
+            newEmbed.addFields({ name: 'النقطة', value: `تمت إضافة نقطة إلى <@${claimerId}>` });
+        }
+
+        await interaction.update({ embeds: [newEmbed], components: [] });
+
+        // Notify user
+        try {
+            const claimer = await client.users.fetch(claimerId);
+            const statusText = isApproval ? 'قبول' : 'رفض';
+            await claimer.send(`تم **${statusText}** تقريرك لمسؤولية **${responsibilityName}** من قبل الإدارة.`);
+        } catch(e) { console.error(e); }
+
+        // Notify other owners
+        const otherOwners = BOT_OWNERS.filter(id => id !== interaction.user.id);
+        for (const ownerId of otherOwners) {
+            try {
+                const owner = await client.users.fetch(ownerId);
+                await owner.send(`قام <@${interaction.user.id}> بالتعامل مع تقرير مقدم من <@${claimerId}> للمسؤولية **${responsibilityName}**.`);
+            } catch(e) { console.error(e); }
+        }
 
         // Clean up
         client.pendingReports.delete(reportId);
         scheduleSave();
-
-        // Confirm to user by editing original message
-        const finalEmbed = new EmbedBuilder()
-            .setTitle('تم استلام المهمة')
-            .setDescription('**تم إرسال تقريرك بنجاح ✅**')
-            .setColor(colorManager.getColor(client));
-
-        await interaction.editReply({ embeds: [finalEmbed], components: [] });
+        }
     }
 }
 
