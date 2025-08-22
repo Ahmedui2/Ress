@@ -265,8 +265,6 @@ async function handleInteraction(interaction, context) {
             reportData.submittedAt = Date.now();
             reportData.reportText = reportText;
             reportData.givenRoleId = givenRoleId;
-            client.pendingReports.set(reportId, reportData); // Update with new data
-            scheduleSave();
 
             reportEmbed.addFields({ name: 'الحالة', value: 'بانتظار موافقة الأونر' });
             const approvalButtons = new ActionRowBuilder().addComponents(
@@ -274,32 +272,53 @@ async function handleInteraction(interaction, context) {
                 new ButtonBuilder().setCustomId(`report_reject_${reportId}`).setLabel('رفض').setStyle(ButtonStyle.Danger)
             );
 
-            // Send report for approval
+            // Send report for approval and store message IDs
             const approvalMessageContent = { embeds: [reportEmbed], components: [approvalButtons], fetchReply: true };
+            reportData.approvalMessageIds = {};
              if (reportsConfig.reportChannel === '0') {
                 for (const ownerId of BOT_OWNERS) {
                     try {
                         const owner = await client.users.fetch(ownerId);
                         const msg = await owner.send(approvalMessageContent);
-                        reportData.approvalMessageIds = reportData.approvalMessageIds || {};
-                        reportData.approvalMessageIds[ownerId] = msg.id;
+                        reportData.approvalMessageIds[owner.dmChannel.id] = msg.id;
                     } catch(e) { console.error(e); }
                 }
             } else {
                 try {
                     const channel = await client.channels.fetch(reportsConfig.reportChannel);
                     const msg = await channel.send(approvalMessageContent);
-                    reportData.approvalMessageIds = { [channel.id]: msg.id };
+                    reportData.approvalMessageIds[channel.id] = msg.id;
                 } catch(e) { console.error(e); }
             }
-            client.pendingReports.set(reportId, reportData); // Re-set the data with message IDs
 
-            // Confirm to user
+            // Confirm to user and add Edit button
             const pendingEmbed = new EmbedBuilder()
                 .setTitle('تم تقديم التقرير')
                 .setDescription('**تم إرسال تقريرك للمراجعة من قبل الإدارة. سيتم إعلامك بالنتيجة.**')
                 .setColor(colorManager.getColor(client));
-            await interaction.editReply({ embeds: [pendingEmbed], components: [] });
+
+            const editButton = new ButtonBuilder().setCustomId(`report_edit_${reportId}`).setLabel('تعديل التقرير').setStyle(ButtonStyle.Secondary);
+            const confirmationRow = new ActionRowBuilder().addComponents(editButton);
+
+            const confirmationMessage = await interaction.editReply({ embeds: [pendingEmbed], components: [confirmationRow], fetchReply: true });
+            reportData.confirmationMessageId = confirmationMessage.id;
+            reportData.confirmationChannelId = confirmationMessage.channel.id;
+
+            client.pendingReports.set(reportId, reportData);
+            scheduleSave();
+
+            // Disable the edit button after 5 minutes
+            setTimeout(async () => {
+                const finalEmbed = new EmbedBuilder()
+                    .setTitle('تم تقديم التقرير')
+                    .setDescription('**تم إرسال تقريرك للمراجعة. انتهت فترة التعديل.**')
+                    .setColor(colorManager.getColor(client));
+                try {
+                    await confirmationMessage.edit({ embeds: [finalEmbed], components: [] });
+                } catch(e) {
+                    // Ignore error if message was deleted
+                }
+            }, 5 * 60 * 1000);
 
         } else {
             // --- NO APPROVAL NEEDED ---
@@ -333,16 +352,39 @@ async function handleInteraction(interaction, context) {
             // Log the event
             quickLog.reportSubmitted(client, interaction.guild, interaction.user, requesterId, responsibilityName);
 
-            // Clean up
-            client.pendingReports.delete(reportId);
-            scheduleSave();
-
             // Confirm to user by editing original message
             const finalEmbed = new EmbedBuilder()
-                .setTitle('تم استلام المهمة')
+                .setTitle('تم تقديم التقرير')
                 .setDescription('**تم إرسال تقريرك بنجاح ✅**')
                 .setColor(colorManager.getColor(client));
-            await interaction.editReply({ embeds: [finalEmbed], components: [] });
+
+            const editButton = new ButtonBuilder().setCustomId(`report_edit_${reportId}`).setLabel('تعديل التقرير').setStyle(ButtonStyle.Secondary);
+            const confirmationRow = new ActionRowBuilder().addComponents(editButton);
+
+            const confirmationMessage = await interaction.editReply({ embeds: [finalEmbed], components: [confirmationRow], fetchReply: true });
+
+            // Keep report data for 5 minutes for editing, then clean up
+            setTimeout(() => {
+                client.pendingReports.delete(reportId);
+                scheduleSave();
+            }, 5 * 60 * 1000 + 2000); // 5 mins + buffer
+
+            // Disable the edit button after 5 minutes
+            setTimeout(async () => {
+                const expiredEmbed = new EmbedBuilder()
+                    .setTitle('تم تقديم التقرير')
+                    .setDescription('**تم إرسال تقريرك بنجاح. انتهت فترة التعديل.**')
+                    .setColor(colorManager.getColor(client));
+                try {
+                    // Check if the message still has components, if so, it means it wasn't edited by a rejection/approval action
+                    const currentMessage = await confirmationMessage.channel.messages.fetch(confirmationMessage.id);
+                    if (currentMessage.components.length > 0) {
+                         await confirmationMessage.edit({ embeds: [expiredEmbed], components: [] });
+                    }
+                } catch(e) {
+                    // Ignore error if message was deleted
+                }
+            }, 5 * 60 * 1000);
     } else if (customId.startsWith('report_approve_') || customId.startsWith('report_reject_')) {
         const isApproval = customId.startsWith('report_approve_');
         const reportId = customId.replace(isApproval ? 'report_approve_' : 'report_reject_', '');
@@ -382,12 +424,17 @@ async function handleInteraction(interaction, context) {
 
         await interaction.update({ embeds: [newEmbed], components: [] });
 
-        // Notify user
+        // Notify user by editing the original confirmation DM
         try {
-            const claimer = await client.users.fetch(claimerId);
-            const statusText = isApproval ? 'قبول' : 'رفض';
-            await claimer.send(`تم **${statusText}** تقريرك لمسؤولية **${responsibilityName}** من قبل الإدارة.`);
-        } catch(e) { console.error(e); }
+            const channel = await client.channels.fetch(reportData.confirmationChannelId);
+            const message = await channel.messages.fetch(reportData.confirmationMessageId);
+            const statusText = isApproval ? 'الموافقة على' : 'رفض';
+            const finalEmbed = new EmbedBuilder()
+                .setTitle(`تم ${statusText} تقريرك`)
+                .setDescription(`لقد تم **${statusText}** تقريرك لمسؤولية **${responsibilityName}** من قبل الإدارة.`)
+                .setColor(isApproval ? '#00ff00' : '#ff0000');
+            await message.edit({ embeds: [finalEmbed], components: [] });
+        } catch(e) { console.error("Could not edit user's confirmation message:", e); }
 
         // Notify other owners
         const otherOwners = BOT_OWNERS.filter(id => id !== interaction.user.id);
@@ -401,6 +448,91 @@ async function handleInteraction(interaction, context) {
         // Clean up
         client.pendingReports.delete(reportId);
         scheduleSave();
+    } else if (customId.startsWith('report_edit_')) {
+        const reportId = customId.replace('report_edit_', '');
+        const reportData = client.pendingReports.get(reportId);
+
+        if (!reportData) {
+            return interaction.update({ content: 'لم يعد هذا التقرير صالحاً للتعديل.', embeds: [], components: [] });
+        }
+
+        const modal = new ModalBuilder()
+            .setCustomId(`report_edit_submit_${reportId}`)
+            .setTitle('تعديل تقرير المهمة');
+
+        const reportInput = new TextInputBuilder()
+            .setCustomId('report_text')
+            .setLabel('الرجاء تعديل تقريرك هنا')
+            .setStyle(TextInputStyle.Paragraph)
+            .setValue(reportData.reportText || '')
+            .setRequired(true);
+
+        const roleInput = new TextInputBuilder()
+            .setCustomId('given_role_id')
+            .setLabel('ID الرول الذي تم منحه (اختياري)')
+            .setPlaceholder('اتركه فارغاً إن لم يتم إعطاء رول')
+            .setValue(reportData.givenRoleId || '')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false);
+
+        modal.addComponents(new ActionRowBuilder().addComponents(reportInput), new ActionRowBuilder().addComponents(roleInput));
+        await interaction.showModal(modal);
+    } else if (customId.startsWith('report_edit_submit_')) {
+        await interaction.deferUpdate();
+        const reportId = customId.replace('report_edit_submit_', '');
+        const reportData = client.pendingReports.get(reportId);
+
+        if (!reportData) {
+            return interaction.followUp({ content: 'لم يعد هذا التقرير صالحاً للتعديل.', ephemeral: true });
+        }
+
+        const newReportText = interaction.fields.getTextInputValue('report_text');
+        const newGivenRoleId = interaction.fields.getTextInputValue('given_role_id');
+
+        // Update the stored report data
+        reportData.reportText = newReportText;
+        reportData.givenRoleId = newGivenRoleId;
+        client.pendingReports.set(reportId, reportData);
+        scheduleSave();
+
+        // Find and update the original report embed
+        if (reportData.approvalMessageIds) {
+            const { displayName, responsibilityName, claimerId, requesterId } = reportData;
+            const newReportEmbed = new EmbedBuilder()
+                .setTitle(`تقرير مهمة: ${responsibilityName}`)
+                .setColor(colorManager.getColor(client))
+                .setAuthor({ name: displayName, iconURL: interaction.user.displayAvatarURL() })
+                .setThumbnail(client.user.displayAvatarURL())
+                .addFields(
+                    { name: 'المسؤول', value: `<@${claimerId}>`, inline: true },
+                    { name: 'صاحب الطلب', value: `<@${requesterId}>`, inline: true },
+                    { name: 'التقرير', value: newReportText.substring(0, 4000) },
+                    { name: 'الحالة', value: 'بانتظار موافقة الأونر' }
+                )
+                .setTimestamp()
+                .setFooter({ text: 'By Ahmed. (تم التعديل)' });
+
+            if (newGivenRoleId) {
+                let roleText = newGivenRoleId;
+                try {
+                    const role = await interaction.guild.roles.fetch(newGivenRoleId).catch(() => null) || interaction.guild.roles.cache.find(r => r.name === newGivenRoleId);
+                    if (role) roleText = `<@&${role.id}>`;
+                } catch (e) { /* ignore */ }
+                newReportEmbed.addFields({ name: 'الرول المعطى', value: roleText, inline: false });
+            }
+
+            for (const [channelId, messageId] of Object.entries(reportData.approvalMessageIds)) {
+                try {
+                    const channel = await client.channels.fetch(channelId);
+                    const message = await channel.messages.fetch(messageId);
+                    await message.edit({ embeds: [newReportEmbed] });
+                } catch (e) {
+                    console.error(`Could not edit report message ${messageId} after edit:`, e);
+                }
+            }
+        }
+
+        await interaction.followUp({ content: '✅ تم تعديل تقريرك بنجاح.', ephemeral: true });
         }
     }
 }
