@@ -134,9 +134,18 @@ function ensureClientMaps(client) {
   if (!client.modalData) client.modalData = new Map();
 }
 
-/** Builds a short, reliable customId for the claim button using the modal's shortId. */
-function buildClaimCustomId(shortId) {
-  return `claim_task_${shortId}`;
+/** تقليم customId إذا تجاوز الحد حتى لا يفشل */
+function buildClaimCustomId(responsibilityName, timestamp, requesterId, originalChannelId, originalMessageId) {
+  let cid = `claim_task_${responsibilityName}_${timestamp}_${requesterId}_${originalChannelId}_${originalMessageId}`;
+  if (cid.length > CLAIM_ID_HARD_LIMIT) {
+    // نسقط messageId أولاً (أقل شيء يؤثر)
+    cid = `claim_task_${responsibilityName}_${timestamp}_${requesterId}_${originalChannelId}_unknown`;
+    if (cid.length > CLAIM_ID_HARD_LIMIT) {
+      // نسقط أيضًا channelId كحل أخير
+      cid = `claim_task_${responsibilityName}_${timestamp}_${requesterId}_unknown_unknown`;
+    }
+  }
+  return cid;
 }
 
 // ===== معالج زر الاستلام =====
@@ -148,14 +157,16 @@ async function handleClaimButton(interaction, client, context) {
     // منع التكرار
     if (interaction.replied || interaction.deferred) return;
 
-    const shortId = interaction.customId.replace('claim_task_', '');
-    const modalData = client.modalData?.get(shortId);
-
-    if (!modalData) {
-        return safeReply(interaction, '**انتهت صلاحية هذه المهمة أو تم التعامل معها بالفعل.**');
+    const parts = interaction.customId.split('_');
+    if (parts.length < 4) {
+      return safeReply(interaction, '**خطأ في معرف المهمة!**');
     }
 
-    const { responsibilityName, userId: requesterId, timestamp, originalChannelId, originalMessageId } = modalData;
+    const responsibilityName = parts[2];
+    const timestamp = parts[3];
+    const requesterId = parts[4] || '0';
+    const originalChannelId = parts[5] || null;
+    const originalMessageId = parts[6] || 'unknown';
     const taskId = `${responsibilityName}_${timestamp}`;
 
     if (!responsibilities[responsibilityName]) {
@@ -182,8 +193,27 @@ async function handleClaimButton(interaction, client, context) {
       }
     } catch { /* ignore */ }
 
+    // CRITICAL: Check if task is already active before proceeding
+    if (activeTasks.has(taskId)) {
+      const claimedBy = activeTasks.get(taskId);
+      const claimedEmbed = colorManager.createEmbed()
+        .setDescription(`**تم استلام هذه المهمة من قبل ${claimedBy}**`)
+        .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400676711439273994/1320524603868712960.png?ex=688d8157&is=688c2fd7&hm=2f0fcafb0d4dd4fc905d6c5c350cfafe7d68e902b5668117f2e7903a62c8&');
+      return safeReply(interaction, '', { embeds: [claimedEmbed] });
+    }
+
+    // Mark task as active immediately to prevent race conditions
+    activeTasks.set(taskId, displayName);
+    saveActiveTasks();
+
+    // Cancel reminder if it exists
+    const notificationsCommand = client.commands.get('notifications');
+    if (notificationsCommand?.cancelTaskTracking) {
+      notificationsCommand.cancelTaskTracking(taskId);
+    }
+
     // --- NEW REPORTING LOGIC ---
-    const isReportRequired = reportsConfig && reportsConfig.enabled && reportsConfig.requiredFor.includes(responsibilityName);
+    const isReportRequired = reportsConfig && reportsConfig.enabled && Array.isArray(reportsConfig.requiredFor) && reportsConfig.requiredFor.includes(responsibilityName);
 
     if (isReportRequired) {
         const reportId = `${interaction.user.id}_${Date.now()}`;
@@ -192,9 +222,7 @@ async function handleClaimButton(interaction, client, context) {
             displayName: displayName,
             responsibilityName,
             requesterId,
-            timestamp,
-            originalChannelId,
-            originalMessageId
+            timestamp
         });
         scheduleSave(); // Save the pending report state
 
@@ -228,43 +256,22 @@ async function handleClaimButton(interaction, client, context) {
 
         await interaction.update({ embeds: [reportEmbed], components: [row] });
 
-        // Notify requester that task was claimed
-        try {
-            const requester = await client.users.fetch(requesterId);
-            const requesterSuccessEmbed = colorManager.createEmbed()
-                .setDescription(`**✅ تم استلام طلبك لمسؤولية ${responsibilityName} من قبل ${displayName}**\nسيقوم بالتواصل معك قريباً.`)
-                .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400676711439273994/1320524603868712960.png?ex=688d8157&is=688c2fd7&hm=2f0fcafb0d4dd4fc905d6c5c350cfafe7d68e902b5668117f2e7903a62c8&');
-            await requester.send({ embeds: [requesterSuccessEmbed] });
-        } catch (e) {
-            if (DEBUG) console.log('تعذر إرسال DM للطالب (في مسار التقرير):', e?.message);
+    } else {
+        // --- ORIGINAL LOGIC for tasks NOT requiring a report ---
+        // Award points immediately
+        if (!points[responsibilityName]) points[responsibilityName] = {};
+        if (!points[responsibilityName][interaction.user.id]) points[responsibilityName][interaction.user.id] = {};
+        if (typeof points[responsibilityName][interaction.user.id] === 'number') {
+          const oldPoints = points[responsibilityName][interaction.user.id];
+          points[responsibilityName][interaction.user.id] = {
+            [Date.now() - (35 * 24 * 60 * 60 * 1000)]: oldPoints
+          };
         }
-        return; // End execution for the report path
-    }
-    // --- END OF NEW LOGIC ---
-
-    activeTasks.set(taskId, displayName);
-    saveActiveTasks();
-
-    // إلغاء التذكير إن وُجد
-    const notificationsCommand = client.commands.get('notifications');
-    if (notificationsCommand?.cancelTaskTracking) {
-      notificationsCommand.cancelTaskTracking(taskId);
-    }
-
-    // نقاط
-    if (!points[responsibilityName]) points[responsibilityName] = {};
-    if (!points[responsibilityName][interaction.user.id]) points[responsibilityName][interaction.user.id] = {};
-    if (typeof points[responsibilityName][interaction.user.id] === 'number') {
-      const oldPoints = points[responsibilityName][interaction.user.id];
-      points[responsibilityName][interaction.user.id] = {
-        [Date.now() - (35 * 24 * 60 * 60 * 1000)]: oldPoints
-      };
-    }
-    if (!points[responsibilityName][interaction.user.id][timestamp]) {
-      points[responsibilityName][interaction.user.id][timestamp] = 0;
-    }
-    points[responsibilityName][interaction.user.id][timestamp] += 1;
-    scheduleSave();
+        if (!points[responsibilityName][interaction.user.id][timestamp]) {
+          points[responsibilityName][interaction.user.id][timestamp] = 0;
+        }
+        points[responsibilityName][interaction.user.id][timestamp] += 1;
+        scheduleSave();
 
     // زر رابط الرسالة (إن أمكن)
     const finalChannelId = originalChannelId || interaction.channelId;
@@ -724,7 +731,13 @@ async function handleInteraction(interaction, client, context) {
 
       const embed = createCallEmbed(responsibilityName, reason, userId);
 
-      const claimCustomId = buildClaimCustomId(shortId);
+      const claimCustomId = buildClaimCustomId(
+        responsibilityName,
+        timestamp,
+        userId,
+        originalChannelId,
+        originalMessageId || 'unknown'
+      );
 
       const claimButton = new ButtonBuilder().setCustomId(claimCustomId).setLabel('Claim').setStyle(ButtonStyle.Success);
 

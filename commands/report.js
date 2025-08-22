@@ -59,12 +59,11 @@ async function sendReportSettings(target, reportsConfig, responsibilities) {
 
     const payload = { content: '', embeds: [embed], components: [row] };
 
-    // This logic is flawed, interaction.message should be used instead of fetching.
-    // However, for the initial command, this is okay.
-    if (target.type === 'Message' || target.id) {
+    if (target.id && (target.type === 'Message' || typeof target.edit === 'function')) {
          try {
             await target.edit(payload);
         } catch (e) {
+            // If editing fails (e.g. message deleted), send a new one
             await target.channel.send(payload);
         }
     } else {
@@ -73,16 +72,15 @@ async function sendReportSettings(target, reportsConfig, responsibilities) {
 }
 
 async function handleInteraction(interaction, context) {
-    const { client, reportsConfig, responsibilities, scheduleSave, BOT_OWNERS, points } = context;
-    if (!BOT_OWNERS.includes(interaction.user.id) && !interaction.customId.startsWith('report_write_') && !interaction.customId.startsWith('report_submit_')) {
+    const { client, reportsConfig, responsibilities, scheduleSave, BOT_OWNERS } = context;
+
+    if (!BOT_OWNERS.includes(interaction.user.id)) {
         return interaction.reply({ content: '❌ **أنت لا تملك صلاحية استخدام هذا الأمر!**', ephemeral: true });
     }
 
-    const { customId } = interaction;
+    await interaction.deferUpdate();
 
-    if (customId.startsWith('report_toggle_') || customId.startsWith('report_manage_') || customId.startsWith('report_select_') || customId.startsWith('report_back_')) {
-        await interaction.deferUpdate();
-    }
+    const { customId } = interaction;
 
     if (customId === 'report_toggle_system') {
         reportsConfig.enabled = !reportsConfig.enabled;
@@ -175,6 +173,9 @@ async function handleInteraction(interaction, context) {
             return interaction.update({ content: 'لم يتم العثور على هذا التقرير أو انتهت صلاحيته.', embeds:[], components: [] });
         }
 
+        // Acknowledge the button click immediately before showing the modal
+        // No deferUpdate() needed here as showModal() acknowledges the interaction.
+
         const modal = new ModalBuilder()
             .setCustomId(`report_submit_${reportId}`)
             .setTitle('كتابة تقرير المهمة');
@@ -200,15 +201,15 @@ async function handleInteraction(interaction, context) {
         const reportData = client.pendingReports.get(reportId);
 
         if (!reportData) {
-            return interaction.editReply({ content: 'لم يعد هذا التقرير صالحاً.', embeds: [], components: [] });
+            return interaction.editReply({ content: 'لم يعد هذا التقرير صالحاً أو قد تم تقديمه بالفعل.', embeds: [], components: [] });
         }
 
         const reportText = interaction.fields.getTextInputValue('report_text');
         const givenRoleId = interaction.fields.getTextInputValue('given_role_id');
 
         // Award point if configured to do so
+        const { responsibilityName, claimerId, timestamp, requesterId } = reportData;
         if (reportsConfig.pointsOnReport) {
-            const { responsibilityName, claimerId, timestamp } = reportData;
             if (!points[responsibilityName]) points[responsibilityName] = {};
             if (!points[responsibilityName][claimerId]) points[responsibilityName][claimerId] = {};
             if (typeof points[responsibilityName][claimerId] === 'number') {
@@ -223,22 +224,22 @@ async function handleInteraction(interaction, context) {
         }
 
         // Prepare report embed
-        const { displayName, responsibilityName, requesterId } = reportData;
+        const { displayName } = reportData;
         const reportEmbed = new EmbedBuilder()
             .setTitle(`تقرير مهمة: ${responsibilityName}`)
             .setColor(colorManager.getColor(client))
             .setAuthor({ name: displayName, iconURL: interaction.user.displayAvatarURL() })
             .setThumbnail(client.user.displayAvatarURL())
             .addFields(
-                { name: 'المسؤول', value: `<@${interaction.user.id}>`, inline: true },
+                { name: 'المسؤول', value: `<@${claimerId}>`, inline: true },
                 { name: 'صاحب الطلب', value: `<@${requesterId}>`, inline: true },
-                { name: 'التقرير', value: reportText.substring(0, 1024) }
+                { name: 'التقرير', value: reportText.substring(0, 4000) }
             )
             .setTimestamp()
             .setFooter({ text: 'By Ahmed.' });
 
         if (givenRoleId && /^\d{17,19}$/.test(givenRoleId)) {
-            reportEmbed.addFields({ name: 'الرول المعطى', value: `<@&${givenRoleId}>` });
+            reportEmbed.addFields({ name: 'الرول المعطى', value: `<@&${givenRoleId}>`, inline: false });
         }
 
         // Send report
