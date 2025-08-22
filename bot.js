@@ -868,7 +868,8 @@ client.on('interactionCreate', async (interaction) => {
 
           await interaction.reply({ content: `** تم إرسال الاستدعاء  إلى <@${target}>.**`, ephemeral: true });
         } catch (error) {
-          await interaction.reply({ content: '**فشل في إرسال الرسالة الخاصة.**', ephemeral: true });
+          console.error(`Failed to send DM to user ${target}:`, error);
+          await interaction.reply({ content: `**فشل إرسال الرسالة إلى <@${target}>. قد يكون المستخدم قد قام بتعطيل الرسائل الخاصة.**`, ephemeral: true });
         }
       }
 
