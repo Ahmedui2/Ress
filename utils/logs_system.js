@@ -62,6 +62,12 @@ const EVENT_TYPES = {
         description: 'سجل استدعاء المشرفين والإداريين',
         color: '#c0392b',
         emoji: '📢'
+    },
+    'REPORT_SYSTEM': {
+        name: 'نظام التقارير',
+        description: 'سجل التقارير المقدمة من المسؤولين',
+        color: '#7f8c8d',
+        emoji: '📝'
     }
 };
 
@@ -254,6 +260,17 @@ const LOG_TEMPLATES = {
             { name: 'المسؤولية', value: responsibilityName, inline: true },
             { name: 'السبب', value: reason || 'لم يذكر سبب', inline: false },
             { name: 'الهدف', value: target === 'all' ? 'جميع المسؤولين' : `<@${target}>`, inline: true }
+        ]
+    }),
+
+    REPORT_SUBMITTED: (claimer, requesterId, responsibilityName) => ({
+        type: 'REPORT_SYSTEM',
+        title: 'تم تقديم تقرير مهمة',
+        description: `تقرير مقدم من أجل مهمة في مسؤولية **${responsibilityName}**`,
+        user: claimer,
+        fields: [
+            { name: 'مقدم التقرير', value: `<@${claimer.id}>`, inline: true },
+            { name: 'صاحب الطلب', value: `<@${requesterId}>`, inline: true }
         ]
     })
 };
@@ -494,7 +511,10 @@ const quickLog = {
         logEvent(client, guild, LOG_TEMPLATES.ADMIN_CALLING_RESPONSIBLE(responsibilityName, target, user)),
 
     adminCallRequested: (client, guild, responsibilityName, reason, target, user) => 
-        logEvent(client, guild, LOG_TEMPLATES.ADMIN_CALL_REQUESTED(responsibilityName, reason, target, user))
+        logEvent(client, guild, LOG_TEMPLATES.ADMIN_CALL_REQUESTED(responsibilityName, reason, target, user)),
+
+    reportSubmitted: (client, guild, claimer, requesterId, responsibilityName) =>
+        logEvent(client, guild, LOG_TEMPLATES.REPORT_SUBMITTED(claimer, requesterId, responsibilityName))
 };
 
 module.exports = {

@@ -140,7 +140,8 @@ function buildClaimCustomId(shortId) {
 }
 
 // ===== معالج زر الاستلام =====
-async function handleClaimButton(interaction, client, responsibilities, points, scheduleSave) {
+async function handleClaimButton(interaction, client, context) {
+  const { responsibilities, points, scheduleSave, reportsConfig } = context;
   try {
     if (!interaction || !interaction.isRepliable()) return;
 
@@ -180,6 +181,66 @@ async function handleClaimButton(interaction, client, responsibilities, points, 
         displayName = member.displayName || member.user.displayName || member.user.username;
       }
     } catch { /* ignore */ }
+
+    // --- NEW REPORTING LOGIC ---
+    const isReportRequired = reportsConfig && reportsConfig.enabled && reportsConfig.requiredFor.includes(responsibilityName);
+
+    if (isReportRequired) {
+        const reportId = `${interaction.user.id}_${Date.now()}`;
+        client.pendingReports.set(reportId, {
+            claimerId: interaction.user.id,
+            displayName: displayName,
+            responsibilityName,
+            requesterId,
+            timestamp,
+            originalChannelId,
+            originalMessageId
+        });
+        scheduleSave(); // Save the pending report state
+
+        // Award point now if points-on-report is disabled
+        if (!reportsConfig.pointsOnReport) {
+            if (!points[responsibilityName]) points[responsibilityName] = {};
+            if (!points[responsibilityName][interaction.user.id]) points[responsibilityName][interaction.user.id] = {};
+            if (typeof points[responsibilityName][interaction.user.id] === 'number') {
+                const oldPoints = points[responsibilityName][interaction.user.id];
+                points[responsibilityName][interaction.user.id] = { [Date.now() - (35 * 24 * 60 * 60 * 1000)]: oldPoints };
+            }
+            if (!points[responsibilityName][interaction.user.id][timestamp]) {
+                points[responsibilityName][interaction.user.id][timestamp] = 0;
+            }
+            points[responsibilityName][interaction.user.id][timestamp] += 1;
+            scheduleSave();
+        }
+
+        const reportEmbed = new EmbedBuilder()
+            .setTitle('تم استلام المهمة بنجاح')
+            .setDescription('**هذه المهمة تتطلب تقريراً بعد الإنتهاء منها. يرجى الضغط على الزر أدناه لكتابة التقرير.**')
+            .setColor(colorManager.getColor(client))
+            .setFooter({text: 'By Ahmed.'});
+
+        const writeReportButton = new ButtonBuilder()
+            .setCustomId(`report_write_${reportId}`)
+            .setLabel('كتابة التقرير')
+            .setStyle(ButtonStyle.Success);
+
+        const row = new ActionRowBuilder().addComponents(writeReportButton);
+
+        await interaction.update({ embeds: [reportEmbed], components: [row] });
+
+        // Notify requester that task was claimed
+        try {
+            const requester = await client.users.fetch(requesterId);
+            const requesterSuccessEmbed = colorManager.createEmbed()
+                .setDescription(`**✅ تم استلام طلبك لمسؤولية ${responsibilityName} من قبل ${displayName}**\nسيقوم بالتواصل معك قريباً.`)
+                .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400676711439273994/1320524603868712960.png?ex=688d8157&is=688c2fd7&hm=2f0fcafb0d4dd4fc905d6c5c350cfafe7d68e902b5668117f2e7903a62c8&');
+            await requester.send({ embeds: [requesterSuccessEmbed] });
+        } catch (e) {
+            if (DEBUG) console.log('تعذر إرسال DM للطالب (في مسار التقرير):', e?.message);
+        }
+        return; // End execution for the report path
+    }
+    // --- END OF NEW LOGIC ---
 
     activeTasks.set(taskId, displayName);
     saveActiveTasks();
@@ -631,10 +692,11 @@ async function showUserResponsibilities(message, targetUser, responsibilities, c
 }
 
 // ===== نقطة دخول التفاعلات =====
-async function handleInteraction(interaction, client, responsibilities, points, scheduleSave) {
+async function handleInteraction(interaction, client, context) {
+  const { responsibilities, points, scheduleSave, reportsConfig } = context;
   try {
     if (interaction.isButton() && interaction.customId.startsWith('claim_task_')) {
-      await handleClaimButton(interaction, client, responsibilities, points, scheduleSave);
+      await handleClaimButton(interaction, client, context);
       return;
     }
 

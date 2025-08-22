@@ -23,7 +23,8 @@ const DATA_FILES = {
     adminRoles: path.join(dataDir, 'adminRoles.json'),
     botConfig: path.join(dataDir, 'botConfig.json'),
     cooldowns: path.join(dataDir, 'cooldowns.json'),
-    notifications: path.join(dataDir, 'notifications.json')
+    notifications: path.join(dataDir, 'notifications.json'),
+    reports: path.join(dataDir, 'reports.json')
 };
 
 // دالة لقراءة ملف JSON
@@ -84,7 +85,15 @@ let botConfig = readJSONFile(DATA_FILES.botConfig, {
     owners: [],
     prefix: null,
     settings: {},
-    activeTasks: {}
+    activeTasks: {},
+    pendingReports: {}
+});
+
+let reportsConfig = readJSONFile(DATA_FILES.reports, {
+  enabled: false,
+  pointsOnReport: false,
+  reportChannel: null,
+  requiredFor: []
 });
 
 // لا نحتاج لمتغيرات محلية لـ cooldowns و notifications
@@ -161,6 +170,7 @@ global.reloadBotOwners = reloadBotOwners;
 global.updateBotOwners = updateBotOwners;
 
 client.commands = new Collection();
+client.pendingReports = new Map();
 client.logConfig = logConfig;
 
 
@@ -221,11 +231,13 @@ function saveData(force = false) {
     }
 
     try {
+        savePendingReports();
         // حفظ مباشر بدون قراءة ودمج معقد
         writeJSONFile(DATA_FILES.points, points);
         writeJSONFile(DATA_FILES.responsibilities, responsibilities);
         writeJSONFile(DATA_FILES.logConfig, client.logConfig || logConfig);
         writeJSONFile(DATA_FILES.botConfig, botConfig);
+        writeJSONFile(DATA_FILES.reports, reportsConfig);
 
         isDataDirty = false;
         return true;
@@ -413,6 +425,7 @@ client.once('ready', async () => {
   // تهيئة نظام المهام النشطة الجديد
   setTimeout(() => {
     initializeActiveTasks();
+    loadPendingReports();
   }, 2000);
 
   // تهيئة نظام الألوان
@@ -575,7 +588,7 @@ client.on('messageCreate', async message => {
       if (commandName === 'مسؤولياتي') {
         await showUserResponsibilities(message, message.author, responsibilities, client);
       } else {
-        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
+        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager, reportsConfig });
       }
     }
     // Commands for admins and owners (مسؤول)
@@ -591,17 +604,17 @@ client.on('messageCreate', async message => {
       
       if (hasAdminRole || isOwner || hasAdministrator) {
         console.log(`✅ تم منح الصلاحية للمستخدم ${message.author.id}`);
-        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
+        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager, reportsConfig });
       } else {
         console.log(`❌ المستخدم ${message.author.id} لا يملك الصلاحيات المطلوبة لأمر مسؤول`);
         await message.react('❌');
         return;
       }
     }
-    // Commands for owners only (call, stats, setup)
-    else if (commandName === 'call' || commandName === 'stats' || commandName === 'setup') {
+    // Commands for owners only (call, stats, setup, report)
+    else if (commandName === 'call' || commandName === 'stats' || commandName === 'setup' || commandName === 'report') {
       if (isOwner) {
-        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
+        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager, reportsConfig });
       } else {
         await message.react('❌');
         return;
@@ -610,7 +623,7 @@ client.on('messageCreate', async message => {
     // Commands for owners only (all other commands)
     else {
       if (isOwner) {
-        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
+        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager, reportsConfig });
       } else {
         await message.react('❌');
         return;
@@ -651,6 +664,33 @@ function saveActiveTasks() {
     }
   } catch (error) {
     console.error('❌ خطأ في حفظ المهام النشطة:', error);
+  }
+}
+
+function loadPendingReports() {
+  try {
+    const currentBotConfig = readJSONFile(DATA_FILES.botConfig, {});
+    if (currentBotConfig.pendingReports) {
+      const savedReports = currentBotConfig.pendingReports;
+      for (const [key, value] of Object.entries(savedReports)) {
+        client.pendingReports.set(key, value);
+      }
+      console.log(`✅ تم تحميل ${client.pendingReports.size} تقرير معلق من JSON`);
+    }
+  } catch (error) {
+    console.error('❌ خطأ في تحميل التقارير المعلقة:', error);
+  }
+}
+
+function savePendingReports() {
+  try {
+    const pendingReportsObj = {};
+    for (const [key, value] of client.pendingReports.entries()) {
+      pendingReportsObj[key] = value;
+    }
+    botConfig.pendingReports = pendingReportsObj;
+  } catch (error) {
+    console.error('❌ خطأ في تجهيز التقارير المعلقة للحفظ:', error);
   }
 }
 
@@ -714,7 +754,7 @@ client.on('interactionCreate', async (interaction) => {
 
         const logCommand = client.commands.get('log');
         if (logCommand && logCommand.handleInteraction) {
-            await logCommand.handleInteraction(interaction, client, saveData, BOT_OWNERS);
+            await logCommand.handleInteraction(interaction, client, saveData);
         }
         return;
     }
@@ -779,11 +819,19 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
+    if (interaction.customId.startsWith('report_')) {
+        const reportCommand = client.commands.get('report');
+        if (reportCommand && reportCommand.handleInteraction) {
+            await reportCommand.handleInteraction(interaction, { client, reportsConfig, responsibilities, scheduleSave, BOT_OWNERS, points });
+        }
+        return;
+    }
+
     // Handle claim buttons - استخدام المعالج الجديد من masoul.js
     if (interaction.isButton() && interaction.customId.startsWith('claim_task_')) {
         const masoulCommand = client.commands.get('مسؤول');
         if (masoulCommand && masoulCommand.handleInteraction) {
-            await masoulCommand.handleInteraction(interaction, client, responsibilities, points, scheduleSave);
+            await masoulCommand.handleInteraction(interaction, client, { responsibilities, points, scheduleSave, reportsConfig });
         }
         return;
     }
@@ -812,11 +860,9 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      const payload = interaction.customId.replace('call_reason_modal_', '');
-      const parts = payload.split('_');
-      const target = parts.shift();
-      const timestamp = parts.shift(); // Not used, but we need to shift it.
-      const responsibilityName = parts.join('_');
+      const customIdParts = interaction.customId.replace('call_reason_modal_', '').split('_');
+      const responsibilityName = customIdParts[0];
+      const target = customIdParts[1];
       const reason = interaction.fields.getTextInputValue('reason').trim() || 'لا يوجد سبب محدد';
 
       if (!responsibilities[responsibilityName]) {
@@ -843,7 +889,8 @@ client.on('interactionCreate', async (interaction) => {
       const goButton = new ButtonBuilder()
         .setCustomId(`go_to_call_${originalChannelId}_${originalMessageId}_${interaction.user.id}`)
         .setLabel('🔗 الذهاب للرسالة')
-        .setStyle(ButtonStyle.Primary);
+        .setStyle(ButtonStyle.Link)
+        .setURL(`https://discord.com/channels/${interaction.guildId || '@me'}/${originalChannelId}/${originalMessageId}`);
 
       const buttonRow = new ActionRowBuilder().addComponents(goButton);
 
@@ -867,8 +914,7 @@ client.on('interactionCreate', async (interaction) => {
 
           await interaction.reply({ content: `** تم إرسال الاستدعاء  إلى <@${target}>.**`, ephemeral: true });
         } catch (error) {
-          console.error(`Failed to send DM to user ${target}:`, error);
-          await interaction.reply({ content: `**فشل إرسال الرسالة إلى <@${target}>. قد يكون المستخدم قد قام بتعطيل الرسائل الخاصة.**`, ephemeral: true });
+          await interaction.reply({ content: '**فشل في إرسال الرسالة الخاصة.**', ephemeral: true });
         }
       }
 
@@ -959,10 +1005,10 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // Handle modal submissions for masoul - استخدام المعالج الجديد من masoul.js
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('masoul_reason_modal_')) {
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('masoul_modal_')) {
         const masoulCommand = client.commands.get('مسؤول');
         if (masoulCommand && masoulCommand.handleInteraction) {
-            await masoulCommand.handleInteraction(interaction, client, responsibilities, points, scheduleSave);
+            await masoulCommand.handleInteraction(interaction, client, { responsibilities, points, scheduleSave, reportsConfig });
         }
         return;
     }
