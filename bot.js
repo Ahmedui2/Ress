@@ -714,7 +714,7 @@ client.on('interactionCreate', async (interaction) => {
 
         const logCommand = client.commands.get('log');
         if (logCommand && logCommand.handleInteraction) {
-            await logCommand.handleInteraction(interaction, client, saveData);
+            await logCommand.handleInteraction(interaction, client, saveData, BOT_OWNERS);
         }
         return;
     }
