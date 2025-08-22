@@ -843,8 +843,7 @@ client.on('interactionCreate', async (interaction) => {
       const goButton = new ButtonBuilder()
         .setCustomId(`go_to_call_${originalChannelId}_${originalMessageId}_${interaction.user.id}`)
         .setLabel('🔗 الذهاب للرسالة')
-        .setStyle(ButtonStyle.Link)
-        .setURL(`https://discord.com/channels/${interaction.guildId || '@me'}/${originalChannelId}/${originalMessageId}`);
+        .setStyle(ButtonStyle.Primary);
 
       const buttonRow = new ActionRowBuilder().addComponents(goButton);
 
