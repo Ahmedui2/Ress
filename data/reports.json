@@ -3,5 +3,6 @@
   "pointsOnReport": false,
   "reportChannel": null,
   "requiredFor": [],
-  "approvalRequiredFor": []
+  "approvalRequiredFor": [],
+  "templates": {}
 }

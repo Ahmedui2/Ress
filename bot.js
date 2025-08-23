@@ -93,7 +93,9 @@ let reportsConfig = readJSONFile(DATA_FILES.reports, {
   enabled: false,
   pointsOnReport: false,
   reportChannel: null,
-  requiredFor: []
+  requiredFor: [],
+  approvalRequiredFor: [],
+  templates: {}
 });
 
 // لا نحتاج لمتغيرات محلية لـ cooldowns و notifications
