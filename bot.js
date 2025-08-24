@@ -878,7 +878,7 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.customId.startsWith('report_')) {
         const reportCommand = client.commands.get('report');
         if (reportCommand && reportCommand.handleInteraction) {
-            await reportCommand.handleInteraction(interaction, { client, reportsConfig, responsibilities, scheduleSave, BOT_OWNERS, points });
+            await reportCommand.handleInteraction(interaction, context);
         }
         return;
     }
@@ -887,7 +887,7 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith('claim_task_')) {
         const masoulCommand = client.commands.get('مسؤول');
         if (masoulCommand && masoulCommand.handleInteraction) {
-            await masoulCommand.handleInteraction(interaction, client, { responsibilities, points, scheduleSave, reportsConfig });
+            await masoulCommand.handleInteraction(interaction, context);
         }
         return;
     }
