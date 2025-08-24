@@ -46,9 +46,8 @@ class ColorManager {
             let sharp, fetch;
             try {
                 sharp = require('sharp');
-                // استيراد node-fetch بطريقة ES modules
-                const { default: nodeFetch } = await import('node-fetch');
-                fetch = nodeFetch;
+                // استيراد node-fetch بطريقة CommonJS
+                fetch = require('node-fetch');
             } catch (requireError) {
                 console.error('❌ مكتبات مطلوبة غير موجودة:', requireError.message);
                 throw new Error('Missing required packages');
