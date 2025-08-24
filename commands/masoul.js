@@ -149,8 +149,8 @@ function buildClaimCustomId(responsibilityName, timestamp, requesterId, original
 }
 
 // ===== معالج زر الاستلام =====
-async function handleClaimButton(interaction, client, context) {
-  const { responsibilities, points, scheduleSave, reportsConfig } = context;
+async function handleClaimButton(interaction, context) {
+  const { client, responsibilities, points, scheduleSave, reportsConfig } = context;
   try {
     if (!interaction || !interaction.isRepliable()) return;
 
@@ -700,11 +700,11 @@ async function showUserResponsibilities(message, targetUser, responsibilities, c
 }
 
 // ===== نقطة دخول التفاعلات =====
-async function handleInteraction(interaction, client, context) {
-  const { responsibilities, points, scheduleSave, reportsConfig } = context;
+async function handleInteraction(interaction, context) {
+  const { client, responsibilities, points, scheduleSave, reportsConfig } = context;
   try {
     if (interaction.isButton() && interaction.customId.startsWith('claim_task_')) {
-      await handleClaimButton(interaction, client, context);
+      await handleClaimButton(interaction, context);
       return;
     }
 

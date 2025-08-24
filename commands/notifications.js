@@ -217,7 +217,8 @@ async function execute(message, args, { client, responsibilities, saveData, BOT_
     });
 }
 
-async function handleInteraction(interaction, client, responsibilities, saveData) {
+async function handleInteraction(interaction, context) {
+    const { client, responsibilities, scheduleSave } = context;
     try {
         // Check interaction validity
         const now = Date.now();
@@ -425,7 +426,8 @@ async function handleInteraction(interaction, client, responsibilities, saveData
     }
 }
 
-async function handleModalSubmit(interaction, client, responsibilities) {
+async function handleModalSubmit(interaction, context) {
+    const { client, responsibilities } = context;
     try {
         // إعادة تحميل الإعدادات
         const notificationsConfig = loadNotificationsConfig();

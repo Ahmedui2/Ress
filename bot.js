@@ -811,11 +811,23 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
+    // --- Create a unified context object for all interaction handlers ---
+    const context = {
+        client,
+        responsibilities,
+        points,
+        scheduleSave,
+        BOT_OWNERS,
+        reportsConfig,
+        logConfig: client.logConfig,
+        colorManager
+    };
+
     // Handle cooldown system interactions
     if (interaction.customId && interaction.customId.startsWith('cooldown_')) {
         const cooldownCommand = client.commands.get('cooldown');
         if (cooldownCommand && cooldownCommand.handleInteraction) {
-            await cooldownCommand.handleInteraction(interaction, client, saveData, responsibilities);
+            await cooldownCommand.handleInteraction(interaction, context);
         }
         return;
     }
@@ -825,7 +837,7 @@ client.on('interactionCreate', async (interaction) => {
         interaction.customId === 'select_responsibility_time')) {
         const notificationsCommand = client.commands.get('notifications');
         if (notificationsCommand && notificationsCommand.handleInteraction) {
-            await notificationsCommand.handleInteraction(interaction, client, responsibilities, saveData);
+            await notificationsCommand.handleInteraction(interaction, context);
         }
         return;
     }

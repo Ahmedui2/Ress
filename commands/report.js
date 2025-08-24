@@ -235,8 +235,9 @@ async function handleInteraction(interaction, context) {
     // --- Template Management ---
     if (customId === 'report_manage_templates') {
         const templateButtons = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('report_template_add').setLabel('إضافة/تعديل قالب').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId('report_template_remove').setLabel('إزالة قالب').setStyle(ButtonStyle.Danger)
+            new ButtonBuilder().setCustomId('report_template_add').setLabel('إضافة/تعديل (فردي)').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId('report_template_remove').setLabel('إزالة (فردي)').setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId('report_template_bulk').setLabel('تعديل جماعي').setStyle(ButtonStyle.Primary)
         );
         const backButton = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('report_back_to_main').setLabel('➡️ العودة').setStyle(ButtonStyle.Secondary));
         await interaction.editReply({ content: 'اختر إجراءً لإدارة قوالب التقارير:', embeds: [], components: [templateButtons, backButton] });
@@ -329,6 +330,76 @@ async function handleInteraction(interaction, context) {
         );
         const backButton = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('report_back_to_main').setLabel('➡️ العودة').setStyle(ButtonStyle.Secondary));
         await interaction.message.edit({ content: 'اختر إجراءً لإدارة قوالب التقارير:', embeds: [], components: [templateButtons, backButton] });
+    }
+
+    // --- Bulk Template Management ---
+    if (customId === 'report_template_bulk') {
+        const bulkButtons = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('report_template_apply_all').setLabel('تطبيق قالب مخصص للكل').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId('report_template_apply_default').setLabel('تطبيق قالب افتراضي').setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId('report_template_delete_all').setLabel('حذف جميع القوالب').setStyle(ButtonStyle.Danger)
+        );
+        const backButton = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('report_manage_templates').setLabel('➡️ العودة').setStyle(ButtonStyle.Secondary));
+        await interaction.editReply({ content: 'اختر إجراءً جماعيًا للقوالب:', embeds: [], components: [bulkButtons, backButton] });
+    }
+
+    if (customId === 'report_template_apply_all') {
+        const modal = new ModalBuilder()
+            .setCustomId('report_template_apply_all_modal')
+            .setTitle('تطبيق قالب على كل المسؤوليات');
+
+        const templateInput = new TextInputBuilder()
+            .setCustomId('template_text_all')
+            .setLabel('نص القالب')
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(true)
+            .setPlaceholder('اكتب هنا القالب الذي سيتم تطبيقه على الجميع...');
+
+        modal.addComponents(new ActionRowBuilder().addComponents(templateInput));
+        await interaction.showModal(modal);
+    }
+
+    if (customId === 'report_template_apply_all_modal') {
+        const templateText = interaction.fields.getTextInputValue('template_text_all');
+        const config = loadReportsConfig();
+
+        for (const respName in responsibilities) {
+            config.templates[respName] = templateText;
+        }
+
+        saveReportsConfig(config);
+        await interaction.followUp({ content: `✅ تم تطبيق القالب بنجاح على جميع المسؤوليات.`, ephemeral: true });
+
+        const embed = createMainEmbed(client);
+        const buttons = createMainButtons();
+        await interaction.message.edit({ content: '', embeds: [embed], components: [buttons] });
+    }
+
+    if (customId === 'report_template_delete_all') {
+        const config = loadReportsConfig();
+        config.templates = {};
+        saveReportsConfig(config);
+        await interaction.followUp({ content: '✅ تم حذف جميع القوالب بنجاح.', ephemeral: true });
+
+        const embed = createMainEmbed(client);
+        const buttons = createMainButtons();
+        await interaction.message.edit({ content: '', embeds: [embed], components: [buttons] });
+    }
+
+    if (customId === 'report_template_apply_default') {
+        const defaultConfig = `**- ملخص الإنجاز:**\n\n\n**- هل تمت مواجهة مشاكل؟:**\n\n\n**- ملاحظات إضافية:**`;
+        const config = loadReportsConfig();
+
+        for (const respName in responsibilities) {
+            config.templates[respName] = defaultConfig;
+        }
+
+        saveReportsConfig(config);
+        await interaction.followUp({ content: `✅ تم تطبيق القالب الافتراضي بنجاح على جميع المسؤوليات.`, ephemeral: true });
+
+        const embed = createMainEmbed(client);
+        const buttons = createMainButtons();
+        await interaction.message.edit({ content: '', embeds: [embed], components: [buttons] });
     }
 
     // --- Report Submission Flow ---

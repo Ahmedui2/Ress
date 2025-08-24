@@ -184,7 +184,8 @@ async function execute(message, args, { responsibilities, client, saveData, BOT_
     });
 }
 
-async function handleInteraction(interaction, client, saveData, responsibilities, colorManager) {
+async function handleInteraction(interaction, context) {
+    const { client, responsibilities, colorManager } = context;
     try {
         // التأكد من وجود colorManager
         const actualColorManager = colorManager || require('../utils/colorManager');
