@@ -17,21 +17,22 @@ function loadCooldowns() {
             const parsed = JSON.parse(data);
             
             // التأكد من وجود الهيكل المطلوب
-            if (!parsed.responsibilities) {
-                parsed.responsibilities = {};
-            }
-            if (!parsed.userCooldowns) {
-                parsed.userCooldowns = {};
-            }
-            if (!parsed.default) {
-                parsed.default = 60000;
+            if (!parsed.responsibilities) parsed.responsibilities = {};
+            if (!parsed.userCooldowns) parsed.userCooldowns = {};
+            if (!parsed.default) parsed.default = 60000;
+            if (!parsed.bypass) {
+                parsed.bypass = {
+                    users: [],
+                    roles: [],
+                    responsibilities: []
+                };
             }
             
             console.log('📖 تم تحميل البيانات:', JSON.stringify(parsed, null, 2));
             return parsed;
         }
         console.log('📂 لم يوجد ملف، إنشاء بيانات افتراضية');
-        return { default: 60000, responsibilities: {}, userCooldowns: {} };
+        return { default: 60000, responsibilities: {}, userCooldowns: {}, bypass: { users: [], roles: [], responsibilities: [] } };
     } catch (error) {
         console.error('خطأ في قراءة cooldowns:', error);
         return { default: 60000, responsibilities: {}, userCooldowns: {} };
@@ -86,10 +87,17 @@ function loadUserCooldowns() {
     }
 }
 
-function checkCooldown(userId, responsibilityName) {
-    const key = `${userId}_${responsibilityName}`;
-    const now = Date.now();
+function checkCooldown(interaction, responsibilityName) {
     const cooldowns = loadCooldowns();
+    const bypass = cooldowns.bypass || { users: [], roles: [], responsibilities: [] };
+
+    // Check for bypass
+    if (bypass.responsibilities.includes(responsibilityName)) return 0;
+    if (bypass.users.includes(interaction.user.id)) return 0;
+    if (interaction.member && interaction.member.roles.cache.some(role => bypass.roles.includes(role.id))) return 0;
+
+    const key = `${interaction.user.id}_${responsibilityName}`;
+    const now = Date.now();
     
     // Safe access to prevent undefined errors
     const responsibilities = cooldowns.responsibilities || {};
@@ -154,6 +162,10 @@ async function execute(message, args, { responsibilities, client, saveData, BOT_
             .setLabel('Settings')
             .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
+            .setCustomId('cooldown_bypass')
+            .setLabel('Bypass Mng')
+            .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
             .setCustomId('cooldown_reset')
             .setLabel(' Reset')
             .setStyle(ButtonStyle.Secondary)
@@ -187,6 +199,8 @@ async function execute(message, args, { responsibilities, client, saveData, BOT_
 async function handleInteraction(interaction, context) {
     const { client, responsibilities, colorManager } = context;
     try {
+        // تحميل الكولداونات المؤقتة من JSON لضمان بيانات حديثة
+        loadUserCooldowns();
         // التأكد من وجود colorManager
         const actualColorManager = colorManager || require('../utils/colorManager');
 
@@ -219,10 +233,125 @@ async function handleInteraction(interaction, context) {
                 .setLabel('Settings')
                 .setStyle(ButtonStyle.Secondary),
             new ButtonBuilder()
+            .setCustomId('cooldown_bypass')
+            .setLabel('Bypass Mng')
+            .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
                 .setCustomId('cooldown_reset')
                 .setLabel('reset')
                 .setStyle(ButtonStyle.Secondary)
         );
+
+    if (interaction.customId === 'cooldown_back_to_main') {
+        await interaction.update({ embeds: [createMainEmbed()], components: [row] });
+        return;
+    }
+
+    if (interaction.customId === 'cooldown_bypass') {
+        const bypassEmbed = actualColorManager.createEmbed()
+            .setTitle('إدارة تجاوز الكولداون')
+            .setDescription('اختر نوع التجاوز الذي تريد إدارته.');
+
+        const bypassButtons = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('cooldown_bypass_users').setLabel('الأعضاء').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('cooldown_bypass_roles').setLabel('الرولات').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('cooldown_bypass_resps').setLabel('المسؤوليات').setStyle(ButtonStyle.Secondary)
+        );
+
+        const backButton = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('cooldown_back_to_main').setLabel('➡️ العودة للقائمة الرئيسية').setStyle(ButtonStyle.Danger));
+
+        await interaction.reply({ embeds: [bypassEmbed], components: [bypassButtons, backButton], ephemeral: true });
+        return;
+    }
+
+    if (customId.startsWith('cooldown_bypass_')) {
+        await interaction.deferUpdate();
+        const type = customId.split('_')[2]; // users, roles, or resps
+        const config = loadCooldowns();
+        const bypassList = config.bypass[type] || [];
+
+        let description = `**قائمة التجاوز الحالية لـ ${type}:**\n`;
+        if (bypassList.length > 0) {
+            description += bypassList.map(id => {
+                if (type === 'users') return `<@${id}>`;
+                if (type === 'roles') return `<@&${id}>`;
+                return id;
+            }).join('\n');
+        } else {
+            description += 'لا يوجد حاليًا.';
+        }
+
+        const embed = actualColorManager.createEmbed()
+            .setTitle(`إدارة تجاوز ${type}`)
+            .setDescription(description);
+
+        const actionRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`cooldown_bypass_add_${type}`).setLabel('إضافة').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId(`cooldown_bypass_remove_${type}`).setLabel('إزالة').setStyle(ButtonStyle.Danger)
+        );
+        const backButton = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('cooldown_bypass').setLabel('➡️ العودة').setStyle(ButtonStyle.Secondary));
+
+        await interaction.editReply({ embeds: [embed], components: [actionRow, backButton] });
+    }
+
+    if (customId.startsWith('cooldown_bypass_add_')) {
+        const type = customId.split('_')[3];
+        await interaction.followUp({ content: `يرجى منشن أو كتابة ID الـ ${type} الذي تريد إضافته.`, ephemeral: true });
+
+        const filter = m => m.author.id === interaction.user.id;
+        const collector = interaction.channel.createMessageCollector({ filter, time: 60000, max: 1 });
+
+        collector.on('collect', async msg => {
+            await msg.delete().catch(() => {});
+            const input = msg.content.trim();
+            const id = input.replace(/[<@!&#>]/g, '');
+
+            if (!/^\d{17,19}$/.test(id)) {
+                return interaction.followUp({ content: 'ID غير صالح.', ephemeral: true });
+            }
+
+            const config = loadCooldowns();
+            if (!config.bypass[type].includes(id)) {
+                config.bypass[type].push(id);
+                saveCooldowns(config);
+                await interaction.followUp({ content: `✅ تم إضافة ${input} إلى قائمة التجاوز.`, ephemeral: true });
+            } else {
+                await interaction.followUp({ content: 'هذا العنصر موجود بالفعل في القائمة.', ephemeral: true });
+            }
+        });
+    }
+
+    if (customId.startsWith('cooldown_bypass_remove_')) {
+        const type = customId.split('_')[3];
+        const config = loadCooldowns();
+        const bypassList = config.bypass[type] || [];
+
+        if (bypassList.length === 0) {
+            return interaction.followUp({ content: 'قائمة التجاوز فارغة بالفعل.', ephemeral: true });
+        }
+
+        const options = bypassList.map(id => ({ label: id, value: id }));
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId(`cooldown_bypass_confirm_remove_${type}`)
+            .setPlaceholder(`اختر العناصر لإزالتها من قائمة تجاوز ${type}`)
+            .setMinValues(1)
+            .setMaxValues(options.length)
+            .addOptions(options);
+
+        await interaction.followUp({ components: [new ActionRowBuilder().addComponents(selectMenu)], ephemeral: true });
+    }
+
+    if (customId.startsWith('cooldown_bypass_confirm_remove_')) {
+        const type = customId.split('_')[4];
+        const valuesToRemove = interaction.values;
+        const config = loadCooldowns();
+
+        config.bypass[type] = config.bypass[type].filter(id => !valuesToRemove.includes(id));
+        saveCooldowns(config);
+
+        await interaction.followUp({ content: '✅ تم إزالة العناصر المحددة.', ephemeral: true });
+    }
+
         if (interaction.customId === 'cooldown_set_default') {
             const cooldowns = loadCooldowns();
             const defaultEmbed = actualColorManager.createEmbed()

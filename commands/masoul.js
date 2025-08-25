@@ -545,7 +545,7 @@ async function execute(message, args, { responsibilities, points, scheduleSave, 
         const target = parts[3]; // userId or 'all'
 
         // كولداون
-        const cooldownTime = checkCooldown(interaction.user.id, responsibilityName);
+        const cooldownTime = checkCooldown(interaction, responsibilityName);
         if (cooldownTime > 0) {
           return interaction.reply({
             content: `**لقد استخدمت هذا الأمر مؤخرًا. يرجى الانتظار ${Math.ceil(cooldownTime / 1000)} ثانية أخرى.**`,
