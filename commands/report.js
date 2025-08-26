@@ -362,9 +362,9 @@ async function handleInteraction(interaction, context) {
         const reportData = client.pendingReports.get(reportId);
         if (!reportData) return interaction.editReply({ content: 'لم يعد هذا التقرير صالحاً.', embeds: [], components: [] });
         const reportText = interaction.fields.getTextInputValue('report_text');
-        const { responsibilityName, claimerId, timestamp, requesterId, displayName } = reportData;
+        const { responsibilityName, claimerId, timestamp, requesterId, displayName, reason } = reportData;
         const config = loadReportsConfig();
-        const reportEmbed = new EmbedBuilder().setTitle(`تقرير مهمة: ${responsibilityName}`).setColor(colorManager.getColor(client)).setAuthor({ name: displayName, iconURL: interaction.user.displayAvatarURL() }).setThumbnail(client.user.displayAvatarURL()).addFields({ name: 'المسؤول', value: `<@${claimerId}>`, inline: true },{ name: 'صاحب الطلب', value: `<@${requesterId}>`, inline: true },{ name: 'التقرير', value: reportText.substring(0, 4000) }).setTimestamp().setFooter({ text: 'By Ahmed.' });
+        const reportEmbed = new EmbedBuilder().setTitle(`تقرير مهمة: ${responsibilityName}`).setColor(colorManager.getColor(client)).setAuthor({ name: displayName, iconURL: interaction.user.displayAvatarURL() }).setThumbnail(client.user.displayAvatarURL()).addFields({ name: 'المسؤول', value: `<@${claimerId}>`, inline: true },{ name: 'صاحب الطلب', value: `<@${requesterId}>`, inline: true }, { name: 'السبب الأصلي للطلب', value: reason || 'غير محدد' },{ name: 'التقرير', value: reportText.substring(0, 4000) }).setTimestamp().setFooter({ text: 'By Ahmed.' });
         const needsApproval = config.approvalRequiredFor && config.approvalRequiredFor.includes(responsibilityName);
         if (needsApproval) {
             reportData.submittedAt = Date.now();
