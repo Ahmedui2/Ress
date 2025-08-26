@@ -270,20 +270,25 @@ async function handleClaimButton(interaction, context) {
             .setLabel('كتابة التقرير')
             .setStyle(ButtonStyle.Success);
 
-        const components = [writeReportButton];
-        if (originalChannelId) {
-            let url;
-            if (originalMessageId && originalMessageId !== 'unknown') {
-                url = `https://discord.com/channels/${interaction.guildId}/${originalChannelId}/${originalMessageId}`;
+        // User's requested logic for the message link button
+        const guildId = interaction.guildId;
+        let goToMessageButton = null;
+        if (guildId && originalChannelId) {
+            let messageUrl;
+            if (originalMessageId && originalMessageId !== 'unknown' && /^\d{17,19}$/.test(originalMessageId)) {
+                messageUrl = `https://discord.com/channels/${guildId}/${originalChannelId}/${originalMessageId}`;
             } else {
-                url = `https://discord.com/channels/${interaction.guildId}/${originalChannelId}`;
+                messageUrl = `https://discord.com/channels/${guildId}/${originalChannelId}`;
             }
-            components.push(new ButtonBuilder().setLabel('🔗 رابط الرسالة').setStyle(ButtonStyle.Link).setURL(url));
+            goToMessageButton = new ButtonBuilder().setLabel('🔗 Message Link').setStyle(ButtonStyle.Link).setURL(messageUrl);
         }
 
-        const row = new ActionRowBuilder().addComponents(components);
+        const buttonRow = new ActionRowBuilder().addComponents(
+            writeReportButton,
+            ...(goToMessageButton ? [goToMessageButton] : [])
+        );
 
-        await interaction.update({ embeds: [reportEmbed], components: [row] });
+        await interaction.update({ embeds: [reportEmbed], components: [buttonRow] });
 
     } else {
         // --- ORIGINAL LOGIC for tasks NOT requiring a report ---

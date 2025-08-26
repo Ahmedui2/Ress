@@ -373,7 +373,7 @@ async function handleInteraction(interaction, context) {
 
             // Save the report with its status before showing the edit button to prevent race conditions
             client.pendingReports.set(reportId, reportData);
-            scheduleSave();
+            scheduleSave(true); // Force immediate save
 
             const approvalButtons = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`report_approve_${reportId}`).setLabel('موافقة').setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId(`report_reject_${reportId}`).setLabel('رفض').setStyle(ButtonStyle.Danger));
             const approvalMessageContent = { embeds: [reportEmbed], components: [approvalButtons], fetchReply: true };

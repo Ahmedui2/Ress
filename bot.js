@@ -207,19 +207,23 @@ const dataCache = {
 const topCommand = require('./commands/top_leaderboard.js');
 
 // دالة لوضع علامة للحفظ مع تأخير ذكي
-function scheduleSave() {
+function scheduleSave(immediate = false) {
     isDataDirty = true;
 
-    // إلغاء المؤقت السابق إذا كان موجوداً
     if (saveTimeout) {
         clearTimeout(saveTimeout);
     }
 
-    // تأخير الحفظ لتجميع التغييرات
-    saveTimeout = setTimeout(() => {
+    if (immediate) {
         saveData();
         saveTimeout = null;
-    }, 2000); // حفظ بعد ثانيتين من آخر تغيير
+    } else {
+        // تأخير الحفظ لتجميع التغييرات
+        saveTimeout = setTimeout(() => {
+            saveData();
+            saveTimeout = null;
+        }, 2000); // حفظ بعد ثانيتين من آخر تغيير
+    }
 
     if (topCommand.invalidateTopCache) {
         topCommand.invalidateTopCache();
