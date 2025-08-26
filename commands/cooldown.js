@@ -198,6 +198,7 @@ async function execute(message, args, { responsibilities, client, saveData, BOT_
 
 async function handleInteraction(interaction, context) {
     const { client, responsibilities, colorManager } = context;
+    const customId = interaction.customId;
     try {
         // تحميل الكولداونات المؤقتة من JSON لضمان بيانات حديثة
         loadUserCooldowns();

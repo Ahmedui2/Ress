@@ -260,10 +260,9 @@ async function handleClaimButton(interaction, context) {
             scheduleSave();
         }
 
-        const reportEmbed = new EmbedBuilder()
+        const reportEmbed = colorManager.createEmbed()
             .setTitle('تم استلام المهمة بنجاح')
             .setDescription(`**هذه المهمة تتطلب تقريراً بعد الإنتهاء منها.**\n\n**السبب:** ${reason}\n\nيرجى الضغط على الزر أدناه لكتابة التقرير.`)
-            .setColor(colorManager.getColor(client))
             .setFooter({text: 'By Ahmed.'});
 
         const writeReportButton = new ButtonBuilder()
@@ -272,9 +271,14 @@ async function handleClaimButton(interaction, context) {
             .setStyle(ButtonStyle.Success);
 
         const components = [writeReportButton];
-        if (originalMessageId && originalChannelId && originalMessageId !== 'unknown') {
-            const url = `https://discord.com/channels/${interaction.guildId}/${originalChannelId}/${originalMessageId}`;
-            components.push(new ButtonBuilder().setLabel('🔗 رابط الرسالة').setStyle(ButtonStyle.Link).setURL(url));
+        if (originalChannelId) {
+            let url;
+            if (originalMessageId && originalMessageId !== 'unknown') {
+                url = `https://discord.com/channels/${interaction.guildId}/${originalChannelId}/${originalMessageId}`;
+            } else {
+                url = `https://discord.com/channels/${interaction.guildId}/${originalChannelId}`;
+            }
+            components.push(new ButtonBuilder().setLabel('الوصول للرساله').setStyle(ButtonStyle.Link).setURL(url));
         }
 
         const row = new ActionRowBuilder().addComponents(components);
@@ -304,10 +308,15 @@ async function handleClaimButton(interaction, context) {
         const guildId = interaction.guild?.id || interaction.guildId || guild?.id;
 
         let claimedButtonRow = null;
-        if (finalMessageId && guildId && finalChannelId && /^\d{17,19}$/.test(finalMessageId)) {
-          const url = `https://discord.com/channels/${guildId}/${finalChannelId}/${finalMessageId}`;
-          const goBtn = new ButtonBuilder().setLabel('🔗 Message Link').setStyle(ButtonStyle.Link).setURL(url);
-          claimedButtonRow = new ActionRowBuilder().addComponents(goBtn);
+        if (guildId && finalChannelId) {
+            let url;
+            if (finalMessageId && /^\d{17,19}$/.test(finalMessageId)) {
+              url = `https://discord.com/channels/${guildId}/${finalChannelId}/${finalMessageId}`;
+            } else {
+              url = `https://discord.com/channels/${guildId}/${finalChannelId}`;
+            }
+            const goBtn = new ButtonBuilder().setLabel('الوصول للرساله').setStyle(ButtonStyle.Link).setURL(url);
+            claimedButtonRow = new ActionRowBuilder().addComponents(goBtn);
         }
 
         const claimedEmbed = colorManager.createEmbed()
@@ -710,7 +719,6 @@ async function showUserResponsibilities(message, targetUser, responsibilities, c
     const respEmbed = colorManager.createEmbed()
       .setTitle(`مسؤوليات ${targetUser.username}`)
       .setDescription(responsibilitiesList)
-      .setColor('#000000')
       .setThumbnail(targetUser.displayAvatarURL({ dynamic: true }))
       .addFields([
         { name: 'Total Res', value: `${userResponsibilities.length}`, inline: true },
@@ -768,12 +776,14 @@ async function handleInteraction(interaction, context) {
 
       const guildId = interaction.guildId;
       let goToMessageButton = null;
-      if (
-        originalMessageId && originalMessageId !== 'unknown' &&
-        guildId && originalChannelId && /^\d{17,19}$/.test(originalMessageId)
-      ) {
-        const messageUrl = `https://discord.com/channels/${guildId}/${originalChannelId}/${originalMessageId}`;
-        goToMessageButton = new ButtonBuilder().setLabel('🔗 Message Link').setStyle(ButtonStyle.Link).setURL(messageUrl);
+      if (guildId && originalChannelId) {
+        let messageUrl;
+        if (originalMessageId && originalMessageId !== 'unknown' && /^\d{17,19}$/.test(originalMessageId)) {
+            messageUrl = `https://discord.com/channels/${guildId}/${originalChannelId}/${originalMessageId}`;
+        } else {
+            messageUrl = `https://discord.com/channels/${guildId}/${originalChannelId}`;
+        }
+        goToMessageButton = new ButtonBuilder().setLabel('الوصول للرساله').setStyle(ButtonStyle.Link).setURL(messageUrl);
       }
 
       const buttonRow = new ActionRowBuilder().addComponents(

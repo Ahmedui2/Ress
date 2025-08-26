@@ -50,10 +50,9 @@ function createMainEmbed(client) {
         channelStatus = config.reportChannel === '0' ? 'خاص الأونرات' : `<#${config.reportChannel}>`;
     }
 
-    return new EmbedBuilder()
+    return colorManager.createEmbed()
         .setTitle('⚙️ إعدادات نظام التقارير')
         .setDescription('التحكم الكامل بإعدادات نظام التقارير والموافقة عليها.')
-        .setColor(colorManager.getColor(client))
         .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400661744682139690/download__1_-removebg-preview.png?ex=688d7366&is=688c21e6&hm=5635fe92ec3d4896d9ca065b9bb8ee11a5923b9e5d75fe94b753046e7e8b24eb&')
         .addFields(
             { name: 'حالة النظام', value: status, inline: true },
@@ -364,18 +363,19 @@ async function handleInteraction(interaction, context) {
         const reportText = interaction.fields.getTextInputValue('report_text');
         const { responsibilityName, claimerId, timestamp, requesterId, displayName, reason } = reportData;
         const config = loadReportsConfig();
-        const reportEmbed = new EmbedBuilder().setTitle(`تقرير مهمة: ${responsibilityName}`).setColor(colorManager.getColor(client)).setAuthor({ name: displayName, iconURL: interaction.user.displayAvatarURL() }).setThumbnail(client.user.displayAvatarURL()).addFields({ name: 'المسؤول', value: `<@${claimerId}>`, inline: true },{ name: 'صاحب الطلب', value: `<@${requesterId}>`, inline: true }, { name: 'السبب الأصلي للطلب', value: reason || 'غير محدد' },{ name: 'التقرير', value: reportText.substring(0, 4000) }).setTimestamp().setFooter({ text: 'By Ahmed.' });
+        const reportEmbed = colorManager.createEmbed().setTitle(`تقرير مهمة: ${responsibilityName}`).setAuthor({ name: displayName, iconURL: interaction.user.displayAvatarURL() }).setThumbnail(client.user.displayAvatarURL()).addFields({ name: 'المسؤول', value: `<@${claimerId}>`, inline: true },{ name: 'صاحب الطلب', value: `<@${requesterId}>`, inline: true }, { name: 'السبب الأصلي للطلب', value: reason || 'غير محدد' },{ name: 'التقرير', value: reportText.substring(0, 4000) }).setTimestamp().setFooter({ text: 'By Ahmed.' });
         const needsApproval = config.approvalRequiredFor && config.approvalRequiredFor.includes(responsibilityName);
         if (needsApproval) {
             reportData.submittedAt = Date.now();
             reportData.reportText = reportText;
+            reportData.status = 'pending_approval';
             reportEmbed.addFields({ name: 'الحالة', value: '⏳ بانتظار موافقة الأونر' });
             const approvalButtons = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`report_approve_${reportId}`).setLabel('موافقة').setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId(`report_reject_${reportId}`).setLabel('رفض').setStyle(ButtonStyle.Danger));
             const approvalMessageContent = { embeds: [reportEmbed], components: [approvalButtons], fetchReply: true };
             reportData.approvalMessageIds = {};
             if (config.reportChannel === '0') { for (const ownerId of BOT_OWNERS) { try { const owner = await client.users.fetch(ownerId); const msg = await owner.send(approvalMessageContent); reportData.approvalMessageIds[owner.dmChannel.id] = msg.id; } catch(e) { console.error(e); } }
             } else { try { const channel = await client.channels.fetch(config.reportChannel); const msg = await channel.send(approvalMessageContent); reportData.approvalMessageIds[channel.id] = msg.id; } catch(e) { console.error(e); } }
-            const pendingEmbed = new EmbedBuilder().setTitle('تم تقديم التقرير').setDescription('**تم إرسال تقريرك للمراجعة. سيتم إعلامك بالنتيجة.**').setColor(colorManager.getColor(client));
+            const pendingEmbed = colorManager.createEmbed().setTitle('تم تقديم التقرير').setDescription('**تم إرسال تقريرك للمراجعة. سيتم إعلامك بالنتيجة.**');
             const editButton = new ButtonBuilder().setCustomId(`report_edit_${reportId}`).setLabel('تعديل التقرير').setStyle(ButtonStyle.Secondary);
             const confirmationRow = new ActionRowBuilder().addComponents(editButton);
             const confirmationMessage = await interaction.editReply({ embeds: [pendingEmbed], components: [confirmationRow], fetchReply: true });
@@ -383,12 +383,12 @@ async function handleInteraction(interaction, context) {
             reportData.confirmationChannelId = confirmationMessage.channel.id;
             client.pendingReports.set(reportId, reportData);
             scheduleSave();
-            setTimeout(async () => { try { const currentMessage = await confirmationMessage.channel.messages.fetch(confirmationMessage.id); if (currentMessage.components.length > 0) { const finalEmbed = new EmbedBuilder().setTitle('تم تقديم التقرير').setDescription('**تم إرسال تقريرك للمراجعة. انتهت فترة التعديل.**').setColor(colorManager.getColor(client)); await confirmationMessage.edit({ embeds: [finalEmbed], components: [] }); } } catch(e) {} }, 5 * 60 * 1000);
+            setTimeout(async () => { try { const currentMessage = await confirmationMessage.channel.messages.fetch(confirmationMessage.id); if (currentMessage.components.length > 0) { const finalEmbed = colorManager.createEmbed().setTitle('تم تقديم التقرير').setDescription('**تم إرسال تقريرك للمراجعة. انتهت فترة التعديل.**'); await confirmationMessage.edit({ embeds: [finalEmbed], components: [] }); } } catch(e) {} }, 5 * 60 * 1000);
         } else {
             if (config.pointsOnReport) { if (!points[responsibilityName]) points[responsibilityName] = {}; if (!points[responsibilityName][claimerId]) points[responsibilityName][claimerId] = { [timestamp]: 1 }; else { points[responsibilityName][claimerId][timestamp] = (points[responsibilityName][claimerId][timestamp] || 0) + 1; } scheduleSave(); }
             if (config.reportChannel === '0') { for (const ownerId of BOT_OWNERS) { try { await client.users.send(ownerId, { embeds: [reportEmbed] }); } catch (e) { console.error(e); } }
             } else { try { const channel = await client.channels.fetch(config.reportChannel); await channel.send({ embeds: [reportEmbed] }); } catch(e) { console.error(e); } }
-            const finalEmbed = new EmbedBuilder().setTitle('تم تقديم التقرير').setDescription('**تم إرسال تقريرك بنجاح ✅**').setColor(colorManager.getColor(client));
+            const finalEmbed = colorManager.createEmbed().setTitle('تم تقديم التقرير').setDescription('**تم إرسال تقريرك بنجاح ✅**');
             await interaction.editReply({ embeds: [finalEmbed], components: [] });
             client.pendingReports.delete(reportId);
             scheduleSave();
@@ -398,7 +398,7 @@ async function handleInteraction(interaction, context) {
     else if (customId.startsWith('report_edit_')) {
         const reportId = customId.replace('report_edit_', '');
         const reportData = client.pendingReports.get(reportId);
-        if (!reportData) { await interaction.deferUpdate(); return interaction.editReply({ content: 'لم يعد هذا التقرير صالحاً للتعديل.', embeds: [], components: [] }); }
+        if (!reportData || reportData.status !== 'pending_approval') { await interaction.deferUpdate(); return interaction.editReply({ content: 'لم يعد هذا التقرير صالحاً للتعديل.', embeds: [], components: [] }); }
         const modal = new ModalBuilder().setCustomId(`report_edit_submit_${reportId}`).setTitle('تعديل تقرير المهمة');
         const reportInput = new TextInputBuilder().setCustomId('report_text').setLabel('الرجاء تعديل تقريرك هنا').setStyle(TextInputStyle.Paragraph).setValue(reportData.reportText || '').setRequired(true);
         modal.addComponents(new ActionRowBuilder().addComponents(reportInput));
@@ -409,7 +409,7 @@ async function handleInteraction(interaction, context) {
         await interaction.deferUpdate();
         const reportId = customId.replace('report_edit_submit_', '');
         const reportData = client.pendingReports.get(reportId);
-        if (!reportData) return interaction.followUp({ content: 'لم يعد هذا التقرير صالحاً للتعديل.', ephemeral: true });
+        if (!reportData || reportData.status !== 'pending_approval') return interaction.followUp({ content: 'لم يعد هذا التقرير صالحاً للتعديل.', ephemeral: true });
         const newReportText = interaction.fields.getTextInputValue('report_text');
         reportData.reportText = newReportText;
         client.pendingReports.set(reportId, reportData);
@@ -427,7 +427,7 @@ async function handleInteraction(interaction, context) {
         const isApproval = customId.startsWith('report_approve_');
         const reportId = customId.replace(isApproval ? 'report_approve_' : 'report_reject_', '');
         const reportData = client.pendingReports.get(reportId);
-        if (!reportData) return interaction.editReply({ content: 'لم يعد هذا التقرير صالحاً أو قد تم التعامل معه بالفعل.', embeds: [], components: [] });
+        if (!reportData || reportData.status !== 'pending_approval') return interaction.editReply({ content: 'لم يعد هذا التقرير صالحاً أو قد تم التعامل معه بالفعل.', embeds: [], components: [] });
         const { claimerId, responsibilityName, timestamp } = reportData;
         const config = loadReportsConfig();
         if (isApproval && config.pointsOnReport) { if (!points[responsibilityName]) points[responsibilityName] = {}; if (!points[responsibilityName][claimerId]) points[responsibilityName][claimerId] = { [timestamp]: 1 }; else { points[responsibilityName][claimerId][timestamp] = (points[responsibilityName][claimerId][timestamp] || 0) + 1; } scheduleSave(); }
