@@ -179,7 +179,7 @@ async function execute(message, args, { responsibilities, client, saveData, BOT_
 
     collector.on('collect', async interaction => {
         // Prevent the main menu from being re-rendered when navigating to a sub-menu
-        if (interaction.customId === 'cooldown_bypass' || interaction.customId === 'cooldown_set_responsibility') {
+        if (interaction.customId.startsWith('cooldown_bypass') || interaction.customId === 'cooldown_set_responsibility') {
             return;
         }
         // تحديث الرسالة بعد كل تفاعل

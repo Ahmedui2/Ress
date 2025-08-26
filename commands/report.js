@@ -386,9 +386,10 @@ async function handleInteraction(interaction, context) {
             const confirmationMessage = await interaction.editReply({ embeds: [pendingEmbed], components: [confirmationRow], fetchReply: true });
 
             // Now update the report data with the confirmation message IDs and save again
-            reportData.confirmationMessageId = confirmationMessage.id;
-            reportData.confirmationChannelId = confirmationMessage.channel.id;
-            client.pendingReports.set(reportId, reportData);
+            const freshReportData = client.pendingReports.get(reportId) || reportData;
+            freshReportData.confirmationMessageId = confirmationMessage.id;
+            freshReportData.confirmationChannelId = confirmationMessage.channel.id;
+            client.pendingReports.set(reportId, freshReportData);
             scheduleSave();
             setTimeout(async () => { try { const currentMessage = await confirmationMessage.channel.messages.fetch(confirmationMessage.id); if (currentMessage.components.length > 0) { const finalEmbed = colorManager.createEmbed().setTitle('تم تقديم التقرير').setDescription('**تم إرسال تقريرك للمراجعة. انتهت فترة التعديل.**'); await confirmationMessage.edit({ embeds: [finalEmbed], components: [] }); } } catch(e) {} }, 5 * 60 * 1000);
         } else {
