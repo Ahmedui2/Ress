@@ -370,6 +370,11 @@ async function handleInteraction(interaction, context) {
             reportData.reportText = reportText;
             reportData.status = 'pending_approval';
             reportEmbed.addFields({ name: 'الحالة', value: '⏳ بانتظار موافقة الأونر' });
+
+            // Save the report with its status before showing the edit button to prevent race conditions
+            client.pendingReports.set(reportId, reportData);
+            scheduleSave();
+
             const approvalButtons = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`report_approve_${reportId}`).setLabel('موافقة').setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId(`report_reject_${reportId}`).setLabel('رفض').setStyle(ButtonStyle.Danger));
             const approvalMessageContent = { embeds: [reportEmbed], components: [approvalButtons], fetchReply: true };
             reportData.approvalMessageIds = {};
@@ -379,6 +384,8 @@ async function handleInteraction(interaction, context) {
             const editButton = new ButtonBuilder().setCustomId(`report_edit_${reportId}`).setLabel('تعديل التقرير').setStyle(ButtonStyle.Secondary);
             const confirmationRow = new ActionRowBuilder().addComponents(editButton);
             const confirmationMessage = await interaction.editReply({ embeds: [pendingEmbed], components: [confirmationRow], fetchReply: true });
+
+            // Now update the report data with the confirmation message IDs and save again
             reportData.confirmationMessageId = confirmationMessage.id;
             reportData.confirmationChannelId = confirmationMessage.channel.id;
             client.pendingReports.set(reportId, reportData);

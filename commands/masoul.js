@@ -588,8 +588,8 @@ async function execute(message, args, { responsibilities, points, scheduleSave, 
         startCooldown(interaction.user.id, responsibilityName);
 
         // ربط الرسالة الأصلية
-        const originalChannelId = message.channelId;
-        const originalMessageId = message.id;
+        const originalChannelId = sentMessage.channelId;
+        const originalMessageId = sentMessage.id;
 
         // مودال السبب
         const shortId = Date.now().toString().slice(-8);

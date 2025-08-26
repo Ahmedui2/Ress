@@ -173,7 +173,25 @@ async function execute(message, args, { responsibilities, client, saveData, BOT_
 
     const sentMessage = await message.channel.send({ embeds: [createMainEmbed()], components: [row] });
 
-    const collector = sentMessage.createMessageComponentCollector({ time: 300000 });
+    // Create collector to update embed when needed
+    const filter = i => i.user.id === message.author.id && i.message.id === sentMessage.id;
+    const collector = message.channel.createMessageComponentCollector({ filter, time: 300000 });
+
+    collector.on('collect', async interaction => {
+        // Prevent the main menu from being re-rendered when navigating to a sub-menu
+        if (interaction.customId === 'cooldown_bypass' || interaction.customId === 'cooldown_set_responsibility') {
+            return;
+        }
+        // تحديث الرسالة بعد كل تفاعل
+        setTimeout(async () => {
+            try {
+                await sentMessage.edit({ embeds: [createMainEmbed()], components: [row] });
+            } catch (error) {
+                console.log('لا يمكن تحديث الرسالة:', error.message);
+            }
+        }, 1000);
+    });
+
     collector.on('end', () => {
         const disabledRow = new ActionRowBuilder().addComponents(
             row.components.map(button => ButtonBuilder.from(button).setDisabled(true))
