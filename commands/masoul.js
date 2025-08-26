@@ -278,7 +278,7 @@ async function handleClaimButton(interaction, context) {
             } else {
                 url = `https://discord.com/channels/${interaction.guildId}/${originalChannelId}`;
             }
-            components.push(new ButtonBuilder().setLabel('الوصول للرساله').setStyle(ButtonStyle.Link).setURL(url));
+            components.push(new ButtonBuilder().setLabel('🔗 رابط الرسالة').setStyle(ButtonStyle.Link).setURL(url));
         }
 
         const row = new ActionRowBuilder().addComponents(components);
@@ -315,7 +315,7 @@ async function handleClaimButton(interaction, context) {
             } else {
               url = `https://discord.com/channels/${guildId}/${finalChannelId}`;
             }
-            const goBtn = new ButtonBuilder().setLabel('الوصول للرساله').setStyle(ButtonStyle.Link).setURL(url);
+            const goBtn = new ButtonBuilder().setLabel('🔗 Message Link').setStyle(ButtonStyle.Link).setURL(url);
             claimedButtonRow = new ActionRowBuilder().addComponents(goBtn);
         }
 
@@ -783,7 +783,7 @@ async function handleInteraction(interaction, context) {
         } else {
             messageUrl = `https://discord.com/channels/${guildId}/${originalChannelId}`;
         }
-        goToMessageButton = new ButtonBuilder().setLabel('الوصول للرساله').setStyle(ButtonStyle.Link).setURL(messageUrl);
+        goToMessageButton = new ButtonBuilder().setLabel('🔗 Message Link').setStyle(ButtonStyle.Link).setURL(messageUrl);
       }
 
       const buttonRow = new ActionRowBuilder().addComponents(

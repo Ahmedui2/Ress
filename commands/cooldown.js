@@ -173,21 +173,7 @@ async function execute(message, args, { responsibilities, client, saveData, BOT_
 
     const sentMessage = await message.channel.send({ embeds: [createMainEmbed()], components: [row] });
 
-    // Create collector to update embed when needed
-    const filter = i => i.user.id === message.author.id && i.message.id === sentMessage.id;
-    const collector = message.channel.createMessageComponentCollector({ filter, time: 300000 });
-
-    collector.on('collect', async interaction => {
-        // تحديث الرسالة بعد كل تفاعل
-        setTimeout(async () => {
-            try {
-                await sentMessage.edit({ embeds: [createMainEmbed()], components: [row] });
-            } catch (error) {
-                console.log('لا يمكن تحديث الرسالة:', error.message);
-            }
-        }, 1000);
-    });
-
+    const collector = sentMessage.createMessageComponentCollector({ time: 300000 });
     collector.on('end', () => {
         const disabledRow = new ActionRowBuilder().addComponents(
             row.components.map(button => ButtonBuilder.from(button).setDisabled(true))
