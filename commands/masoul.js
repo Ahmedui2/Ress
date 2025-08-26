@@ -239,6 +239,8 @@ async function handleClaimButton(interaction, context) {
             requesterId,
             timestamp,
             reason: reason, // Store the reason
+            originalChannelId: originalChannelId,
+            originalMessageId: originalMessageId,
             createdAt: Date.now() // Add timestamp for reminder tracking
         });
         scheduleSave(); // Save the pending report state
@@ -260,7 +262,7 @@ async function handleClaimButton(interaction, context) {
 
         const reportEmbed = new EmbedBuilder()
             .setTitle('تم استلام المهمة بنجاح')
-            .setDescription('**هذه المهمة تتطلب تقريراً بعد الإنتهاء منها. يرجى الضغط على الزر أدناه لكتابة التقرير.**')
+            .setDescription(`**هذه المهمة تتطلب تقريراً بعد الإنتهاء منها.**\n\n**السبب:** ${reason}\n\nيرجى الضغط على الزر أدناه لكتابة التقرير.`)
             .setColor(colorManager.getColor(client))
             .setFooter({text: 'By Ahmed.'});
 
@@ -270,9 +272,9 @@ async function handleClaimButton(interaction, context) {
             .setStyle(ButtonStyle.Success);
 
         const components = [writeReportButton];
-        const messageLink = interaction.message.url;
-        if(messageLink) {
-            components.push(new ButtonBuilder().setLabel('🔗 رابط الرسالة').setStyle(ButtonStyle.Link).setURL(messageLink));
+        if (originalMessageId && originalChannelId && originalMessageId !== 'unknown') {
+            const url = `https://discord.com/channels/${interaction.guildId}/${originalChannelId}/${originalMessageId}`;
+            components.push(new ButtonBuilder().setLabel('🔗 رابط الرسالة').setStyle(ButtonStyle.Link).setURL(url));
         }
 
         const row = new ActionRowBuilder().addComponents(components);
@@ -309,8 +311,7 @@ async function handleClaimButton(interaction, context) {
         }
 
         const claimedEmbed = colorManager.createEmbed()
-          .setDescription(`**✅ تم استلام المهمة من قبل <@${interaction.user.id}> (${displayName})**`)
-          .addFields({ name: '**السبب الأصلي**', value: reason })
+          .setDescription(`**✅ تم استلام المهمة من قبل <@${interaction.user.id}> (${displayName})**\n\n**السبب:** ${reason}`)
           .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400676711439273994/1320524603868712960.png?ex=688d8157&is=688c2fd7&hm=2f0fcafb0d4dd4fc905d6c5c350cfafe7d68e902b5668117f2e7903a62c8&');
 
         await interaction.update({ embeds: [claimedEmbed], components: claimedButtonRow ? [claimedButtonRow] : [] });

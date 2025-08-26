@@ -435,7 +435,28 @@ async function handleInteraction(interaction, context) {
         const newEmbed = EmbedBuilder.from(originalEmbed).setFields(...originalEmbed.fields.filter(f => f.name !== 'الحالة'),{ name: 'الحالة', value: isApproval ? `✅ تم القبول بواسطة <@${interaction.user.id}>` : `❌ تم الرفض بواسطة <@${interaction.user.id}>` });
         if (isApproval) { newEmbed.addFields({ name: 'النقطة', value: `تمت إضافة نقطة إلى <@${claimerId}>` }); }
         await interaction.editReply({ embeds: [newEmbed], components: [] });
-        try { const channel = await client.channels.fetch(reportData.confirmationChannelId); const message = await channel.messages.fetch(reportData.confirmationMessageId); const statusText = isApproval ? 'الموافقة على' : 'رفض'; const finalEmbed = new EmbedBuilder().setTitle(`تم ${statusText} تقريرك`).setDescription(`لقد تم **${statusText}** تقريرك لمسؤولية **${responsibilityName}** من قبل الإدارة.`).setColor(isApproval ? '#00ff00' : '#ff0000'); await message.edit({ embeds: [finalEmbed], components: [] });
+        try {
+            const user = await client.users.fetch(claimerId);
+            const statusText = isApproval ? 'الموافقة على' : 'رفض';
+            const color = isApproval ? '#00ff00' : '#ff0000';
+            const detailedEmbed = new EmbedBuilder()
+                .setTitle(`تم ${statusText} تقريرك`)
+                .setColor(color)
+                .addFields(
+                    { name: 'المسؤولية', value: responsibilityName, inline: true },
+                    { name: `تم ${statusText} بواسطة`, value: `<@${interaction.user.id}>`, inline: true },
+                    { name: 'السبب الأصلي للطلب', value: reportData.reason || 'غير محدد' },
+                    { name: 'التقرير الذي قدمته', value: reportData.reportText }
+                )
+                .setTimestamp();
+            await user.send({ embeds: [detailedEmbed] });
+        } catch(e) { console.error("Could not send DM to user about report status:", e); }
+
+        try {
+            const channel = await client.channels.fetch(reportData.confirmationChannelId);
+            const message = await channel.messages.fetch(reportData.confirmationMessageId);
+            const statusText = isApproval ? 'الموافقة على' : 'رفض';
+            const finalEmbed = new EmbedBuilder().setTitle(`تم ${statusText} تقريرك`).setDescription(`لقد تم **${statusText}** تقريرك لمسؤولية **${responsibilityName}** من قبل الإدارة.`).setColor(isApproval ? '#00ff00' : '#ff0000'); await message.edit({ embeds: [finalEmbed], components: [] });
         } catch(e) { console.error("Could not edit user's confirmation message:", e); }
         client.pendingReports.delete(reportId);
         scheduleSave();

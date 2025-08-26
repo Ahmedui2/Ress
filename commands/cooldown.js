@@ -258,9 +258,9 @@ async function handleInteraction(interaction, context) {
             new ButtonBuilder().setCustomId('cooldown_bypass_resps').setLabel('المسؤوليات').setStyle(ButtonStyle.Secondary)
         );
 
-        const backButton = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('cooldown_back_to_main').setLabel('➡️ العودة للقائمة الرئيسية').setStyle(ButtonStyle.Danger));
+        const backButton = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('cooldown_back_to_main').setLabel('➡️ العودة').setStyle(ButtonStyle.Secondary));
 
-        await interaction.reply({ embeds: [bypassEmbed], components: [bypassButtons, backButton], ephemeral: true });
+        await interaction.update({ embeds: [bypassEmbed], components: [bypassButtons, backButton] });
         return;
     }
 
@@ -296,7 +296,7 @@ async function handleInteraction(interaction, context) {
 
     if (customId.startsWith('cooldown_bypass_add_')) {
         const type = customId.split('_')[3];
-        await interaction.followUp({ content: `يرجى منشن أو كتابة ID الـ ${type} الذي تريد إضافته.`, ephemeral: true });
+        const prompt = await interaction.followUp({ content: `يرجى منشن أو كتابة ID الـ ${type} الذي تريد إضافته.`, ephemeral: true, fetchReply: true });
 
         const filter = m => m.author.id === interaction.user.id;
         const collector = interaction.channel.createMessageCollector({ filter, time: 60000, max: 1 });
