@@ -1,8 +1,9 @@
-const { EmbedBuilder, StringSelectMenuBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { EmbedBuilder, StringSelectMenuBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
+const { generateStatsCard } = require('../utils/statsCardGenerator.js');
 
 
 const name = 'stats';
@@ -63,6 +64,93 @@ async function execute(message, args, { responsibilities, points, client, BOT_OW
         cooldowns: readJSONFile(DATA_FILES.cooldowns, {}),
         notifications: readJSONFile(DATA_FILES.notifications, {})
     };
+
+    let targetUser = message.mentions.users.first();
+    if (!targetUser && args.length > 0) {
+        try {
+            // Attempt to fetch user by ID if no mention
+            const userId = args[0].replace(/[<@!>]/g, '');
+            if (/^\d{17,19}$/.test(userId)) {
+                 targetUser = await client.users.fetch(userId);
+            }
+        } catch (e) {
+            // Not a valid user ID, proceed to check for responsibility name
+        }
+    }
+     // Default to message author if no user is mentioned or found
+    if (!targetUser && args.length === 0) {
+        targetUser = message.author;
+    }
+
+
+    // If a user is targeted, generate the stats card
+    if (targetUser) {
+        await message.channel.sendTyping();
+        try {
+            // 1. Calculate all user stats to get global rank
+            const allUserStats = [];
+            Object.values(allData.points).forEach(respPointsData => {
+                Object.entries(respPointsData).forEach(([uid, pts]) => {
+                    let totalPts = 0;
+                    if (typeof pts === 'object') {
+                        totalPts = Object.values(pts).reduce((sum, p) => sum + p, 0);
+                    } else {
+                        totalPts = pts;
+                    }
+                    const existing = allUserStats.find(u => u.userId === uid);
+                    if (existing) {
+                        existing.totalPoints += totalPts;
+                    } else {
+                        allUserStats.push({ userId: uid, totalPoints: totalPts });
+                    }
+                });
+            });
+            allUserStats.sort((a, b) => b.totalPoints - a.totalPoints);
+
+            const userGlobalRank = allUserStats.findIndex(u => u.userId === targetUser.id) + 1;
+            const userTotalPoints = allUserStats.find(u => u.userId === targetUser.id)?.totalPoints || 0;
+
+            // 2. Calculate user's points per responsibility for their top 3
+            const userResponsibilities = [];
+             Object.entries(allData.points).forEach(([respName, respPointsData]) => {
+                if (respPointsData[targetUser.id]) {
+                    let totalUserPointsInResp = 0;
+                    if (typeof respPointsData[targetUser.id] === 'object') {
+                        totalUserPointsInResp = Object.values(respPointsData[targetUser.id]).reduce((a,b) => a + b, 0);
+                    } else {
+                        totalUserPointsInResp = respPointsData[targetUser.id];
+                    }
+                    if (totalUserPointsInResp > 0) {
+                        userResponsibilities.push({ name: respName, points: totalUserPointsInResp });
+                    }
+                }
+            });
+            userResponsibilities.sort((a,b) => b.points - a.points);
+
+            // 3. Prepare data for the card generator
+            const statsCardData = {
+                user: {
+                    displayName: targetUser.username,
+                    avatarUrl: targetUser.displayAvatarURL({ format: 'png', size: 256 })
+                },
+                totalPoints: userTotalPoints,
+                rank: userGlobalRank > 0 ? userGlobalRank : 'N/A',
+                topResponsibilities: userResponsibilities,
+                botName: client.user.username,
+            };
+
+            // 4. Generate and send the image
+            const imageBuffer = await generateStatsCard(statsCardData);
+            const attachment = new AttachmentBuilder(imageBuffer, { name: 'stats-card.png' });
+            await message.channel.send({ files: [attachment] });
+
+        } catch (error) {
+            console.error("Failed to generate stats card:", error);
+            await message.channel.send("عذرًا، حدث خطأ أثناء إنشاء صورة الإحصائيات.");
+        }
+        return;
+    }
+
 
     // إذا تم تحديد مسؤولية معينة في الأرغيومنت
     if (args.length > 0) {
