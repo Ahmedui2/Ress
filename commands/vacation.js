@@ -85,69 +85,75 @@ async function handleInteraction(interaction, context) {
 
     if (interaction.isModalSubmit() && customId.startsWith('vac_request_modal_')) {
         await interaction.deferReply({ ephemeral: true });
+        try {
+            const userId = customId.split('_').pop();
+            const member = await interaction.guild.members.fetch(userId);
+            const durationStr = interaction.fields.getTextInputValue('vac_duration');
+            const reason = interaction.fields.getTextInputValue('vac_reason');
 
-        const userId = customId.split('_').pop();
-        const member = await interaction.guild.members.fetch(userId);
-        const durationStr = interaction.fields.getTextInputValue('vac_duration');
-        const reason = interaction.fields.getTextInputValue('vac_reason');
-
-        const durationMs = ms(durationStr);
-        if (!durationMs || durationMs <= 0) {
-            replyEmbed.setDescription('Invalid duration format. Please use a format like `7d`, `12h`, or `30m`.');
-            return interaction.editReply({ embeds: [replyEmbed] });
-        }
-
-        const vacations = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
-        vacations.pending[userId] = {
-            reason: reason,
-            startDate: new Date().toISOString(),
-            endDate: new Date(Date.now() + durationMs).toISOString(),
-        };
-        vacationManager.saveVacations(vacations);
-
-        // --- Notification Logic ---
-        const settings = vacationManager.getSettings();
-        const approvers = await vacationManager.getApprovers(interaction.guild, settings, BOT_OWNERS);
-
-        if (approvers.length === 0) {
-            replyEmbed.setDescription('Could not find any valid approvers based on the current settings.');
-            return interaction.editReply({ embeds: [replyEmbed] });
-        }
-
-        const adminRoles = readJson(adminRolesPath, []);
-        const rolesToBeRemoved = member.roles.cache.filter(role => adminRoles.includes(role.id));
-        const rolesDisplay = rolesToBeRemoved.map(r => `<@&${r.id}>`).join(', ') || 'None';
-
-        const embed = new EmbedBuilder()
-            .setTitle("New Vacation Request")
-            .setColor(colorManager.getColor('pending') || '#E67E22')
-            .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
-            .addFields(
-                { name: "___User___", value: `${member}`, inline: true },
-                { name: "___Duration___", value: `**${ms(durationMs, { long: true })}**`, inline: true },
-                { name: "___Reason___", value: reason, inline: false },
-                { name: "___Roles to be Removed___", value: rolesDisplay, inline: false }
-            )
-            .setTimestamp();
-
-        const buttons = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`vac_approve_${userId}`).setLabel("Approve").setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId(`vac_reject_${userId}`).setLabel("Reject").setStyle(ButtonStyle.Danger)
-        );
-
-        if (settings.notificationMethod === 'channel' && settings.notificationChannel) {
-            const channel = await client.channels.fetch(settings.notificationChannel).catch(() => null);
-            if (channel) {
-                await channel.send({ embeds: [embed], components: [buttons] });
+            const durationMs = ms(durationStr);
+            if (!durationMs || durationMs <= 0) {
+                replyEmbed.setDescription('Invalid duration format. Please use a format like `7d`, `12h`, or `30m`.');
+                return interaction.editReply({ embeds: [replyEmbed] });
             }
-        } else { // DM by default
-            for (const approver of approvers) {
-                await approver.send({ embeds: [embed], components: [buttons] }).catch(e => console.error(`Could not DM user ${approver.id}`));
-            }
-        }
 
-        replyEmbed.setDescription('✅ **Your vacation request has been submitted for approval.**');
-        await interaction.editReply({ embeds: [replyEmbed] });
+            const vacations = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
+            vacations.pending[userId] = {
+                reason: reason,
+                startDate: new Date().toISOString(),
+                endDate: new Date(Date.now() + durationMs).toISOString(),
+            };
+            vacationManager.saveVacations(vacations);
+
+            const settings = vacationManager.getSettings();
+            const approvers = await vacationManager.getApprovers(interaction.guild, settings, BOT_OWNERS);
+
+            if (approvers.length === 0) {
+                replyEmbed.setDescription('Could not find any valid approvers based on the current settings.');
+                return interaction.editReply({ embeds: [replyEmbed] });
+            }
+
+            const adminRoles = readJson(adminRolesPath, []);
+            const rolesToBeRemoved = member.roles.cache.filter(role => adminRoles.includes(role.id));
+            const rolesDisplay = rolesToBeRemoved.map(r => `<@&${r.id}>`).join(', ') || 'None';
+
+            const embed = new EmbedBuilder()
+                .setTitle("New Vacation Request")
+                .setColor(colorManager.getColor('pending') || '#E67E22')
+                .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
+                .addFields(
+                    { name: "___User___", value: `${member}`, inline: true },
+                    { name: "___Duration___", value: `**${ms(durationMs, { long: true })}**`, inline: true },
+                    { name: "___Reason___", value: reason, inline: false },
+                    { name: "___Roles to be Removed___", value: rolesDisplay, inline: false }
+                )
+                .setTimestamp();
+
+            const buttons = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(`vac_approve_${userId}`).setLabel("Approve").setStyle(ButtonStyle.Success),
+                new ButtonBuilder().setCustomId(`vac_reject_${userId}`).setLabel("Reject").setStyle(ButtonStyle.Danger)
+            );
+
+            if (settings.notificationMethod === 'channel' && settings.notificationChannel) {
+                const channel = await client.channels.fetch(settings.notificationChannel).catch(() => null);
+                if (channel) {
+                    await channel.send({ embeds: [embed], components: [buttons] });
+                }
+            } else { // DM by default
+                for (const approver of approvers) {
+                    await approver.send({ embeds: [embed], components: [buttons] }).catch(e => console.error(`Could not DM user ${approver.id}`));
+                }
+            }
+
+            replyEmbed.setDescription('✅ **Your vacation request has been submitted for approval.**');
+            await interaction.editReply({ embeds: [replyEmbed] });
+        } catch (error) {
+            console.error("Error in vacation modal submission:", error);
+            const errorEmbed = new EmbedBuilder()
+                .setColor('#FF0000')
+                .setDescription(`**An error occurred while submitting your request:**\n\`\`\`${error.message}\`\`\``);
+            await interaction.editReply({ embeds: [errorEmbed] });
+        }
     }
 }
 
