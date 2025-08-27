@@ -537,7 +537,7 @@ if (client.modalData) {
   // Check for expired vacations every hour
   setInterval(() => {
     vacationManager.checkVacations(client);
-  }, 60 * 60 * 1000);
+  }, 3600000); // 1 hour
 };
 
 client.on('messageCreate', async message => {
@@ -547,17 +547,6 @@ client.on('messageCreate', async message => {
   const { isUserBlocked } = require('./commands/block.js');
   if (isUserBlocked(message.author.id)) {
     return; // تجاهل المستخدمين المحظورين بصمت لتوفير الأداء
-  }
-
-  // فحص الإجازة قبل معالجة أي أمر
-  if (vacationManager.isUserOnVacation(message.author.id)) {
-    const PREFIX = getCachedPrefix();
-    const args = message.content.slice(PREFIX.length).trim().split(/ +/);
-    const commandName = args.shift().toLowerCase();
-    const allowedCommands = ['اجازتي', 'my-vacation'];
-    if (!allowedCommands.includes(commandName)) {
-        return message.reply({ content: 'You are currently on vacation and cannot use commands.' });
-    }
   }
 
   try {
@@ -783,11 +772,6 @@ client.on('interactionCreate', async (interaction) => {
       return; // تجاهل بصمت لتوفير الأداء
     }
 
-    // فحص الإجازة قبل معالجة أي تفاعل
-    if (vacationManager.isUserOnVacation(interaction.user.id)) {
-        return interaction.reply({ content: 'You are currently on vacation and cannot use interactions.', ephemeral: true });
-    }
-
 
     // Handle log system interactions
     if (interaction.customId && (interaction.customId.startsWith('log_') ||
@@ -825,49 +809,151 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    if (interaction.customId.startsWith('vacation_end_confirm_')) {
-        const userId = interaction.customId.split('_').pop();
-        if (interaction.user.id !== userId) return interaction.reply({ content: 'This is not for you.', ephemeral: true });
+    // --- Vacation System Interaction Router ---
+    if (interaction.customId && interaction.customId.startsWith('vac_')) {
+        const vacationContext = { client, BOT_OWNERS };
 
-        const result = await vacationManager.endVacation(client, userId, 'Ended early by user.');
-        if (result.success) {
-            await interaction.update({ content: 'Your vacation has been ended. Welcome back!', components: [] });
-        } else {
-            await interaction.update({ content: `Failed to end vacation: ${result.message}`, components: [] });
+        // Route to set-vacation command
+        if (interaction.customId.includes('_set_') || interaction.customId.includes('_choice_') || interaction.customId.includes('_select') || interaction.customId.includes('_back_')) {
+             const setVacationCommand = client.commands.get('set-vacation');
+             if (setVacationCommand && setVacationCommand.handleInteraction) {
+                 await setVacationCommand.handleInteraction(interaction, vacationContext);
+             }
+             return;
         }
-        return;
-    }
 
-    if (interaction.customId.startsWith('vacation_end_cancel_')) {
-        const userId = interaction.customId.split('_').pop();
-        if (interaction.user.id !== userId) return interaction.reply({ content: 'This is not for you.', ephemeral: true });
-
-        await interaction.update({ content: 'Action cancelled. Your vacation is still active.', components: [] });
-        return;
-    }
-
-    if (interaction.customId.startsWith('vacation_approve_') || interaction.customId.startsWith('vacation_reject_')) {
-        const vacationCommand = client.commands.get('vacation-requests');
-        if (vacationCommand && vacationCommand.handleInteraction) {
-            await vacationCommand.handleInteraction(interaction);
+        // Route to vacation (ajaza) command
+        if (interaction.customId.startsWith('vac_request_')) {
+            const vacationCommand = client.commands.get('اجازه');
+            if (vacationCommand && vacationCommand.handleInteraction) {
+                await vacationCommand.handleInteraction(interaction, vacationContext);
+            }
+            return;
         }
-        return;
-    }
 
-    if (interaction.customId.startsWith('vacation_request_') || interaction.customId.startsWith('vacation_submit_')) {
-        const vacationCommand = client.commands.get('اجازه');
-        if (vacationCommand && vacationCommand.handleInteraction) {
-            await vacationCommand.handleInteraction(interaction, { client });
+        // Route to my-vacation (ajazati) command
+        if (interaction.customId.startsWith('vac_end_request_')) {
+            const myVacationCommand = client.commands.get('اجازتي');
+            if (myVacationCommand && myVacationCommand.handleInteraction) {
+                await myVacationCommand.handleInteraction(interaction, vacationContext);
+            }
+            return;
         }
-        return;
-    }
 
-    if (interaction.customId.startsWith('vacation_end_request_')) {
-        const myVacationCommand = client.commands.get('اجازتي');
-        if (myVacationCommand && myVacationCommand.handleInteraction) {
-            await myVacationCommand.handleInteraction(interaction);
+        // Handle direct approvals / rejections
+        const [action, decision, userId] = interaction.customId.split('_');
+
+        if (decision === 'approve') {
+            const result = await vacationManager.approveVacation(client, userId, interaction.user.id);
+            if (result.success) {
+                await interaction.update({ content: `✅ Vacation for <@${userId}> has been approved.`, components: [], embeds: [] });
+                const user = await client.users.fetch(userId).catch(() => null);
+                if (user) {
+                    const dmEmbed = new EmbedBuilder()
+                        .setTitle('Vacation Request Approved')
+                        .setColor(colorManager.getColor('approved') || '#2ECC71')
+                        .setDescription('Your vacation request has been approved. Your administrative roles have been temporarily removed and will be restored when your vacation ends.')
+                        .setFooter({ text: 'Enjoy your time off!' });
+                    await user.send({ embeds: [dmEmbed] }).catch(err => console.log(`Failed to DM user ${userId}: ${err}`));
+                }
+            } else {
+                await interaction.reply({ content: `Failed to approve: ${result.message}`, ephemeral: true });
+            }
+            return;
         }
-        return;
+
+        if (decision === 'reject') {
+            const vacations = vacationManager.readJson(path.join(__dirname, 'data', 'vacations.json'));
+            delete vacations.pending[userId];
+            vacationManager.saveVacations(vacations);
+
+            await interaction.update({ content: `❌ Vacation for <@${userId}> has been rejected.`, components: [], embeds: [] });
+            const user = await client.users.fetch(userId).catch(() => null);
+            if (user) {
+                const dmEmbed = new EmbedBuilder()
+                    .setTitle('Vacation Request Rejected')
+                    .setColor(colorManager.getColor('rejected') || '#E74C3C')
+                    .setDescription('Unfortunately, your vacation request has been rejected.');
+                await user.send({ embeds: [dmEmbed] }).catch(err => console.log(`Failed to DM user ${userId}: ${err}`));
+            }
+            return;
+        }
+
+        // --- Early Termination Flow ---
+
+        // Step 1: User confirms they want to send an early termination request
+        if (interaction.customId.startsWith('vac_end_confirm_')) {
+            const userId = interaction.customId.split('_').pop();
+            if (interaction.user.id !== userId) return interaction.reply({ content: 'This is not for you.', ephemeral: true });
+
+            await interaction.update({ content: 'Your request to end your vacation has been sent for approval.', components: [] });
+
+            const vacations = vacationManager.readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
+            const vacation = vacations.active[userId];
+
+            if (!vacation) {
+                return interaction.followUp({ content: 'Could not find an active vacation for you.', ephemeral: true });
+            }
+
+            const settings = vacationManager.getSettings();
+            const approvers = await vacationManager.getApprovers(interaction.guild, settings, BOT_OWNERS);
+            const originalApprover = await client.users.fetch(vacation.approvedBy).catch(() => ({ tag: 'Unknown' }));
+
+            const terminationEmbed = new EmbedBuilder()
+                .setTitle('Early Vacation Termination Request')
+                .setColor(colorManager.getColor('pending') || '#E67E22')
+                .setDescription(`User <@${userId}> has requested to end their vacation early.`)
+                .addFields(
+                    { name: 'User', value: `<@${userId}>`, inline: true },
+                    { name: 'Original Approver', value: originalApprover.tag, inline: true},
+                    { name: 'Removed Roles', value: vacation.removedRoles?.map(r => `<@&${r}>`).join(', ') || 'None', inline: false }
+                )
+                .setTimestamp();
+
+            const buttons = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(`vac_terminate_approve_${userId}`).setLabel("Approve Termination").setStyle(ButtonStyle.Success),
+                new ButtonBuilder().setCustomId(`vac_terminate_reject_${userId}`).setLabel("Reject Termination").setStyle(ButtonStyle.Danger)
+            );
+
+            if (settings.notificationMethod === 'channel' && settings.notificationChannel) {
+                const channel = await client.channels.fetch(settings.notificationChannel).catch(() => null);
+                if (channel) await channel.send({ embeds: [terminationEmbed], components: [buttons] });
+            } else {
+                for (const approver of approvers) {
+                    await approver.send({ embeds: [terminationEmbed], components: [buttons] }).catch(e => console.error(`Could not DM user ${approver.id}`));
+                }
+            }
+            return;
+        }
+
+        // Step 2: User cancels the early termination request
+        if (interaction.customId === 'vac_end_cancel') {
+            await interaction.update({ content: 'Action cancelled. Your vacation remains active.', components: [] });
+            return;
+        }
+
+        // Step 3: Approvers approve or reject the early termination request
+        if (interaction.customId.startsWith('vac_terminate_approve_')) {
+            const userId = interaction.customId.split('_').pop();
+            const result = await vacationManager.endVacation(client, userId, `Ended early by approval from ${interaction.user.tag}.`);
+
+            if (result.success) {
+                await interaction.update({ content: `✅ Early termination for <@${userId}> has been **approved**.`, components: [], embeds: []});
+                const user = await client.users.fetch(userId).catch(() => null);
+                if (user) await user.send({ content: 'Your request to end your vacation early was approved. Welcome back!' });
+            } else {
+                await interaction.reply({ content: `Failed to approve termination: ${result.message}`, ephemeral: true });
+            }
+            return;
+        }
+
+        if (interaction.customId.startsWith('vac_terminate_reject_')) {
+            const userId = interaction.customId.split('_').pop();
+            await interaction.update({ content: `❌ Early termination for <@${userId}> has been **rejected**.`, components: [], embeds: []});
+            const user = await client.users.fetch(userId).catch(() => null);
+            if (user) await user.send({ content: 'Your request to end your vacation early was rejected.' });
+            return;
+        }
     }
 
     // Handle adminroles interactions

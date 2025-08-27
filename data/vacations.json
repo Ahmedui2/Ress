@@ -1,10 +1,11 @@
 {
   "settings": {
     "approverType": null,
-    "approverTarget": null,
-    "notificationType": null,
+    "approverTargets": [],
+    "notificationMethod": null,
     "notificationChannel": null
   },
   "pending": {},
-  "active": {}
+  "active": {},
+  "pendingTermination": {}
 }

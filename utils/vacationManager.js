@@ -1,121 +1,124 @@
 const fs = require('fs');
 const path = require('path');
 const { EmbedBuilder } = require('discord.js');
-const colorManager = require('./colorManager'); // Assuming you have a color manager
+const colorManager = require('./colorManager');
 
 const vacationsPath = path.join(__dirname, '..', 'data', 'vacations.json');
+const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
 
-// Helper function to read the vacations file
-function readVacations() {
+// --- Helper Functions ---
+function readJson(filePath, defaultData = {}) {
     try {
-        if (fs.existsSync(vacationsPath)) {
-            const data = fs.readFileSync(vacationsPath, 'utf8');
-            // Ensure the structure is valid
-            const parsed = JSON.parse(data);
-            return {
-                settings: parsed.settings || {},
-                pending: parsed.pending || {},
-                active: parsed.active || {},
-            };
+        if (fs.existsSync(filePath)) {
+            return JSON.parse(fs.readFileSync(filePath, 'utf8'));
         }
-        return { settings: {}, pending: {}, active: {} };
     } catch (error) {
-        console.error('Error reading vacations.json:', error);
-        return { settings: {}, pending: {}, active: {} };
+        console.error(`Error reading ${filePath}:`, error);
     }
+    return defaultData;
 }
 
-// Helper function to write to the vacations file
-function writeVacations(data) {
+function saveVacations(data) {
     try {
         fs.writeFileSync(vacationsPath, JSON.stringify(data, null, 2));
+        return true;
     } catch (error) {
-        console.error('Error writing to vacations.json:', error);
+        console.error('Error writing vacations.json:', error);
+        return false;
     }
 }
 
-// Check if a user is currently on an active vacation
+// --- Public Functions ---
+
+function getSettings() {
+    const vacations = readJson(vacationsPath, { settings: {} });
+    return vacations.settings;
+}
+
 function isUserOnVacation(userId) {
-    const vacations = readVacations();
-    return !!vacations.active[userId];
+    const vacations = readJson(vacationsPath);
+    return !!vacations.active?.[userId];
 }
 
-// Get all pending vacation requests
-function getPendingVacations() {
-    const vacations = readVacations();
-    return vacations.pending;
-}
-
-// Get all active vacations
-function getActiveVacations() {
-    const vacations = readVacations();
-    return vacations.active;
-}
-
-
-// Approve a pending vacation request
-function approveVacation(userId, approverId) {
-    const vacations = readVacations();
-    const request = vacations.pending[userId];
+async function approveVacation(client, userId, approverId) {
+    const vacations = readJson(vacationsPath);
+    const request = vacations.pending?.[userId];
 
     if (!request) {
         return { success: false, message: 'No pending vacation request found for this user.' };
     }
 
-    // Move from pending to active
-    vacations.active[userId] = {
+    const guild = client.guilds.cache.first();
+    if (!guild) return { success: false, message: 'Bot is not in a guild.' };
+
+    const member = await guild.members.fetch(userId).catch(() => null);
+    if (!member) return { success: false, message: 'User not found in the guild.' };
+
+    // --- Role Management ---
+    const adminRoles = readJson(adminRolesPath, []);
+    const rolesToRemove = member.roles.cache.filter(role => adminRoles.includes(role.id));
+    const removedRoleIds = rolesToRemove.map(role => role.id);
+
+    try {
+        await member.roles.remove(rolesToRemove);
+    } catch (error) {
+        console.error(`Failed to remove roles from ${member.user.tag}:`, error);
+        return { success: false, message: 'Failed to remove user roles. Check bot permissions.' };
+    }
+
+    // --- Update Vacation Data ---
+    const activeVacation = {
         ...request,
         status: 'active',
         approvedBy: approverId,
         approvedAt: new Date().toISOString(),
+        removedRoles: removedRoleIds // Store the roles that were removed
     };
-    delete vacations.pending[userId];
 
-    writeVacations(vacations);
-    return { success: true, vacation: vacations.active[userId] };
+    vacations.active[userId] = activeVacation;
+    delete vacations.pending[userId];
+    saveVacations(vacations);
+
+    return { success: true, vacation: activeVacation };
 }
 
-// Reject a pending vacation request
-function rejectVacation(userId, rejecterId, reason = 'No reason provided.') {
-    const vacations = readVacations();
-    const request = vacations.pending[userId];
-
-    if (!request) {
-        return { success: false, message: 'No pending vacation request found for this user.' };
-    }
-
-    // Just remove it from pending
-    delete vacations.pending[userId];
-    writeVacations(vacations);
-
-    // Return the rejected request details for notification purposes
-    return { success: true, vacation: { ...request, rejectedBy: rejecterId, reason } };
-}
-
-// End an active vacation (either manually or automatically)
 async function endVacation(client, userId, reason = 'Vacation period has ended.') {
-    const vacations = readVacations();
-    const vacation = vacations.active[userId];
+    const vacations = readJson(vacationsPath);
+    const vacation = vacations.active?.[userId];
 
     if (!vacation) {
         return { success: false, message: 'No active vacation found for this user.' };
     }
 
-    // Remove from active
-    delete vacations.active[userId];
-    writeVacations(vacations);
+    const guild = client.guilds.cache.first();
+    if (!guild) return { success: false, message: 'Bot is not in a guild.' };
 
-    // Send DM notification to the user
+    const member = await guild.members.fetch(userId).catch(() => null);
+
+    // --- Role Management ---
+    if (member && vacation.removedRoles && vacation.removedRoles.length > 0) {
+        try {
+            await member.roles.add(vacation.removedRoles);
+        } catch (error) {
+            console.error(`Failed to re-add roles to ${member.user.tag}:`, error);
+            // Don't stop the process, but log the error. Maybe DM the user/owner.
+        }
+    }
+
+    // --- Update Vacation Data ---
+    delete vacations.active[userId];
+    saveVacations(vacations);
+
+    // --- Send DM Notification ---
     try {
         const user = await client.users.fetch(userId);
         const embed = new EmbedBuilder()
             .setTitle('Vacation Ended')
-            .setColor(colorManager.getColor('ended') || '#FFA500') // Orange for ended
+            .setColor(colorManager.getColor('ended') || '#FFA500')
             .setDescription(`Your vacation has ended. Welcome back!`)
             .addFields(
                 { name: 'Reason for Ending', value: reason },
-                { name: 'Original Start Date', value: new Date(vacation.startDate).toLocaleDateString() },
-                { name: 'Original End Date', value: new Date(vacation.endDate).toLocaleDateString() }
+                { name: 'Roles Restored', value: vacation.removedRoles.map(id => `<@&${id}>`).join(', ') || 'None' }
             )
             .setTimestamp();
         await user.send({ embeds: [embed] });
@@ -126,16 +129,17 @@ async function endVacation(client, userId, reason = 'Vacation period has ended.'
     return { success: true, vacation };
 }
 
-// Periodically check for vacations that should end
+
 async function checkVacations(client) {
-    console.log('Checking for expired vacations...');
-    const vacations = readVacations();
-    const now = new Date();
+    const vacations = readJson(vacationsPath);
+    if (!vacations.active) return;
+
+    const now = Date.now();
     let endedCount = 0;
 
     for (const userId in vacations.active) {
         const vacation = vacations.active[userId];
-        const endDate = new Date(vacation.endDate);
+        const endDate = new Date(vacation.endDate).getTime();
 
         if (now >= endDate) {
             console.log(`Vacation for user ${userId} has expired. Ending it now.`);
@@ -149,14 +153,45 @@ async function checkVacations(client) {
 }
 
 
+const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
+
+async function getApprovers(guild, settings, botOwners) {
+    const approverIds = new Set();
+    if (settings.approverType === 'owners') {
+        botOwners.forEach(id => approverIds.add(id));
+    } else if (settings.approverType === 'role') {
+        for (const roleId of settings.approverTargets) {
+            const role = await guild.roles.fetch(roleId).catch(() => null);
+            if (role) {
+                role.members.forEach(m => approverIds.add(m.id));
+            }
+        }
+    } else if (settings.approverType === 'responsibility') {
+        const responsibilities = readJson(responsibilitiesPath);
+        for (const respName of settings.approverTargets) {
+            const respData = responsibilities[respName];
+            if (respData && respData.responsibles) {
+                respData.responsibles.forEach(id => approverIds.add(id));
+            }
+        }
+    }
+
+    // Fetch user objects from IDs
+    const approvers = [];
+    for (const id of approverIds) {
+        const user = await guild.client.users.fetch(id).catch(() => null);
+        if (user) approvers.push(user);
+    }
+    return approvers;
+}
+
 module.exports = {
+    getSettings,
     isUserOnVacation,
-    getPendingVacations,
-    getActiveVacations,
     approveVacation,
-    rejectVacation,
     endVacation,
     checkVacations,
-    readVacations,
-    writeVacations,
+    getApprovers,
+    saveVacations, // Export for use in other commands if needed
+    readJson // More generic name
 };
