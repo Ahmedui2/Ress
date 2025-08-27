@@ -5,6 +5,7 @@ const colorManager = require('./colorManager');
 
 const vacationsPath = path.join(__dirname, '..', 'data', 'vacations.json');
 const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
+const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
 
 // --- Helper Functions ---
 function readJson(filePath, defaultData = {}) {
@@ -40,7 +41,7 @@ function isUserOnVacation(userId) {
     return !!vacations.active?.[userId];
 }
 
-async function approveVacation(client, userId, approverId) {
+async function approveVacation(interaction, userId, approverId) {
     const vacations = readJson(vacationsPath);
     const request = vacations.pending?.[userId];
 
@@ -48,33 +49,26 @@ async function approveVacation(client, userId, approverId) {
         return { success: false, message: 'No pending vacation request found for this user.' };
     }
 
-    const guild = client.guilds.cache.first();
-    if (!guild) return { success: false, message: 'Bot is not in a guild.' };
+    const guild = interaction.guild;
+    if (!guild) return { success: false, message: 'Interaction did not originate from a guild.' };
 
     const member = await guild.members.fetch(userId).catch(() => null);
     if (!member) return { success: false, message: 'User not found in the guild.' };
 
-    // --- Role Management ---
     const adminRoles = readJson(adminRolesPath, []);
     const rolesToRemove = member.roles.cache.filter(role => adminRoles.includes(role.id));
     const removedRoleIds = rolesToRemove.map(role => role.id);
 
     try {
-        await member.roles.remove(rolesToRemove);
+        if (rolesToRemove.size > 0) {
+            await member.roles.remove(rolesToRemove);
+        }
     } catch (error) {
         console.error(`Failed to remove roles from ${member.user.tag}:`, error);
         return { success: false, message: 'Failed to remove user roles. Check bot permissions.' };
     }
 
-    // --- Update Vacation Data ---
-    const activeVacation = {
-        ...request,
-        status: 'active',
-        approvedBy: approverId,
-        approvedAt: new Date().toISOString(),
-        removedRoles: removedRoleIds // Store the roles that were removed
-    };
-
+    const activeVacation = { ...request, status: 'active', approvedBy: approverId, approvedAt: new Date().toISOString(), removedRoles: removedRoleIds };
     vacations.active[userId] = activeVacation;
     delete vacations.pending[userId];
     saveVacations(vacations);
@@ -82,7 +76,7 @@ async function approveVacation(client, userId, approverId) {
     return { success: true, vacation: activeVacation };
 }
 
-async function endVacation(client, userId, reason = 'Vacation period has ended.') {
+async function endVacation(guild, client, userId, reason = 'Vacation period has ended.') {
     const vacations = readJson(vacationsPath);
     const vacation = vacations.active?.[userId];
 
@@ -90,35 +84,30 @@ async function endVacation(client, userId, reason = 'Vacation period has ended.'
         return { success: false, message: 'No active vacation found for this user.' };
     }
 
-    const guild = client.guilds.cache.first();
-    if (!guild) return { success: false, message: 'Bot is not in a guild.' };
+    if (!guild) return { success: false, message: 'Guild context was not provided.' };
 
     const member = await guild.members.fetch(userId).catch(() => null);
 
-    // --- Role Management ---
     if (member && vacation.removedRoles && vacation.removedRoles.length > 0) {
         try {
             await member.roles.add(vacation.removedRoles);
         } catch (error) {
             console.error(`Failed to re-add roles to ${member.user.tag}:`, error);
-            // Don't stop the process, but log the error. Maybe DM the user/owner.
         }
     }
 
-    // --- Update Vacation Data ---
     delete vacations.active[userId];
     saveVacations(vacations);
 
-    // --- Send DM Notification ---
     try {
         const user = await client.users.fetch(userId);
         const embed = new EmbedBuilder()
             .setTitle('Vacation Ended')
             .setColor(colorManager.getColor('ended') || '#FFA500')
-            .setDescription(`Your vacation has ended. Welcome back!`)
+            .setDescription(`**Your vacation has ended. Welcome back!**`)
             .addFields(
-                { name: 'Reason for Ending', value: reason },
-                { name: 'Roles Restored', value: vacation.removedRoles.map(id => `<@&${id}>`).join(', ') || 'None' }
+                { name: '___Reason for Ending___', value: reason },
+                { name: '___Roles Restored___', value: vacation.removedRoles.map(id => `<@&${id}>`).join(', ') || 'None' }
             )
             .setTimestamp();
         await user.send({ embeds: [embed] });
@@ -129,31 +118,22 @@ async function endVacation(client, userId, reason = 'Vacation period has ended.'
     return { success: true, vacation };
 }
 
-
 async function checkVacations(client) {
     const vacations = readJson(vacationsPath);
-    if (!vacations.active) return;
+    const guild = client.guilds.cache.first();
+    if (!guild || !vacations.active) return;
 
     const now = Date.now();
-    let endedCount = 0;
-
     for (const userId in vacations.active) {
         const vacation = vacations.active[userId];
         const endDate = new Date(vacation.endDate).getTime();
 
         if (now >= endDate) {
             console.log(`Vacation for user ${userId} has expired. Ending it now.`);
-            await endVacation(client, userId);
-            endedCount++;
+            await endVacation(guild, client, userId);
         }
     }
-    if (endedCount > 0) {
-        console.log(`Ended ${endedCount} expired vacation(s).`);
-    }
 }
-
-
-const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
 
 async function getApprovers(guild, settings, botOwners) {
     const approverIds = new Set();
@@ -162,21 +142,16 @@ async function getApprovers(guild, settings, botOwners) {
     } else if (settings.approverType === 'role') {
         for (const roleId of settings.approverTargets) {
             const role = await guild.roles.fetch(roleId).catch(() => null);
-            if (role) {
-                role.members.forEach(m => approverIds.add(m.id));
-            }
+            if (role) role.members.forEach(m => approverIds.add(m.id));
         }
     } else if (settings.approverType === 'responsibility') {
         const responsibilities = readJson(responsibilitiesPath);
         for (const respName of settings.approverTargets) {
             const respData = responsibilities[respName];
-            if (respData && respData.responsibles) {
-                respData.responsibles.forEach(id => approverIds.add(id));
-            }
+            if (respData?.responsibles) respData.responsibles.forEach(id => approverIds.add(id));
         }
     }
 
-    // Fetch user objects from IDs
     const approvers = [];
     for (const id of approverIds) {
         const user = await guild.client.users.fetch(id).catch(() => null);
@@ -192,6 +167,6 @@ module.exports = {
     endVacation,
     checkVacations,
     getApprovers,
-    saveVacations, // Export for use in other commands if needed
-    readJson // More generic name
+    saveVacations,
+    readJson
 };

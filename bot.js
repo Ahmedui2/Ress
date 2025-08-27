@@ -844,9 +844,11 @@ client.on('interactionCreate', async (interaction) => {
         const [action, decision, userId] = interaction.customId.split('_');
 
         if (decision === 'approve') {
-            const result = await vacationManager.approveVacation(client, userId, interaction.user.id);
+            const result = await vacationManager.approveVacation(interaction, userId, interaction.user.id);
             if (result.success) {
-                await interaction.update({ content: `✅ Vacation for <@${userId}> has been approved.`, components: [], embeds: [] });
+                const updatedEmbed = new EmbedBuilder().setColor(colorManager.getColor('approved') || '#2ECC71').setDescription(`✅ **Vacation for <@${userId}> has been approved.**`);
+                await interaction.update({ embeds: [updatedEmbed], components: [] });
+
                 const user = await client.users.fetch(userId).catch(() => null);
                 if (user) {
                     const dmEmbed = new EmbedBuilder()
@@ -857,17 +859,20 @@ client.on('interactionCreate', async (interaction) => {
                     await user.send({ embeds: [dmEmbed] }).catch(err => console.log(`Failed to DM user ${userId}: ${err}`));
                 }
             } else {
-                await interaction.reply({ content: `Failed to approve: ${result.message}`, ephemeral: true });
+                const errorEmbed = new EmbedBuilder().setColor('#FF0000').setDescription(`❌ **Failed to approve:** ${result.message}`);
+                await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
             }
             return;
         }
 
         if (decision === 'reject') {
-            const vacations = vacationManager.readJson(path.join(__dirname, 'data', 'vacations.json'));
+            const vacations = vacationManager.readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
             delete vacations.pending[userId];
             vacationManager.saveVacations(vacations);
 
-            await interaction.update({ content: `❌ Vacation for <@${userId}> has been rejected.`, components: [], embeds: [] });
+            const rejectEmbed = new EmbedBuilder().setColor(colorManager.getColor('rejected') || '#E74C3C').setDescription(`❌ **Vacation for <@${userId}> has been rejected.**`);
+            await interaction.update({ embeds: [rejectEmbed], components: [] });
+
             const user = await client.users.fetch(userId).catch(() => null);
             if (user) {
                 const dmEmbed = new EmbedBuilder()
@@ -880,20 +885,16 @@ client.on('interactionCreate', async (interaction) => {
         }
 
         // --- Early Termination Flow ---
-
-        // Step 1: User confirms they want to send an early termination request
         if (interaction.customId.startsWith('vac_end_confirm_')) {
             const userId = interaction.customId.split('_').pop();
             if (interaction.user.id !== userId) return interaction.reply({ content: 'This is not for you.', ephemeral: true });
 
-            await interaction.update({ content: 'Your request to end your vacation has been sent for approval.', components: [] });
+            const confirmEmbed = new EmbedBuilder().setColor(colorManager.getColor()).setDescription('Your request to end your vacation has been sent for approval.');
+            await interaction.update({ embeds: [confirmEmbed], components: [] });
 
             const vacations = vacationManager.readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
             const vacation = vacations.active[userId];
-
-            if (!vacation) {
-                return interaction.followUp({ content: 'Could not find an active vacation for you.', ephemeral: true });
-            }
+            if (!vacation) return;
 
             const settings = vacationManager.getSettings();
             const approvers = await vacationManager.getApprovers(interaction.guild, settings, BOT_OWNERS);
@@ -902,11 +903,11 @@ client.on('interactionCreate', async (interaction) => {
             const terminationEmbed = new EmbedBuilder()
                 .setTitle('Early Vacation Termination Request')
                 .setColor(colorManager.getColor('pending') || '#E67E22')
-                .setDescription(`User <@${userId}> has requested to end their vacation early.`)
+                .setDescription(`**<@${userId}> has requested to end their vacation early.**`)
                 .addFields(
-                    { name: 'User', value: `<@${userId}>`, inline: true },
-                    { name: 'Original Approver', value: originalApprover.tag, inline: true},
-                    { name: 'Removed Roles', value: vacation.removedRoles?.map(r => `<@&${r}>`).join(', ') || 'None', inline: false }
+                    { name: '___User___', value: `<@${userId}>`, inline: true },
+                    { name: '___Original Approver___', value: `**${originalApprover.tag}**`, inline: true},
+                    { name: '___Removed Roles___', value: vacation.removedRoles?.map(r => `<@&${r}>`).join(', ') || 'None', inline: false }
                 )
                 .setTimestamp();
 
@@ -926,32 +927,35 @@ client.on('interactionCreate', async (interaction) => {
             return;
         }
 
-        // Step 2: User cancels the early termination request
         if (interaction.customId === 'vac_end_cancel') {
-            await interaction.update({ content: 'Action cancelled. Your vacation remains active.', components: [] });
+            const cancelEmbed = new EmbedBuilder().setColor(colorManager.getColor()).setDescription('Action cancelled. Your vacation remains active.');
+            await interaction.update({ embeds: [cancelEmbed], components: [] });
             return;
         }
 
-        // Step 3: Approvers approve or reject the early termination request
         if (interaction.customId.startsWith('vac_terminate_approve_')) {
             const userId = interaction.customId.split('_').pop();
-            const result = await vacationManager.endVacation(client, userId, `Ended early by approval from ${interaction.user.tag}.`);
+            const result = await vacationManager.endVacation(interaction.guild, client, userId, `Ended early by approval from ${interaction.user.tag}.`);
 
             if (result.success) {
-                await interaction.update({ content: `✅ Early termination for <@${userId}> has been **approved**.`, components: [], embeds: []});
+                const approvedEmbed = new EmbedBuilder().setColor(colorManager.getColor('approved')).setDescription(`✅ Early termination for <@${userId}> has been **approved**.`);
+                await interaction.update({ embeds: [approvedEmbed], components: [],
+                });
                 const user = await client.users.fetch(userId).catch(() => null);
-                if (user) await user.send({ content: 'Your request to end your vacation early was approved. Welcome back!' });
+                if (user) await user.send({ embeds: [new EmbedBuilder().setColor(colorManager.getColor('approved')).setDescription('Your request to end your vacation early was **approved**. Welcome back!')] });
             } else {
-                await interaction.reply({ content: `Failed to approve termination: ${result.message}`, ephemeral: true });
+                 const errorEmbed = new EmbedBuilder().setColor('#FF0000').setDescription(`❌ **Failed to approve termination:** ${result.message}`);
+                await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
             }
             return;
         }
 
         if (interaction.customId.startsWith('vac_terminate_reject_')) {
             const userId = interaction.customId.split('_').pop();
-            await interaction.update({ content: `❌ Early termination for <@${userId}> has been **rejected**.`, components: [], embeds: []});
+            const rejectedEmbed = new EmbedBuilder().setColor(colorManager.getColor('rejected')).setDescription(`❌ Early termination for <@${userId}> has been **rejected**.`);
+            await interaction.update({ embeds: [rejectedEmbed], components: [] });
             const user = await client.users.fetch(userId).catch(() => null);
-            if (user) await user.send({ content: 'Your request to end your vacation early was rejected.' });
+            if (user) await user.send({ embeds: [new EmbedBuilder().setColor(colorManager.getColor('rejected')).setDescription('Your request to end your vacation early was **rejected**.')] });
             return;
         }
     }

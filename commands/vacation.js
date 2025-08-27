@@ -6,7 +6,6 @@ const colorManager = require('../utils/colorManager.js');
 const vacationManager = require('../utils/vacationManager.js');
 
 const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
-const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
 
 // Helper to read a JSON file
 function readJson(filePath, defaultData = {}) {
@@ -26,41 +25,51 @@ async function execute(message, args, { BOT_OWNERS }) {
     const isOwner = BOT_OWNERS.includes(message.author.id);
     const hasAdminRole = member.roles.cache.some(role => adminRoles.includes(role.id));
 
+    const replyEmbed = new EmbedBuilder().setColor(colorManager.getColor() || '#0099ff');
+
     if (!isOwner && !hasAdminRole) {
-        return message.reply({ content: '❌ This command is for administrators only.', ephemeral: true });
+        replyEmbed.setDescription('❌ **This command is for administrators only.**');
+        return message.reply({ embeds: [replyEmbed], ephemeral: true });
     }
 
     const settings = vacationManager.getSettings();
     if (!settings.approverType || !settings.notificationMethod) {
-        return message.reply({ content: 'The vacation system has not been fully configured yet. Please ask the bot owner to use `set-vacation`.', ephemeral: true });
+        replyEmbed.setDescription('⚠️ The vacation system has not been fully configured yet. Please ask the bot owner to use `set-vacation`.');
+        return message.reply({ embeds: [replyEmbed], ephemeral: true });
     }
 
     if (vacationManager.isUserOnVacation(member.id)) {
-        return message.reply({ content: "You are already on vacation.", ephemeral: true });
+        replyEmbed.setDescription("You are already on vacation.");
+        return message.reply({ embeds: [replyEmbed], ephemeral: true });
     }
 
     const vacations = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
     if (vacations.pending?.[member.id]) {
-        return message.reply({ content: "You already have a pending vacation request.", ephemeral: true });
+        replyEmbed.setDescription("You already have a pending vacation request.");
+        return message.reply({ embeds: [replyEmbed], ephemeral: true });
     }
 
+    replyEmbed.setDescription("Click the button below to open the vacation request form.");
     const requestButton = new ButtonBuilder()
         .setCustomId(`vac_request_start_${member.id}`)
         .setLabel("Request Vacation")
         .setStyle(ButtonStyle.Primary);
 
     const row = new ActionRowBuilder().addComponents(requestButton);
-    await message.reply({ content: "Click the button to open the vacation request form.", components: [row] });
+    await message.reply({ embeds: [replyEmbed], components: [row] });
 }
 
 async function handleInteraction(interaction, context) {
     const { client, BOT_OWNERS } = context;
     const customId = interaction.customId;
 
+    const replyEmbed = new EmbedBuilder().setColor(colorManager.getColor() || '#0099ff');
+
     if (customId.startsWith('vac_request_start_')) {
         const userId = customId.split('_').pop();
         if (interaction.user.id !== userId) {
-            return interaction.reply({ content: "You can only request a vacation for yourself.", ephemeral: true });
+            replyEmbed.setDescription("You can only request a vacation for yourself.");
+            return interaction.reply({ embeds: [replyEmbed], ephemeral: true });
         }
 
         const modal = new ModalBuilder()
@@ -84,7 +93,8 @@ async function handleInteraction(interaction, context) {
 
         const durationMs = ms(durationStr);
         if (!durationMs || durationMs <= 0) {
-            return interaction.editReply({ content: 'Invalid duration format. Please use a format like `7d`, `12h`, or `30m`.' });
+            replyEmbed.setDescription('Invalid duration format. Please use a format like `7d`, `12h`, or `30m`.');
+            return interaction.editReply({ embeds: [replyEmbed] });
         }
 
         const vacations = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
@@ -100,17 +110,23 @@ async function handleInteraction(interaction, context) {
         const approvers = await vacationManager.getApprovers(interaction.guild, settings, BOT_OWNERS);
 
         if (approvers.length === 0) {
-            return interaction.editReply({ content: 'Could not find any valid approvers based on the current settings.' });
+            replyEmbed.setDescription('Could not find any valid approvers based on the current settings.');
+            return interaction.editReply({ embeds: [replyEmbed] });
         }
+
+        const adminRoles = readJson(adminRolesPath, []);
+        const rolesToBeRemoved = member.roles.cache.filter(role => adminRoles.includes(role.id));
+        const rolesDisplay = rolesToBeRemoved.map(r => `<@&${r.id}>`).join(', ') || 'None';
 
         const embed = new EmbedBuilder()
             .setTitle("New Vacation Request")
             .setColor(colorManager.getColor('pending') || '#E67E22')
             .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
             .addFields(
-                { name: "User", value: `${member}`, inline: true },
-                { name: "Duration", value: ms(durationMs, { long: true }), inline: true },
-                { name: "Reason", value: reason, inline: false }
+                { name: "___User___", value: `${member}`, inline: true },
+                { name: "___Duration___", value: `**${ms(durationMs, { long: true })}**`, inline: true },
+                { name: "___Reason___", value: reason, inline: false },
+                { name: "___Roles to be Removed___", value: rolesDisplay, inline: false }
             )
             .setTimestamp();
 
@@ -130,7 +146,8 @@ async function handleInteraction(interaction, context) {
             }
         }
 
-        await interaction.editReply({ content: '✅ Your vacation request has been submitted for approval.' });
+        replyEmbed.setDescription('✅ **Your vacation request has been submitted for approval.**');
+        await interaction.editReply({ embeds: [replyEmbed] });
     }
 }
 
