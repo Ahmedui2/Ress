@@ -136,16 +136,16 @@ function ensureClientMaps(client) {
 
 /** تقليم customId إذا تجاوز الحد حتى لا يفشل */
 function buildClaimCustomId(responsibilityName, timestamp, requesterId, originalChannelId, originalMessageId) {
-  const maxLength = 99;
-  const base = `claim_task__${timestamp}_${requesterId}_${originalChannelId}_${originalMessageId}`;
-  const availableLength = maxLength - base.length;
-
-  let truncatedRespName = responsibilityName;
-  if (responsibilityName.length > availableLength) {
-    truncatedRespName = responsibilityName.substring(0, availableLength);
+  let cid = `claim_task_${responsibilityName}_${timestamp}_${requesterId}_${originalChannelId}_${originalMessageId}`;
+  if (cid.length > CLAIM_ID_HARD_LIMIT) {
+    // نسقط messageId أولاً (أقل شيء يؤثر)
+    cid = `claim_task_${responsibilityName}_${timestamp}_${requesterId}_${originalChannelId}_unknown`;
+    if (cid.length > CLAIM_ID_HARD_LIMIT) {
+      // نسقط أيضًا channelId كحل أخير
+      cid = `claim_task_${responsibilityName}_${timestamp}_${requesterId}_unknown_unknown`;
+    }
   }
-
-  return `claim_task_${truncatedRespName}_${timestamp}_${requesterId}_${originalChannelId}_${originalMessageId}`;
+  return cid;
 }
 
 // ===== معالج زر الاستلام =====
@@ -553,8 +553,8 @@ async function execute(message, args, { responsibilities, points, scheduleSave, 
         startCooldown(interaction.user.id, responsibilityName);
 
         // ربط الرسالة الأصلية
-        const originalChannelId = sentMessage.channelId;
-        const originalMessageId = sentMessage.id;
+        const originalChannelId = message.channelId;
+        const originalMessageId = message.id;
 
         // مودال السبب
         const shortId = Date.now().toString().slice(-8);
@@ -684,6 +684,7 @@ async function showUserResponsibilities(message, targetUser, responsibilities, c
     const respEmbed = colorManager.createEmbed()
       .setTitle(`مسؤوليات ${targetUser.username}`)
       .setDescription(responsibilitiesList)
+      .setColor('#000000')
       .setThumbnail(targetUser.displayAvatarURL({ dynamic: true }))
       .addFields([
         { name: 'Total Res', value: `${userResponsibilities.length}`, inline: true },
@@ -713,7 +714,6 @@ async function handleInteraction(interaction, context) {
       }
 
       const { responsibilityName, target, userId, timestamp, originalChannelId, originalMessageId } = modalData;
-      console.log(`[DEBUG] Step 3: Retrieved modalData for shortId ${shortId}. Channel: ${originalChannelId}, Message: ${originalMessageId}`);
 
       if (interaction.replied || interaction.deferred) return;
 
@@ -742,13 +742,11 @@ async function handleInteraction(interaction, context) {
 
       const guildId = interaction.guildId;
       let goToMessageButton = null;
-      if (guildId && originalChannelId) {
-        let messageUrl;
-        if (originalMessageId && originalMessageId !== 'unknown' && /^\d{17,19}$/.test(originalMessageId)) {
-            messageUrl = `https://discord.com/channels/${guildId}/${originalChannelId}/${originalMessageId}`;
-        } else {
-            messageUrl = `https://discord.com/channels/${guildId}/${originalChannelId}`;
-        }
+      if (
+        originalMessageId && originalMessageId !== 'unknown' &&
+        guildId && originalChannelId && /^\d{17,19}$/.test(originalMessageId)
+      ) {
+        const messageUrl = `https://discord.com/channels/${guildId}/${originalChannelId}/${originalMessageId}`;
         goToMessageButton = new ButtonBuilder().setLabel('🔗 Message Link').setStyle(ButtonStyle.Link).setURL(messageUrl);
       }
 

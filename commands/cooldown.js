@@ -178,10 +178,6 @@ async function execute(message, args, { responsibilities, client, saveData, BOT_
     const collector = message.channel.createMessageComponentCollector({ filter, time: 300000 });
 
     collector.on('collect', async interaction => {
-        // Prevent the main menu from being re-rendered when navigating to a sub-menu
-        if (interaction.customId.startsWith('cooldown_bypass') || interaction.customId === 'cooldown_set_responsibility') {
-            return;
-        }
         // تحديث الرسالة بعد كل تفاعل
         setTimeout(async () => {
             try {
@@ -202,7 +198,6 @@ async function execute(message, args, { responsibilities, client, saveData, BOT_
 
 async function handleInteraction(interaction, context) {
     const { client, responsibilities, colorManager } = context;
-    const customId = interaction.customId;
     try {
         // تحميل الكولداونات المؤقتة من JSON لضمان بيانات حديثة
         loadUserCooldowns();
