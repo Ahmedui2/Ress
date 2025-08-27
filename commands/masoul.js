@@ -136,16 +136,16 @@ function ensureClientMaps(client) {
 
 /** تقليم customId إذا تجاوز الحد حتى لا يفشل */
 function buildClaimCustomId(responsibilityName, timestamp, requesterId, originalChannelId, originalMessageId) {
-  let cid = `claim_task_${responsibilityName}_${timestamp}_${requesterId}_${originalChannelId}_${originalMessageId}`;
-  if (cid.length > CLAIM_ID_HARD_LIMIT) {
-    // نسقط messageId أولاً (أقل شيء يؤثر)
-    cid = `claim_task_${responsibilityName}_${timestamp}_${requesterId}_${originalChannelId}_unknown`;
-    if (cid.length > CLAIM_ID_HARD_LIMIT) {
-      // نسقط أيضًا channelId كحل أخير
-      cid = `claim_task_${responsibilityName}_${timestamp}_${requesterId}_unknown_unknown`;
-    }
+  const maxLength = 99;
+  const base = `claim_task__${timestamp}_${requesterId}_${originalChannelId}_${originalMessageId}`;
+  const availableLength = maxLength - base.length;
+
+  let truncatedRespName = responsibilityName;
+  if (responsibilityName.length > availableLength) {
+    truncatedRespName = responsibilityName.substring(0, availableLength);
   }
-  return cid;
+
+  return `claim_task_${truncatedRespName}_${timestamp}_${requesterId}_${originalChannelId}_${originalMessageId}`;
 }
 
 // ===== معالج زر الاستلام =====

@@ -390,7 +390,7 @@ async function handleInteraction(interaction, context) {
             freshReportData.confirmationMessageId = confirmationMessage.id;
             freshReportData.confirmationChannelId = confirmationMessage.channel.id;
             client.pendingReports.set(reportId, freshReportData);
-            scheduleSave();
+            scheduleSave(true); // Force immediate save for message IDs as well
             setTimeout(async () => { try { const currentMessage = await confirmationMessage.channel.messages.fetch(confirmationMessage.id); if (currentMessage.components.length > 0) { const finalEmbed = colorManager.createEmbed().setTitle('تم تقديم التقرير').setDescription('**تم إرسال تقريرك للمراجعة. انتهت فترة التعديل.**'); await confirmationMessage.edit({ embeds: [finalEmbed], components: [] }); } } catch(e) {} }, 5 * 60 * 1000);
         } else {
             if (config.pointsOnReport) { if (!points[responsibilityName]) points[responsibilityName] = {}; if (!points[responsibilityName][claimerId]) points[responsibilityName][claimerId] = { [timestamp]: 1 }; else { points[responsibilityName][claimerId][timestamp] = (points[responsibilityName][claimerId][timestamp] || 0) + 1; } scheduleSave(); }
