@@ -3,8 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const ms = require('ms');
 const colorManager = require('../utils/colorManager.js');
+const vacationManager = require('../utils/vacationManager.js'); // Use the manager
 
-const vacationsPath = path.join(__dirname, '..', 'data', 'vacations.json');
 const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
 
 function readJson(filePath, defaultData = {}) {
@@ -19,25 +19,33 @@ function readJson(filePath, defaultData = {}) {
 }
 
 async function execute(message, args, { client, BOT_OWNERS }) {
-    const member = message.member;
-    const adminRoles = readJson(adminRolesPath, []);
-    const isOwner = BOT_OWNERS.includes(message.author.id);
-    const hasAdminRole = member.roles.cache.some(role => adminRoles.includes(role.id));
-
-    if (!isOwner && !hasAdminRole) {
-        return message.reply({ content: '❌ This command is for administrators only.', ephemeral: true });
-    }
+    const authorMember = message.member;
 
     let targetUser = message.mentions.users.first() || await client.users.fetch(args[0]).catch(() => null);
+    const isSelfCheck = !targetUser || targetUser.id === message.author.id;
     if (!targetUser) {
         targetUser = message.author;
     }
 
-    const vacations = readJson(vacationsPath);
-    const activeVacation = vacations.active?.[targetUser.id];
+    // --- New Permission Logic ---
+    // If checking someone else, the author must be an admin/owner.
+    if (!isSelfCheck) {
+        const adminRoles = readJson(adminRolesPath, []);
+        const isOwner = BOT_OWNERS.includes(message.author.id);
+        const hasAdminRole = authorMember.roles.cache.some(role => adminRoles.includes(role.id));
+
+        if (!isOwner && !hasAdminRole) {
+            return message.reply({ content: '❌ You must be an administrator to check other users\' vacation status.', ephemeral: true });
+        }
+    }
+    // If a user is checking themselves, no special permissions are needed. This fixes the bug.
+
+    const activeVacation = vacationManager.isUserOnVacation(targetUser.id)
+        ? readJson(path.join(__dirname, '..', 'data', 'vacations.json')).active[targetUser.id]
+        : null;
 
     if (!activeVacation) {
-        const desc = targetUser.id === message.author.id ? 'You are not currently on vacation.' : `${targetUser.tag} is not currently on vacation.`;
+        const desc = isSelfCheck ? 'You are not currently on vacation.' : `${targetUser.tag} is not currently on vacation.`;
         const noVacationEmbed = new EmbedBuilder().setDescription(desc).setColor(colorManager.getColor());
         return message.reply({ embeds: [noVacationEmbed] });
     }
@@ -58,7 +66,7 @@ async function execute(message, args, { client, BOT_OWNERS }) {
         .setTimestamp();
 
     const components = [];
-    if (targetUser.id === message.author.id) {
+    if (isSelfCheck) {
         const endButton = new ButtonBuilder()
             .setCustomId(`vac_end_request_${targetUser.id}`)
             .setLabel("Request to End Vacation Early")
