@@ -6,6 +6,7 @@ const { logEvent } = require('./utils/logs_system.js');
 const { startReminderSystem } = require('./commands/notifications.js');
 const { checkCooldown, startCooldown } = require('./commands/cooldown.js');
 const colorManager = require('./utils/colorManager.js');
+const vacationManager = require('./utils/vacationManager.js');
 
 
 dotenv.config();
@@ -532,6 +533,11 @@ if (client.modalData) {
   setTimeout(() => {
     setupGlobalSetupCollector(client);
   }, 3000);
+
+  // Check for expired vacations every hour
+  setInterval(() => {
+    vacationManager.checkVacations(client);
+  }, 60 * 60 * 1000);
 };
 
 client.on('messageCreate', async message => {
@@ -541,6 +547,17 @@ client.on('messageCreate', async message => {
   const { isUserBlocked } = require('./commands/block.js');
   if (isUserBlocked(message.author.id)) {
     return; // تجاهل المستخدمين المحظورين بصمت لتوفير الأداء
+  }
+
+  // فحص الإجازة قبل معالجة أي أمر
+  if (vacationManager.isUserOnVacation(message.author.id)) {
+    const PREFIX = getCachedPrefix();
+    const args = message.content.slice(PREFIX.length).trim().split(/ +/);
+    const commandName = args.shift().toLowerCase();
+    const allowedCommands = ['اجازتي', 'my-vacation'];
+    if (!allowedCommands.includes(commandName)) {
+        return message.reply({ content: 'You are currently on vacation and cannot use commands.' });
+    }
   }
 
   try {
@@ -766,6 +783,11 @@ client.on('interactionCreate', async (interaction) => {
       return; // تجاهل بصمت لتوفير الأداء
     }
 
+    // فحص الإجازة قبل معالجة أي تفاعل
+    if (vacationManager.isUserOnVacation(interaction.user.id)) {
+        return interaction.reply({ content: 'You are currently on vacation and cannot use interactions.', ephemeral: true });
+    }
+
 
     // Handle log system interactions
     if (interaction.customId && (interaction.customId.startsWith('log_') ||
@@ -799,6 +821,51 @@ client.on('interactionCreate', async (interaction) => {
         const logCommand = client.commands.get('log');
         if (logCommand && logCommand.handleInteraction) {
             await logCommand.handleInteraction(interaction, client, saveData);
+        }
+        return;
+    }
+
+    if (interaction.customId.startsWith('vacation_end_confirm_')) {
+        const userId = interaction.customId.split('_').pop();
+        if (interaction.user.id !== userId) return interaction.reply({ content: 'This is not for you.', ephemeral: true });
+
+        const result = await vacationManager.endVacation(client, userId, 'Ended early by user.');
+        if (result.success) {
+            await interaction.update({ content: 'Your vacation has been ended. Welcome back!', components: [] });
+        } else {
+            await interaction.update({ content: `Failed to end vacation: ${result.message}`, components: [] });
+        }
+        return;
+    }
+
+    if (interaction.customId.startsWith('vacation_end_cancel_')) {
+        const userId = interaction.customId.split('_').pop();
+        if (interaction.user.id !== userId) return interaction.reply({ content: 'This is not for you.', ephemeral: true });
+
+        await interaction.update({ content: 'Action cancelled. Your vacation is still active.', components: [] });
+        return;
+    }
+
+    if (interaction.customId.startsWith('vacation_approve_') || interaction.customId.startsWith('vacation_reject_')) {
+        const vacationCommand = client.commands.get('vacation-requests');
+        if (vacationCommand && vacationCommand.handleInteraction) {
+            await vacationCommand.handleInteraction(interaction);
+        }
+        return;
+    }
+
+    if (interaction.customId.startsWith('vacation_request_') || interaction.customId.startsWith('vacation_submit_')) {
+        const vacationCommand = client.commands.get('اجازه');
+        if (vacationCommand && vacationCommand.handleInteraction) {
+            await vacationCommand.handleInteraction(interaction, { client });
+        }
+        return;
+    }
+
+    if (interaction.customId.startsWith('vacation_end_request_')) {
+        const myVacationCommand = client.commands.get('اجازتي');
+        if (myVacationCommand && myVacationCommand.handleInteraction) {
+            await myVacationCommand.handleInteraction(interaction);
         }
         return;
     }

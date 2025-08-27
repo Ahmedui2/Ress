@@ -1,0 +1,10 @@
+{
+  "settings": {
+    "approverType": null,
+    "approverTarget": null,
+    "notificationType": null,
+    "notificationChannel": null
+  },
+  "pending": {},
+  "active": {}
+}
