@@ -268,18 +268,8 @@ async function handleClaimButton(interaction, context) {
             .setLabel('كتابة التقرير')
             .setStyle(ButtonStyle.Success);
 
-        let goToMessageButton = null;
-        if (guild && originalChannelId && originalChannelId !== 'unknown' && originalChannelId !== 'null') {
-            let messageUrl = `https://discord.com/channels/${guild.id}/${originalChannelId}`;
-            if (originalMessageId && originalMessageId !== 'unknown' && /^\d{17,19}$/.test(originalMessageId)) {
-                messageUrl += `/${originalMessageId}`;
-            }
-            goToMessageButton = new ButtonBuilder().setLabel('🔗 Message Link').setStyle(ButtonStyle.Link).setURL(messageUrl);
-        }
-
         const newDmRow = new ActionRowBuilder().addComponents(
-            writeReportButton,
-            ...(goToMessageButton ? [goToMessageButton] : [])
+            writeReportButton
         );
 
         await interaction.user.send({ embeds: [newDmEmbed], components: [newDmRow] });
