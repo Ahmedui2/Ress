@@ -98,6 +98,9 @@ async function handleInteraction(interaction, context) {
             }
 
             const vacations = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
+            if (!vacations.pending) {
+                vacations.pending = {};
+            }
             vacations.pending[userId] = {
                 reason: reason,
                 startDate: new Date().toISOString(),
