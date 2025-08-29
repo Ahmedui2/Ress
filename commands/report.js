@@ -20,15 +20,22 @@ function loadReportsConfig(guildId) {
 }
 
 function saveReportsConfig(guildId, guildConfig) {
+    console.log(`[DEBUG] Attempting to save config for guild ${guildId}`);
     let allConfigs = {};
     try {
         if (fs.existsSync(reportsPath)) { allConfigs = JSON.parse(fs.readFileSync(reportsPath, 'utf8')); }
     } catch (error) { console.error('Error reading reports.json during save:', error); }
+
     allConfigs[guildId] = guildConfig;
+
     try {
         fs.writeFileSync(reportsPath, JSON.stringify(allConfigs, null, 2));
+        console.log(`[DEBUG] Successfully saved config for guild ${guildId}`);
         return true;
-    } catch (error) { console.error('Error writing to reports.json:', error); return false; }
+    } catch (error) {
+        console.error(`[DEBUG] FAILED to save config for guild ${guildId}:`, error);
+        return false;
+    }
 }
 
 function createMainEmbed(client, guildId) {
@@ -66,126 +73,74 @@ async function handleInteraction(interaction, context) {
 
     let config = loadReportsConfig(guildId);
 
-    // --- Settings Interactions ---
-    if (!isSubmission) {
+    if (interaction.isModalSubmit() && customId.startsWith('report_template_save_modal_')) {
         await interaction.deferUpdate();
-
-        if (interaction.isButton()) {
-            let content, components;
-            let showMain = false;
-
-            if (customId === 'report_toggle_system') {
-                config.enabled = !config.enabled;
-                showMain = true;
-            } else if (customId === 'report_back_to_main') {
-                showMain = true;
-            } else if (customId === 'report_manage_resps') {
-                content = 'اختر الإجراء المطلوب للمسؤوليات:';
-                components = [ new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('report_select_req_report').setLabel('تحديد إلزامية التقرير').setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId('report_select_req_approval').setLabel('تحديد إلزامية الموافقة').setStyle(ButtonStyle.Primary)), new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('report_back_to_main').setLabel('➡️ العودة').setStyle(ButtonStyle.Secondary)) ];
-            } else if (customId === 'report_advanced_settings') {
-                content = 'اختر من الإعدادات المتقدمة:';
-                components = [ new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('report_set_channel_button').setLabel('تحديد قناة التقارير').setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId('report_set_dms_button').setLabel('تحديد خاص الأونر').setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId('report_toggle_points').setLabel('تغيير نظام النقاط').setStyle(ButtonStyle.Success)), new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('report_back_to_main').setLabel('➡️ العودة').setStyle(ButtonStyle.Secondary)) ];
-            } else if (customId === 'report_set_dms_button') {
-                config.reportChannel = '0';
-                content = '✅ سيتم الآن إرسال التقارير إلى خاص الأونرات.';
-                showMain = true;
-            } else if (customId === 'report_toggle_points') {
-                config.pointsOnReport = !config.pointsOnReport;
-                content = `✅ تم تغيير نظام النقاط. النقاط الآن تُمنح: **${config.pointsOnReport ? 'بعد موافقة التقرير' : 'عند استلام المهمة'}**`;
-                showMain = true;
-            } else if (customId === 'report_select_req_report' || customId === 'report_select_req_approval') {
-                const isApproval = customId === 'report_select_req_approval';
-                const targetArray = isApproval ? config.approvalRequiredFor : config.requiredFor;
-                const respOptions = Object.keys(responsibilities).map(name => ({ label: name.substring(0, 100), value: name, default: targetArray.includes(name) }));
-                if (respOptions.length === 0) return interaction.followUp({ content: 'لا توجد مسؤوليات معرفة حالياً.', ephemeral: true });
-                const selectMenu = new StringSelectMenuBuilder().setCustomId(isApproval ? 'report_confirm_req_approval' : 'report_confirm_req_report').setPlaceholder(isApproval ? 'اختر المسؤوليات التي تتطلب موافقة' : 'اختر المسؤوليات التي تتطلب تقريراً').setMinValues(0).setMaxValues(respOptions.length).addOptions(respOptions);
-                content = 'حدد المسؤوليات من القائمة أدناه.';
-                components = [new ActionRowBuilder().addComponents(selectMenu), new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('report_manage_resps').setLabel('➡️ العودة').setStyle(ButtonStyle.Secondary))];
-            } else if (customId === 'report_set_channel_button') {
-                const menu = new ChannelSelectMenuBuilder().setCustomId('report_channel_select').setPlaceholder('اختر قناة لإرسال التقارير إليها').addChannelTypes(ChannelType.GuildText);
-                content = 'اختر القناة من القائمة:';
-                components = [new ActionRowBuilder().addComponents(menu), new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('report_advanced_settings').setLabel('➡️ العودة').setStyle(ButtonStyle.Secondary))];
-            }
-
-            if (saveReportsConfig(guildId, config) && content) {
-                await interaction.followUp({ content: content, ephemeral: true });
-            }
-
-            if (showMain) {
-                await interaction.editReply({ content: '', embeds: [createMainEmbed(client, guildId)], components: [createMainButtons(guildId)] });
-            } else if (components) {
-                await interaction.editReply({ content, embeds: [], components });
-            }
-
-        } else if (interaction.isStringSelectMenu() || interaction.isChannelSelectMenu()) {
-            if (customId === 'report_confirm_req_report') config.requiredFor = interaction.values;
-            else if (customId === 'report_confirm_req_approval') config.approvalRequiredFor = interaction.values;
-            else if (customId === 'report_channel_select') config.reportChannel = interaction.values[0];
-
-            if (saveReportsConfig(guildId, config)) {
-                 await interaction.followUp({ content: '✅ تم حفظ الإعدادات بنجاح.', ephemeral: true });
-            }
-            await interaction.editReply({ embeds: [createMainEmbed(client, guildId)], components: [createMainButtons(guildId)] });
-        }
+        const respName = customId.replace('report_template_save_modal_', '');
+        const templateText = interaction.fields.getTextInputValue('template_text');
+        if (templateText) { config.templates[respName] = templateText; }
+        else { delete config.templates[respName]; }
+        if(saveReportsConfig(guildId, config)) await interaction.followUp({ content: `✅ تم حفظ القالب للمسؤولية: ${respName}`, ephemeral: true });
+        await interaction.editReply({ content: '', embeds: [createMainEmbed(client, guildId)], components: [createMainButtons(guildId)] });
         return;
     }
 
-    // --- Report Submission & Approval Flow ---
+    if (interaction.isModalSubmit() && customId === 'report_template_apply_all_modal') {
+        await interaction.deferUpdate();
+        const templateText = interaction.fields.getTextInputValue('template_text_all');
+        for (const respName in responsibilities) { config.templates[respName] = templateText; }
+        if(saveReportsConfig(guildId, config)) await interaction.followUp({ content: `✅ تم تطبيق القالب بنجاح على جميع المسؤوليات.`, ephemeral: true });
+        await interaction.editReply({ content: '', embeds: [createMainEmbed(client, guildId)], components: [createMainButtons(guildId)] });
+        return;
+    }
+
+    if (customId.startsWith('report_write_')) {
+        await interaction.deferUpdate().catch(()=>{});
+        const reportId = customId.replace('report_write_', '');
+        const reportData = client.pendingReports.get(reportId);
+        if (!reportData) return interaction.editReply({ content: 'لم يتم العثور على هذا التقرير أو انتهت صلاحيته.', embeds:[], components: [] }).catch(()=>{});
+        const modal = new ModalBuilder().setCustomId(`report_submit_${reportId}`).setTitle('كتابة تقرير المهمة');
+        const template = config.templates[reportData.responsibilityName] || '';
+        const reportInput = new TextInputBuilder().setCustomId('report_text').setLabel('الرجاء كتابة تقريرك هنا').setStyle(TextInputStyle.Paragraph).setValue(template).setRequired(true);
+        modal.addComponents(new ActionRowBuilder().addComponents(reportInput));
+        await interaction.showModal(modal);
+        return;
+    }
+
+    // --- All other interactions ---
+    await interaction.deferUpdate();
+
     if (interaction.isButton()) {
-        if (customId.startsWith('report_write_')) {
-            const reportId = customId.replace('report_write_', '');
-            const reportData = client.pendingReports.get(reportId);
-            if (!reportData) {
-                await interaction.deferUpdate().catch(()=>{});
-                return interaction.editReply({ content: 'لم يتم العثور على هذا التقرير أو انتهت صلاحيته.', embeds:[], components: [] }).catch(()=>{});
-            }
-            const modal = new ModalBuilder().setCustomId(`report_submit_${reportId}`).setTitle('كتابة تقرير المهمة');
-            const template = config.templates[reportData.responsibilityName] || '';
-            const reportInput = new TextInputBuilder().setCustomId('report_text').setLabel('الرجاء كتابة تقريرك هنا').setStyle(TextInputStyle.Paragraph).setValue(template).setRequired(true);
-            modal.addComponents(new ActionRowBuilder().addComponents(reportInput));
-            await interaction.showModal(modal);
-        } else if (customId.startsWith('report_approve_') || customId.startsWith('report_reject_')) {
-            await interaction.deferUpdate();
-            const isApproval = customId.startsWith('report_approve_');
-            const reportId = customId.replace(isApproval ? 'report_approve_' : 'report_reject_', '');
-            const reportData = client.pendingReports.get(reportId);
-            if (!reportData) return interaction.editReply({ content: 'لم يعد هذا التقرير صالحاً أو قد تم التعامل معه بالفعل.', embeds: [], components: [] });
-            const { claimerId, responsibilityName, timestamp } = reportData;
-            if (isApproval && config.pointsOnReport) {
-                if (!points[responsibilityName]) points[responsibilityName] = {};
-                if (!points[responsibilityName][claimerId]) points[responsibilityName][claimerId] = {};
-                points[responsibilityName][claimerId][timestamp] = 1;
-                scheduleSave();
-            }
-            const originalEmbed = interaction.message.embeds[0];
-            const newEmbed = EmbedBuilder.from(originalEmbed).setFields(...originalEmbed.fields.filter(f => f.name !== 'الحالة'),{ name: 'الحالة', value: isApproval ? `✅ تم القبول بواسطة <@${interaction.user.id}>` : `❌ تم الرفض بواسطة <@${interaction.user.id}>` });
-            if (isApproval) newEmbed.addFields({ name: 'النقطة', value: `تمت إضافة نقطة إلى <@${claimerId}>` });
-            await interaction.editReply({ embeds: [newEmbed], components: [] });
-            // ... (DM logic and confirmation message edit logic remains the same)
-            client.pendingReports.delete(reportId);
-            scheduleSave();
+        let content, components;
+        let showMain = false;
+        let saveAndFollowUp = false;
+
+        if (customId === 'report_toggle_system') { config.enabled = !config.enabled; showMain = true; saveAndFollowUp = true; }
+        else if (customId === 'report_back_to_main') { showMain = true; }
+        else if (customId === 'report_set_dms_button') { config.reportChannel = '0'; content = '✅ سيتم الآن إرسال التقارير إلى خاص الأونرات.'; showMain = true; saveAndFollowUp = true; }
+        else if (customId === 'report_toggle_points') { config.pointsOnReport = !config.pointsOnReport; content = `✅ تم تغيير نظام النقاط.`; showMain = true; saveAndFollowUp = true; }
+        else if (customId === 'report_template_delete_all') { config.templates = {}; content = '✅ تم حذف جميع القوالب بنجاح.'; saveAndFollowUp = true; }
+        else if (customId === 'report_template_apply_default') { const defaultConfig = `**- ملخص الإنجاز:**\n\n\n**- هل تمت مواجهة مشاكل؟:**\n\n\n**- ملاحظات إضافية:**`; for (const respName in responsibilities) { config.templates[respName] = defaultConfig; } content = '✅ تم تطبيق القالب الافتراضي بنجاح.'; saveAndFollowUp = true; }
+        // ... (Navigation buttons below)
+        else if (customId === 'report_manage_resps') { content = 'اختر الإجراء المطلوب للمسؤوليات:'; components = [ new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('report_select_req_report').setLabel('تحديد إلزامية التقرير').setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId('report_select_req_approval').setLabel('تحديد إلزامية الموافقة').setStyle(ButtonStyle.Primary)), new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('report_back_to_main').setLabel('➡️ العودة').setStyle(ButtonStyle.Secondary)) ]; }
+        else if (customId === 'report_advanced_settings') { content = 'اختر من الإعدادات المتقدمة:'; components = [ new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('report_set_channel_button').setLabel('تحديد قناة التقارير').setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId('report_set_dms_button').setLabel('تحديد خاص الأونر').setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId('report_toggle_points').setLabel('تغيير نظام النقاط').setStyle(ButtonStyle.Success)), new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('report_back_to_main').setLabel('➡️ العودة').setStyle(ButtonStyle.Secondary)) ]; }
+        else if (customId === 'report_set_channel_button') { const menu = new ChannelSelectMenuBuilder().setCustomId('report_channel_select').setPlaceholder('اختر قناة لإرسال التقارير إليها').addChannelTypes(ChannelType.GuildText); content = 'اختر القناة من القائمة:'; components = [new ActionRowBuilder().addComponents(menu), new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('report_advanced_settings').setLabel('➡️ العودة').setStyle(ButtonStyle.Secondary))]; }
+
+        if (saveAndFollowUp) {
+            if (saveReportsConfig(guildId, config)) await interaction.followUp({ content: content || '✅ تم حفظ الإعدادات.', ephemeral: true });
+            else await interaction.followUp({ content: '❌ فشل في حفظ الإعدادات.', ephemeral: true });
         }
-    } else if (interaction.isModalSubmit()) {
-        if (customId.startsWith('report_submit_')) {
-            await interaction.deferUpdate();
-            const reportId = customId.replace('report_submit_', '');
-            const reportData = client.pendingReports.get(reportId);
-            if (!reportData) return interaction.editReply({ content: 'لم يعد هذا التقرير صالحاً.', embeds: [], components: [] });
-            const reportText = interaction.fields.getTextInputValue('report_text');
-            const { responsibilityName, claimerId, timestamp, requesterId, displayName, reason } = reportData;
-            const reportEmbed = new EmbedBuilder().setTitle(`تقرير مهمة: ${responsibilityName}`).setColor(colorManager.getColor(client)).setAuthor({ name: displayName, iconURL: interaction.user.displayAvatarURL() }).setThumbnail(client.user.displayAvatarURL()).addFields({ name: 'المسؤول', value: `<@${claimerId}>`, inline: true },{ name: 'صاحب الطلب', value: `<@${requesterId}>`, inline: true }, { name: 'السبب الأصلي للطلب', value: reason || 'غير محدد' },{ name: 'التقرير', value: reportText.substring(0, 4000) }).setTimestamp();
-            const needsApproval = config.approvalRequiredFor && config.approvalRequiredFor.includes(responsibilityName);
-            if (needsApproval) {
-                // ... (Approval logic remains the same)
-            } else {
-                // ... (No approval logic remains the same)
-            }
-        }
+        if (showMain) await interaction.editReply({ content: '', embeds: [createMainEmbed(client, guildId)], components: [createMainButtons(guildId)] });
+        else if (components) await interaction.editReply({ content, embeds: [], components });
+
+    } else if (interaction.isStringSelectMenu() || interaction.isChannelSelectMenu()) {
+        if (customId === 'report_confirm_req_report') config.requiredFor = interaction.values;
+        else if (customId === 'report_confirm_req_approval') config.approvalRequiredFor = interaction.values;
+        else if (customId === 'report_channel_select') config.reportChannel = interaction.values[0];
+
+        if (saveReportsConfig(guildId, config)) await interaction.followUp({ content: '✅ تم حفظ الإعدادات بنجاح.', ephemeral: true });
+        else await interaction.followUp({ content: '❌ فشل في حفظ الإعدادات.', ephemeral: true });
+        await interaction.editReply({ embeds: [createMainEmbed(client, guildId)], components: [createMainButtons(guildId)] });
     }
 }
 
-module.exports = {
-    name,
-    execute,
-    handleInteraction
-};
+module.exports = { name, execute, handleInteraction };
