@@ -217,7 +217,8 @@ async function execute(message, args, { client, responsibilities, saveData, BOT_
     });
 }
 
-async function handleInteraction(interaction, client, responsibilities, saveData) {
+async function handleInteraction(interaction, context) {
+    const { client, responsibilities, scheduleSave } = context;
     try {
         // Check interaction validity
         const now = Date.now();
@@ -425,7 +426,8 @@ async function handleInteraction(interaction, client, responsibilities, saveData
     }
 }
 
-async function handleModalSubmit(interaction, client, responsibilities) {
+async function handleModalSubmit(interaction, context) {
+    const { client, responsibilities } = context;
     try {
         // إعادة تحميل الإعدادات
         const notificationsConfig = loadNotificationsConfig();
@@ -816,6 +818,40 @@ module.exports = {
     startReminderSystem
 };
 
-function startReminderSystem() {
-    console.log('Reminder system started');
+function startReminderSystem(client) {
+    console.log('✅ Pending Report Reminder system started. Checking every minute.');
+
+    setInterval(async () => {
+        const notificationsConfig = loadNotificationsConfig();
+        if (!notificationsConfig.settings.enabled) return;
+
+        for (const [reportId, reportData] of client.pendingReports.entries()) {
+            // Check if it's a report waiting for submission (not approval) and reminder not sent
+            if (reportData.createdAt && !reportData.submittedAt && !reportData.reminderSent) {
+                const reminderDelayMinutes = notificationsConfig.settings.customResponsibilityTime[reportData.responsibilityName] || notificationsConfig.settings.reminderDelay;
+                const reminderDelayMs = reminderDelayMinutes * 60 * 1000;
+
+                if (Date.now() - reportData.createdAt > reminderDelayMs) {
+                    try {
+                        const user = await client.users.fetch(reportData.claimerId);
+                        const reminderEmbed = new EmbedBuilder()
+                            .setTitle('تذكير بتقديم تقرير')
+                            .setDescription(`لديك تقرير معلق للمسؤولية: **${reportData.responsibilityName}**. يرجى تقديمه في أقرب وقت ممكن.`)
+                            .setColor('#ffcc00')
+                            .setTimestamp();
+
+                        await user.send({ embeds: [reminderEmbed] });
+
+                        // Mark as sent and save
+                        reportData.reminderSent = true;
+                        client.pendingReports.set(reportId, reportData);
+                        // The main saveData loop in bot.js will persist this change.
+
+                    } catch (e) {
+                        console.error(`Failed to send report reminder to user ${reportData.claimerId}:`, e);
+                    }
+                }
+            }
+        }
+    }, 60 * 1000); // Every minute
 }

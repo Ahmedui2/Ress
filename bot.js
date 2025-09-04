@@ -6,6 +6,7 @@ const { logEvent } = require('./utils/logs_system.js');
 const { startReminderSystem } = require('./commands/notifications.js');
 const { checkCooldown, startCooldown } = require('./commands/cooldown.js');
 const colorManager = require('./utils/colorManager.js');
+const vacationManager = require('./utils/vacationManager.js');
 
 
 dotenv.config();
@@ -23,7 +24,8 @@ const DATA_FILES = {
     adminRoles: path.join(dataDir, 'adminRoles.json'),
     botConfig: path.join(dataDir, 'botConfig.json'),
     cooldowns: path.join(dataDir, 'cooldowns.json'),
-    notifications: path.join(dataDir, 'notifications.json')
+    notifications: path.join(dataDir, 'notifications.json'),
+    reports: path.join(dataDir, 'reports.json')
 };
 
 // دالة لقراءة ملف JSON
@@ -84,7 +86,17 @@ let botConfig = readJSONFile(DATA_FILES.botConfig, {
     owners: [],
     prefix: null,
     settings: {},
-    activeTasks: {}
+    activeTasks: {},
+    pendingReports: {}
+});
+
+let reportsConfig = readJSONFile(DATA_FILES.reports, {
+  enabled: false,
+  pointsOnReport: false,
+  reportChannel: null,
+  requiredFor: [],
+  approvalRequiredFor: [],
+  templates: {}
 });
 
 // لا نحتاج لمتغيرات محلية لـ cooldowns و notifications
@@ -161,6 +173,7 @@ global.reloadBotOwners = reloadBotOwners;
 global.updateBotOwners = updateBotOwners;
 
 client.commands = new Collection();
+client.pendingReports = new Map();
 client.logConfig = logConfig;
 
 
@@ -221,11 +234,13 @@ function saveData(force = false) {
     }
 
     try {
+        savePendingReports();
         // حفظ مباشر بدون قراءة ودمج معقد
         writeJSONFile(DATA_FILES.points, points);
         writeJSONFile(DATA_FILES.responsibilities, responsibilities);
         writeJSONFile(DATA_FILES.logConfig, client.logConfig || logConfig);
         writeJSONFile(DATA_FILES.botConfig, botConfig);
+        writeJSONFile(DATA_FILES.reports, reportsConfig);
 
         isDataDirty = false;
         return true;
@@ -413,6 +428,7 @@ client.once('ready', async () => {
   // تهيئة نظام المهام النشطة الجديد
   setTimeout(() => {
     initializeActiveTasks();
+    loadPendingReports();
   }, 2000);
 
   // تهيئة نظام الألوان
@@ -425,6 +441,9 @@ client.once('ready', async () => {
       console.log(`⚠️ حالة البوت: ${client.ws.status} - محاولة إعادة الاتصال...`);
     }
   }, 30000);
+
+  // Check for expired reports every 5 minutes
+  setInterval(checkExpiredReports, 5 * 60 * 1000);
 
   // حفظ البيانات فقط عند الحاجة - كل 5 دقائق أو عند وجود تغييرات
   setInterval(() => {
@@ -478,7 +497,7 @@ if (client.modalData) {
   const cooldownData = readJSONFile(DATA_FILES.cooldowns, {});
   console.log(`✅ نظام الكولداون جاهز - الافتراضي: ${(cooldownData.default || 60000) / 1000} ثانية`);
 
-  startReminderSystem(client, responsibilities);
+  startReminderSystem(client);
 
         // تحديث صلاحيات اللوق عند بدء البوت
         setTimeout(async () => {
@@ -514,6 +533,11 @@ if (client.modalData) {
   setTimeout(() => {
     setupGlobalSetupCollector(client);
   }, 3000);
+
+  // Check for expired vacations every hour
+  setInterval(() => {
+    vacationManager.checkVacations(client);
+  }, 3600000); // 1 hour
 };
 
 client.on('messageCreate', async message => {
@@ -575,7 +599,7 @@ client.on('messageCreate', async message => {
       if (commandName === 'مسؤولياتي') {
         await showUserResponsibilities(message, message.author, responsibilities, client);
       } else {
-        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
+        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager, reportsConfig });
       }
     }
     // Commands for admins and owners (مسؤول)
@@ -591,17 +615,17 @@ client.on('messageCreate', async message => {
       
       if (hasAdminRole || isOwner || hasAdministrator) {
         console.log(`✅ تم منح الصلاحية للمستخدم ${message.author.id}`);
-        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
+        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager, reportsConfig });
       } else {
         console.log(`❌ المستخدم ${message.author.id} لا يملك الصلاحيات المطلوبة لأمر مسؤول`);
         await message.react('❌');
         return;
       }
     }
-    // Commands for owners only (call, stats, setup)
-    else if (commandName === 'call' || commandName === 'stats' || commandName === 'setup') {
+    // Commands for owners only (call, stats, setup, report)
+    else if (commandName === 'call' || commandName === 'stats' || commandName === 'setup' || commandName === 'report') {
       if (isOwner) {
-        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
+        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager, reportsConfig });
       } else {
         await message.react('❌');
         return;
@@ -610,7 +634,7 @@ client.on('messageCreate', async message => {
     // Commands for owners only (all other commands)
     else {
       if (isOwner) {
-        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
+        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager, reportsConfig });
       } else {
         await message.react('❌');
         return;
@@ -652,6 +676,72 @@ function saveActiveTasks() {
   } catch (error) {
     console.error('❌ خطأ في حفظ المهام النشطة:', error);
   }
+}
+
+function loadPendingReports() {
+  try {
+    const currentBotConfig = readJSONFile(DATA_FILES.botConfig, {});
+    if (currentBotConfig.pendingReports) {
+      const savedReports = currentBotConfig.pendingReports;
+      for (const [key, value] of Object.entries(savedReports)) {
+        client.pendingReports.set(key, value);
+      }
+      console.log(`✅ تم تحميل ${client.pendingReports.size} تقرير معلق من JSON`);
+    }
+  } catch (error) {
+    console.error('❌ خطأ في تحميل التقارير المعلقة:', error);
+  }
+}
+
+function savePendingReports() {
+  try {
+    const pendingReportsObj = {};
+    for (const [key, value] of client.pendingReports.entries()) {
+      pendingReportsObj[key] = value;
+    }
+    botConfig.pendingReports = pendingReportsObj;
+  } catch (error) {
+    console.error('❌ خطأ في تجهيز التقارير المعلقة للحفظ:', error);
+  }
+}
+
+async function checkExpiredReports() {
+    const now = Date.now();
+    const twentyFourHours = 24 * 60 * 60 * 1000;
+    let changed = false;
+
+    for (const [reportId, reportData] of client.pendingReports.entries()) {
+        if (reportData.submittedAt && (now - reportData.submittedAt > twentyFourHours)) {
+            console.log(`Report ${reportId} has expired. Automatically rejecting.`);
+
+            if (reportData.approvalMessageIds) {
+                for (const [channelId, messageId] of Object.entries(reportData.approvalMessageIds)) {
+                    try {
+                        const channel = await client.channels.fetch(channelId);
+                        const message = await channel.messages.fetch(messageId);
+
+                        const originalEmbed = message.embeds[0];
+                        if (originalEmbed) {
+                            const newEmbed = new EmbedBuilder.from(originalEmbed)
+                                .setFields(
+                                    ...originalEmbed.fields.filter(f => f.name !== 'الحالة'),
+                                    { name: 'الحالة', value: '❌ تم الرفض تلقائياً لمرور 24 ساعة' }
+                                );
+                            await message.edit({ embeds: [newEmbed], components: [] });
+                        }
+                    } catch(e) {
+                        console.error(`Could not edit expired report message ${messageId} in channel ${channelId}:`, e);
+                    }
+                }
+            }
+
+            client.pendingReports.delete(reportId);
+            changed = true;
+        }
+    }
+    if (changed) {
+        scheduleSave();
+    }
 }
 
 // معالج التفاعلات المحسن للأداء
@@ -719,6 +809,157 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
+    // --- Vacation System Interaction Router ---
+    if (interaction.customId && interaction.customId.startsWith('vac_')) {
+        const vacationContext = { client, BOT_OWNERS };
+
+        // Route to set-vacation command
+        if (interaction.customId.includes('_set_') || interaction.customId.includes('_choice_') || interaction.customId.includes('_select') || interaction.customId.includes('_back_')) {
+             const setVacationCommand = client.commands.get('set-vacation');
+             if (setVacationCommand && setVacationCommand.handleInteraction) {
+                 await setVacationCommand.handleInteraction(interaction, vacationContext);
+             }
+             return;
+        }
+
+        // Route to vacation (ajaza) command
+        if (interaction.customId.startsWith('vac_request_')) {
+            const vacationCommand = client.commands.get('اجازه');
+            if (vacationCommand && vacationCommand.handleInteraction) {
+                await vacationCommand.handleInteraction(interaction, vacationContext);
+            }
+            return;
+        }
+
+        // Route to my-vacation (ajazati) command
+        if (interaction.customId.startsWith('vac_end_request_')) {
+            const myVacationCommand = client.commands.get('اجازتي');
+            if (myVacationCommand && myVacationCommand.handleInteraction) {
+                await myVacationCommand.handleInteraction(interaction, vacationContext);
+            }
+            return;
+        }
+
+        // Handle direct approvals / rejections
+        const [action, decision, userId] = interaction.customId.split('_');
+
+        if (decision === 'approve') {
+            const result = await vacationManager.approveVacation(interaction, userId, interaction.user.id);
+            if (result.success) {
+                const updatedEmbed = new EmbedBuilder().setColor(colorManager.getColor('approved') || '#2ECC71').setDescription(`✅ **Vacation for <@${userId}> has been approved.**`);
+                await interaction.update({ embeds: [updatedEmbed], components: [] });
+
+                const user = await client.users.fetch(userId).catch(() => null);
+                if (user) {
+                    const dmEmbed = new EmbedBuilder()
+                        .setTitle('Vacation Request Approved')
+                        .setColor(colorManager.getColor('approved') || '#2ECC71')
+                        .setDescription('Your vacation request has been approved. Your administrative roles have been temporarily removed and will be restored when your vacation ends.')
+                        .setFooter({ text: 'Enjoy your time off!' });
+                    await user.send({ embeds: [dmEmbed] }).catch(err => console.log(`Failed to DM user ${userId}: ${err}`));
+                }
+            } else {
+                const errorEmbed = new EmbedBuilder().setColor('#FF0000').setDescription(`❌ **Failed to approve:** ${result.message}`);
+                await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+            }
+            return;
+        }
+
+        if (decision === 'reject') {
+            const vacations = vacationManager.readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
+            delete vacations.pending[userId];
+            vacationManager.saveVacations(vacations);
+
+            const rejectEmbed = new EmbedBuilder().setColor(colorManager.getColor('rejected') || '#E74C3C').setDescription(`❌ **Vacation for <@${userId}> has been rejected.**`);
+            await interaction.update({ embeds: [rejectEmbed], components: [] });
+
+            const user = await client.users.fetch(userId).catch(() => null);
+            if (user) {
+                const dmEmbed = new EmbedBuilder()
+                    .setTitle('Vacation Request Rejected')
+                    .setColor(colorManager.getColor('rejected') || '#E74C3C')
+                    .setDescription('Unfortunately, your vacation request has been rejected.');
+                await user.send({ embeds: [dmEmbed] }).catch(err => console.log(`Failed to DM user ${userId}: ${err}`));
+            }
+            return;
+        }
+
+        // --- Early Termination Flow ---
+        if (interaction.customId.startsWith('vac_end_confirm_')) {
+            const userId = interaction.customId.split('_').pop();
+            if (interaction.user.id !== userId) return interaction.reply({ content: 'This is not for you.', ephemeral: true });
+
+            const confirmEmbed = new EmbedBuilder().setColor(colorManager.getColor()).setDescription('Your request to end your vacation has been sent for approval.');
+            await interaction.update({ embeds: [confirmEmbed], components: [] });
+
+            const vacations = vacationManager.readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
+            const vacation = vacations.active[userId];
+            if (!vacation) return;
+
+            const settings = vacationManager.getSettings();
+            const approvers = await vacationManager.getApprovers(interaction.guild, settings, BOT_OWNERS);
+            const originalApprover = await client.users.fetch(vacation.approvedBy).catch(() => ({ tag: 'Unknown' }));
+
+            const terminationEmbed = new EmbedBuilder()
+                .setTitle('Early Vacation Termination Request')
+                .setColor(colorManager.getColor('pending') || '#E67E22')
+                .setDescription(`**<@${userId}> has requested to end their vacation early.**`)
+                .addFields(
+                    { name: '___User___', value: `<@${userId}>`, inline: true },
+                    { name: '___Original Approver___', value: `**${originalApprover.tag}**`, inline: true},
+                    { name: '___Removed Roles___', value: vacation.removedRoles?.map(r => `<@&${r}>`).join(', ') || 'None', inline: false }
+                )
+                .setTimestamp();
+
+            const buttons = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(`vac_terminate_approve_${userId}`).setLabel("Approve Termination").setStyle(ButtonStyle.Success),
+                new ButtonBuilder().setCustomId(`vac_terminate_reject_${userId}`).setLabel("Reject Termination").setStyle(ButtonStyle.Danger)
+            );
+
+            if (settings.notificationMethod === 'channel' && settings.notificationChannel) {
+                const channel = await client.channels.fetch(settings.notificationChannel).catch(() => null);
+                if (channel) await channel.send({ embeds: [terminationEmbed], components: [buttons] });
+            } else {
+                for (const approver of approvers) {
+                    await approver.send({ embeds: [terminationEmbed], components: [buttons] }).catch(e => console.error(`Could not DM user ${approver.id}`));
+                }
+            }
+            return;
+        }
+
+        if (interaction.customId === 'vac_end_cancel') {
+            const cancelEmbed = new EmbedBuilder().setColor(colorManager.getColor()).setDescription('Action cancelled. Your vacation remains active.');
+            await interaction.update({ embeds: [cancelEmbed], components: [] });
+            return;
+        }
+
+        if (interaction.customId.startsWith('vac_terminate_approve_')) {
+            const userId = interaction.customId.split('_').pop();
+            const result = await vacationManager.endVacation(interaction.guild, client, userId, `Ended early by approval from ${interaction.user.tag}.`);
+
+            if (result.success) {
+                const approvedEmbed = new EmbedBuilder().setColor(colorManager.getColor('approved')).setDescription(`✅ Early termination for <@${userId}> has been **approved**.`);
+                await interaction.update({ embeds: [approvedEmbed], components: [],
+                });
+                const user = await client.users.fetch(userId).catch(() => null);
+                if (user) await user.send({ embeds: [new EmbedBuilder().setColor(colorManager.getColor('approved')).setDescription('Your request to end your vacation early was **approved**. Welcome back!')] });
+            } else {
+                 const errorEmbed = new EmbedBuilder().setColor('#FF0000').setDescription(`❌ **Failed to approve termination:** ${result.message}`);
+                await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+            }
+            return;
+        }
+
+        if (interaction.customId.startsWith('vac_terminate_reject_')) {
+            const userId = interaction.customId.split('_').pop();
+            const rejectedEmbed = new EmbedBuilder().setColor(colorManager.getColor('rejected')).setDescription(`❌ Early termination for <@${userId}> has been **rejected**.`);
+            await interaction.update({ embeds: [rejectedEmbed], components: [] });
+            const user = await client.users.fetch(userId).catch(() => null);
+            if (user) await user.send({ embeds: [new EmbedBuilder().setColor(colorManager.getColor('rejected')).setDescription('Your request to end your vacation early was **rejected**.')] });
+            return;
+        }
+    }
+
     // Handle adminroles interactions
     if (interaction.customId && (interaction.customId.startsWith('adminroles_') ||
         interaction.customId === 'adminroles_select_role')) {
@@ -727,11 +968,23 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
+    // --- Create a unified context object for all interaction handlers ---
+    const context = {
+        client,
+        responsibilities,
+        points,
+        scheduleSave,
+        BOT_OWNERS,
+        reportsConfig,
+        logConfig: client.logConfig,
+        colorManager
+    };
+
     // Handle cooldown system interactions
     if (interaction.customId && interaction.customId.startsWith('cooldown_')) {
         const cooldownCommand = client.commands.get('cooldown');
         if (cooldownCommand && cooldownCommand.handleInteraction) {
-            await cooldownCommand.handleInteraction(interaction, client, saveData, responsibilities);
+            await cooldownCommand.handleInteraction(interaction, context);
         }
         return;
     }
@@ -741,7 +994,7 @@ client.on('interactionCreate', async (interaction) => {
         interaction.customId === 'select_responsibility_time')) {
         const notificationsCommand = client.commands.get('notifications');
         if (notificationsCommand && notificationsCommand.handleInteraction) {
-            await notificationsCommand.handleInteraction(interaction, client, responsibilities, saveData);
+            await notificationsCommand.handleInteraction(interaction, context);
         }
         return;
     }
@@ -779,11 +1032,19 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
+    if (interaction.customId.startsWith('report_')) {
+        const reportCommand = client.commands.get('report');
+        if (reportCommand && reportCommand.handleInteraction) {
+            await reportCommand.handleInteraction(interaction, context);
+        }
+        return;
+    }
+
     // Handle claim buttons - استخدام المعالج الجديد من masoul.js
     if (interaction.isButton() && interaction.customId.startsWith('claim_task_')) {
         const masoulCommand = client.commands.get('مسؤول');
         if (masoulCommand && masoulCommand.handleInteraction) {
-            await masoulCommand.handleInteraction(interaction, client, responsibilities, points, scheduleSave);
+            await masoulCommand.handleInteraction(interaction, context);
         }
         return;
     }
@@ -957,10 +1218,10 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // Handle modal submissions for masoul - استخدام المعالج الجديد من masoul.js
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('masoul_reason_modal_')) {
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('masoul_modal_')) {
         const masoulCommand = client.commands.get('مسؤول');
         if (masoulCommand && masoulCommand.handleInteraction) {
-            await masoulCommand.handleInteraction(interaction, client, responsibilities, points, scheduleSave);
+            await masoulCommand.handleInteraction(interaction, context);
         }
         return;
     }

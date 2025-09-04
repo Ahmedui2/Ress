@@ -23,11 +23,11 @@ class ColorManager {
         try {
             const avatarUrl = this.client.user.displayAvatarURL({ format: 'png', size: 128 });
             console.log('🔗 رابط الأفتار:', avatarUrl);
-            
+
             // استخدام مكتبة لاستخراج اللون السائد من الصورة
             const dominantColor = await this.extractDominantColor(avatarUrl);
             this.currentColor = dominantColor;
-            
+
             console.log(`🎨 تم تحديث لون الـ embeds إلى: ${this.currentColor}`);
         } catch (error) {
             console.error('❌ خطأ في استخراج لون الأفتار:', error);
@@ -41,7 +41,7 @@ class ColorManager {
     async extractDominantColor(imageUrl) {
         try {
             console.log('🔍 محاولة استخراج اللون من:', imageUrl);
-            
+
             // التحقق من وجود المكتبات المطلوبة
             let sharp, fetch;
             try {
@@ -53,32 +53,32 @@ class ColorManager {
                 console.error('❌ مكتبات مطلوبة غير موجودة:', requireError.message);
                 throw new Error('Missing required packages');
             }
-            
+
             const response = await fetch(imageUrl);
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
-            
+
             const imageBuffer = await response.buffer();
-            
+
             // استخراج اللون السائد باستخدام sharp
             const { data, info } = await sharp(imageBuffer)
                 .resize(1, 1)
                 .raw()
                 .toBuffer({ resolveWithObject: true });
-            
+
             const [r, g, b] = data;
             const extractedColor = this.rgbToHex(r, g, b);
-            
+
             console.log(`✅ تم استخراج اللون بنجاح: ${extractedColor} من RGB(${r}, ${g}, ${b})`);
             return extractedColor;
-            
+
         } catch (error) {
             console.error('❌ فشل في استخراج اللون من الأفتار:', error.message);
-            
+
             // في حالة فشل استخراج اللون، نستخدم ألوان افتراضية جميلة
             const defaultColors = [
-                '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', 
+                '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4',
                 '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F'
             ];
             const fallbackColor = defaultColors[Math.floor(Math.random() * defaultColors.length)];

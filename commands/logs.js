@@ -107,7 +107,7 @@ function getArabicDescription(type) {
     return descriptions[type] || 'وصف غير متوفر';
 }
 
-async function handleInteraction(interaction, client, scheduleSave) {
+async function handleInteraction(interaction, client, scheduleSave, BOT_OWNERS) {
     try {
         // Check interaction validity
         const now = Date.now();
@@ -126,11 +126,10 @@ async function handleInteraction(interaction, client, scheduleSave) {
         const { customId } = interaction;
 
         // Check if user is bot owner
-        const BOT_OWNERS = process.env.BOT_OWNERS ? process.env.BOT_OWNERS.split(',') : [];
         const isOwner = BOT_OWNERS.includes(interaction.user.id) || interaction.guild.ownerId === interaction.user.id;
         if (!isOwner) {
-            await message.react('❌');
-                        return;
+            await interaction.reply({ content: '❌ **أنت لا تملك صلاحية استخدام هذا الأمر!**', ephemeral: true });
+            return;
         }
 
         if (customId === 'auto_set_logs') {
