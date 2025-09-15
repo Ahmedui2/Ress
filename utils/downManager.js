@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { EmbedBuilder } = require('discord.js');
+// EmbedBuilder now handled by colorManager
 const colorManager = require('./colorManager');
 const ms = require('ms');
 
@@ -9,6 +9,7 @@ const downSettingsPath = path.join(__dirname, '..', 'data', 'downSettings.json')
 const activeDownsPath = path.join(__dirname, '..', 'data', 'activeDowns.json');
 const downLogsPath = path.join(__dirname, '..', 'data', 'downLogs.json');
 const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
+const leftMembersDownsPath = path.join(__dirname, '..', 'data', 'leftMembersDowns.json');
 
 // Utility functions
 function readJson(filePath, defaultValue = {}) {
@@ -23,13 +24,23 @@ function readJson(filePath, defaultValue = {}) {
     return defaultValue;
 }
 
+// عداد للعمليات المتعلقة بالملفات لتجنب race conditions
+const fileLocks = new Map();
+
 function writeJson(filePath, data) {
     try {
         const dir = path.dirname(filePath);
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
-        fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+
+        // كتابة إلى ملف مؤقت أولاً
+        const tempPath = `${filePath}.tmp`;
+        fs.writeFileSync(tempPath, JSON.stringify(data, null, 2));
+
+        // استبدال الملف الأصلي (atomic operation)
+        fs.renameSync(tempPath, filePath);
+
         return true;
     } catch (error) {
         console.error(`Error writing ${filePath}:`, error);
@@ -39,8 +50,20 @@ function writeJson(filePath, data) {
 
 class DownManager {
     constructor() {
+        this.client = null;
         this.ensureDataFiles();
-        this.startExpirationChecker();
+        // قائمة تجاهل مؤقتة للرولات المُرجعة تلقائياً
+        this.autoRestoreIgnoreList = new Map();
+        // قائمة تتبع الاستعادات التي يقوم بها البوت (لمنع التداخل مع نظام الحماية)
+        this.botRestorationTracking = new Set();
+    }
+
+    // Initialize with Discord client
+    init(client) {
+        this.client = client;
+        this.startExpirationChecker(client);
+        // بدء مهام الصيانة فور التهيئة
+        setTimeout(() => this.startMaintenanceTasks(), 5000); // تأخير 5 ثواني
     }
 
     ensureDataFiles() {
@@ -65,6 +88,11 @@ class DownManager {
         // Create logs file
         if (!fs.existsSync(downLogsPath)) {
             writeJson(downLogsPath, []);
+        }
+
+        // Create left members downs file
+        if (!fs.existsSync(leftMembersDownsPath)) {
+            writeJson(leftMembersDownsPath, {});
         }
     }
 
@@ -98,15 +126,15 @@ class DownManager {
         switch (settings.allowedUsers.type) {
             case 'owners':
                 return botOwners.includes(userId);
-                
+
             case 'roles':
                 const userRoles = interaction.member.roles.cache.map(role => role.id);
                 return settings.allowedUsers.targets.some(roleId => userRoles.includes(roleId));
-                
+
             case 'responsibility':
                 const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
                 const responsibilities = readJson(responsibilitiesPath, {});
-                
+
                 for (const respName of settings.allowedUsers.targets) {
                     const respData = responsibilities[respName];
                     if (respData && respData.responsibles && respData.responsibles.includes(userId)) {
@@ -137,6 +165,12 @@ class DownManager {
                 return { success: false, error: 'الرول المحدد ليس من الرولات الإدارية' };
             }
 
+            // التحقق من صلاحيات البوت فقط (بدون فحص أمان الرولات)
+            const validation = await this.validateBotPermissionsOnly(guild, roleId);
+            if (!validation.valid) {
+                return { success: false, error: validation.error };
+            }
+
             // Get target member
             const targetMember = await guild.members.fetch(targetUserId);
             if (!targetMember) {
@@ -154,8 +188,13 @@ class DownManager {
                 return { success: false, error: 'العضو لا يملك هذا الرول' };
             }
 
-            // Remove the role
-            await targetMember.roles.remove(roleId);
+            // Remove the role with error handling
+            try {
+                await targetMember.roles.remove(roleId, `داون بواسطة ${await guild.members.fetch(byUserId).then(m => m.displayName).catch(() => 'غير معروف')}: ${reason}`);
+            } catch (roleError) {
+                console.error('Error removing role:', roleError);
+                return { success: false, error: 'فشل في سحب الرول - تحقق من صلاحيات البوت' };
+            }
 
             // Calculate end time
             let endTime = null;
@@ -173,6 +212,7 @@ class DownManager {
                 id: downId,
                 userId: targetUserId,
                 roleId: roleId,
+                guildId: guild.id,
                 reason: reason,
                 byUserId: byUserId,
                 startTime: Date.now(),
@@ -205,7 +245,12 @@ class DownManager {
                 byUser: await client.users.fetch(byUserId)
             });
 
-            return { success: true, downId };
+            return { 
+                success: true, 
+                downId: downId,
+                duration: duration,
+                endTime: endTime
+            };
 
         } catch (error) {
             console.error('Error creating down:', error);
@@ -227,6 +272,18 @@ class DownManager {
             const role = await guild.roles.fetch(downRecord.roleId);
 
             if (member && role) {
+                // إضافة الرول لقائمة التجاهل قبل إرجاعه (للإنهاء اليدوي)
+                this.addToAutoRestoreIgnore(downRecord.userId, downRecord.roleId);
+
+                // تسجيل أن البوت سيقوم بإعادة الرول (لمنع تداخل نظام الحماية)
+                const restorationKey = `${guild.id}_${downRecord.userId}_${downRecord.roleId}`;
+                this.botRestorationTracking.add(restorationKey);
+
+                // إزالة المفتاح بعد 10 ثوانٍ
+                setTimeout(() => {
+                    this.botRestorationTracking.delete(restorationKey);
+                }, 10000);
+
                 // Add role back
                 await member.roles.add(downRecord.roleId);
 
@@ -344,7 +401,7 @@ class DownManager {
     getExpiredDowns() {
         const activeDowns = this.getActiveDowns();
         const now = Date.now();
-        
+
         return Object.entries(activeDowns)
             .filter(([_, down]) => down.endTime && down.endTime <= now)
             .map(([downId, down]) => ({ downId, ...down }));
@@ -383,26 +440,30 @@ class DownManager {
     }
 
     createLogEmbed(type, data) {
-        const embed = new EmbedBuilder()
-            .setColor(colorManager.getColor() || '#ff6b6b')
+        const embed = colorManager.createEmbed()
             .setTimestamp();
+
+        // إضافة أفتار البوت إذا كان متاحاً
+        if (this.client && this.client.user) {
+            embed.setThumbnail(this.client.user.displayAvatarURL({ dynamic: true, size: 256 }));
+        }
 
         switch (type) {
             case 'DOWN_APPLIED':
-                embed.setTitle('🔻 تم تطبيق داون')
+                embed.setTitle('تم تطبيق داون')
+                    .setDescription(`📝 **تم سحب رول من:** <@${data.targetUser.id}>`)
                     .addFields([
-                        { name: 'العضو', value: `${data.targetUser}`, inline: true },
+                        { name: 'العضو', value: `<@${data.targetUser.id}>`, inline: true },
                         { name: 'الرول', value: `${data.role}`, inline: true },
                         { name: 'المدة', value: data.duration, inline: true },
                         { name: 'السبب', value: data.reason, inline: false },
-                        { name: 'بواسطة', value: `${data.byUser}`, inline: true },
+                        { name: 'بواسطة', value: `<@${data.byUser.id}>`, inline: true },
                         { name: 'التاريخ', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
                     ]);
                 break;
 
             case 'DOWN_ENDED':
-                embed.setTitle('🔺 تم إنهاء داون')
-                    .setColor('#00ff00')
+                embed.setTitle('تم إنهاء داون')
                     .addFields([
                         { name: 'العضو', value: `${data.targetUser}`, inline: true },
                         { name: 'الرول', value: `${data.role}`, inline: true },
@@ -415,8 +476,7 @@ class DownManager {
                 break;
 
             case 'DOWN_MODIFIED':
-                embed.setTitle('✏️ تم تعديل مدة الداون')
-                    .setColor('#ffaa00')
+                embed.setTitle('تم تعديل مدة الداون')
                     .addFields([
                         { name: 'العضو', value: `${data.targetUser}`, inline: true },
                         { name: 'الرول', value: `${data.role}`, inline: true },
@@ -431,14 +491,14 @@ class DownManager {
         return embed;
     }
 
-    // Auto expiration checker
-    startExpirationChecker() {
+    // Auto expiration checker with notification
+    startExpirationChecker(client) {
+        this.client = client; // Store client reference
         setInterval(async () => {
             try {
                 const expiredDowns = this.getExpiredDowns();
                 for (const expiredDown of expiredDowns) {
-                    // This will be called from bot.js with proper guild and client
-                    console.log(`⏰ داون منتهي الصلاحية: ${expiredDown.downId}`);
+                    await this.processExpiredDown(expiredDown);
                 }
             } catch (error) {
                 console.error('Error in down expiration checker:', error);
@@ -446,22 +506,385 @@ class DownManager {
         }, 60000); // Check every minute
     }
 
+    // Process expired down with notification and role restoration
+    async processExpiredDown(expiredDown) {
+        try {
+            if (!this.client) return;
+
+            const guild = await this.client.guilds.fetch(expiredDown.guildId).catch(() => null);
+            if (!guild) return;
+
+            const member = await guild.members.fetch(expiredDown.userId).catch(() => null);
+            const role = await guild.roles.fetch(expiredDown.roleId).catch(() => null);
+
+            // التعامل مع العضو غير الموجود في السيرفر
+            if (!member) {
+                await this.handleExpiredDownForLeftMember(expiredDown, guild, role);
+                this.removeActiveDown(expiredDown.id);
+                return;
+            }
+
+            if (!role) {
+                this.removeActiveDown(expiredDown.id);
+                return;
+            }
+
+            // إضافة الرول لقائمة التجاهل قبل إرجاعه تلقائياً
+            this.addToAutoRestoreIgnore(member.id, role.id);
+
+            // تسجيل أن البوت سيقوم بإعادة الرول (لمنع تداخل نظام الحماية)
+            const restorationKey = `${member.guild.id}_${member.id}_${role.id}`;
+            this.botRestorationTracking.add(restorationKey);
+
+            // إزالة المفتاح بعد 10 ثوانٍ
+            setTimeout(() => {
+                this.botRestorationTracking.delete(restorationKey);
+            }, 10000);
+
+            // Restore the role
+            await member.roles.add(role, 'إعادة رول بعد انتهاء مدة الداون');
+
+            // Notify the user via DM
+            try {
+                const dmEmbed = colorManager.createEmbed()
+                    .setTitle('تمت إعادة الرول')
+                    .setDescription(`تم إعادة الرول **${role.name}** إليك بعد انتهاء مدة الداون.`)
+                    .addFields([
+                        { name: 'الرول', value: `${role.name}`, inline: true },
+                        { name: 'وقت الإعادة', value: `<t:${this.formatTimestamp(Date.now()).unix}:f>`, inline: true }
+                    ])
+                    .setThumbnail(member.displayAvatarURL({ dynamic: true }));
+
+                await member.send({ embeds: [dmEmbed] });
+            } catch (dmError) {
+                console.log(`لا يمكن إرسال رسالة خاصة إلى ${member.displayName}`);
+            }
+
+            // Log the restoration
+            const settings = this.getSettings();
+            if (settings.logChannel && this.client) {
+                const logChannel = await this.client.channels.fetch(settings.logChannel).catch(() => null);
+                if (logChannel) {
+                    const logEmbed = colorManager.createEmbed()
+                        .setTitle('انتهت مدة الداون - تمت الإعادة التلقائية')
+                        .setDescription(`تم إعادة الرول تلقائياً بعد انتهاء المدة المحددة`)
+                        .addFields([
+                            { name: 'العضو', value: `<@${member.id}>`, inline: true },
+                            { name: 'الرول المُعاد', value: `<@&${role.id}>`, inline: true },
+                            { name: 'وقت الإعادة', value: `<t:${this.formatTimestamp(Date.now()).unix}:f>`, inline: true },
+                            { name: 'السبب الأصلي', value: expiredDown.reason || 'غير محدد', inline: false },
+                            { name: ' كان الداون بواسطة', value: `<@${expiredDown.byUserId || expiredDown.moderatorId || 'غير معروف'}>`, inline: true },
+                            { name: 'نوع الإجراء', value: 'إعادة تلقائية', inline: true }
+                        ])
+                        .setTimestamp();
+
+                    await logChannel.send({ embeds: [logEmbed] });
+                }
+            }
+
+            // Remove from active downs
+            this.removeActiveDown(expiredDown.id);
+
+            console.log(`✅ تمت إعادة الرول ${role.name} إلى ${member.displayName} تلقائياً`);
+
+        } catch (error) {
+            console.error('Error processing expired down:', error);
+        }
+    }
+
+    // إضافة رول للتجاهل المؤقت (عند الإرجاع التلقائي)
+    addToAutoRestoreIgnore(userId, roleId) {
+        const key = `${userId}_${roleId}`;
+        this.autoRestoreIgnoreList.set(key, Date.now());
+
+        // إزالة من القائمة بعد 60 ثانية
+        setTimeout(() => {
+            this.autoRestoreIgnoreList.delete(key);
+        }, 60000);
+
+        console.log(`🛡️ تم إضافة ${key} لقائمة التجاهل المؤقت`);
+    }
+
+    // التحقق من وجود رول في قائمة التجاهل
+    isInAutoRestoreIgnore(userId, roleId) {
+        const key = `${userId}_${roleId}`;
+        const timestamp = this.autoRestoreIgnoreList.get(key);
+
+        if (!timestamp) return false;
+
+        // إذا مر أكثر من 60 ثانية، احذف وارجع false
+        if (Date.now() - timestamp > 60000) {
+            this.autoRestoreIgnoreList.delete(key);
+            return false;
+        }
+
+        return true;
+    }
+
+    // التحقق من صلاحيات البوت وأمان الرولات (الأصلي - محفوظ)
+    async validateBotPermissions(guild, roleId) {
+        try {
+            const role = await guild.roles.fetch(roleId);
+            if (!role) {
+                return { valid: false, error: 'الرول غير موجود' };
+            }
+
+            const botMember = await guild.members.fetch(guild.client.user.id);
+
+            // التحقق من الرولات الخطرة
+            if (this.isDangerousRole(role, guild)) {
+                return { valid: false, error: 'لا يمكن سحب هذا الرول - رول حساس' };
+            }
+
+            // التحقق من صلاحية إدارة الرولات
+            if (!botMember.permissions.has('ManageRoles')) {
+                return { valid: false, error: 'ليس لدي البوت صلاحية إدارة الرولات' };
+            }
+
+            // التحقق من هيراركية الرولات
+            if (role.position >= botMember.roles.highest.position) {
+                return { valid: false, error: 'رتبة البوت أقل من الرول المطلوب' };
+            }
+
+            return { valid: true };
+        } catch (error) {
+            console.error('Error validating bot permissions:', error);
+            return { valid: false, error: 'خطأ في التحقق من الصلاحيات' };
+        }
+    }
+
+    // التحقق من صلاحيات البوت فقط (بدون حماية الرولات الخطرة)
+    async validateBotPermissionsOnly(guild, roleId) {
+        try {
+            const role = await guild.roles.fetch(roleId);
+            if (!role) {
+                return { valid: false, error: 'الرول غير موجود' };
+            }
+
+            const botMember = await guild.members.fetch(guild.client.user.id);
+
+            // التحقق من صلاحية إدارة الرولات فقط
+            if (!botMember.permissions.has('ManageRoles')) {
+                return { valid: false, error: 'ليس لدي البوت صلاحية إدارة الرولات' };
+            }
+
+            // التحقق من هيراركية الرولات فقط
+            if (role.position >= botMember.roles.highest.position) {
+                return { valid: false, error: 'رتبة البوت أقل من الرول المطلوب' };
+            }
+
+            return { valid: true };
+        } catch (error) {
+            console.error('Error validating bot permissions:', error);
+            return { valid: false, error: 'خطأ في التحقق من الصلاحيات' };
+        }
+    }
+
+    // التحقق من الرولات الخطرة
+    isDangerousRole(role, guild) {
+        // رول @everyone
+        if (role.id === guild.id) {
+            console.log(`🛡️ رول مرفوض: @everyone`);
+            return true;
+        }
+
+        // الرولات المحمية (بوتات، نيترو، إلخ)
+        if (role.managed) {
+            console.log(`🛡️ رول مرفوض: ${role.name} - رول محمي/مدار`);
+            return true;
+        }
+
+        // رولات بصلاحيات خطرة (Discord.js v14 permission names)
+        const dangerousPermissions = [
+            'Administrator',
+            'ManageGuild', 
+            'ManageRoles',
+            'ManageChannels',
+            'BanMembers',
+            'KickMembers',
+            'ManageWebhooks',
+            'ManageGuildExpressions'
+        ];
+
+        const hasDangerousPerms = dangerousPermissions.some(perm => role.permissions.has(perm));
+        if (hasDangerousPerms) {
+            console.log(`🛡️ رول مرفوض: ${role.name} - يحتوي على صلاحيات خطرة`);
+            return true;
+        }
+
+        console.log(`✅ رول مسموح: ${role.name} - آمن للسحب`);
+        return false;
+    }
+
+    // تنظيف البيانات القديمة
+    cleanupOldData() {
+        try {
+            // تنظيف اللوقز القديمة (أقدم من 30 يوم)
+            const logs = readJson(downLogsPath, []);
+            const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+            const filteredLogs = logs.filter(log => log.timestamp > thirtyDaysAgo);
+
+            if (filteredLogs.length !== logs.length) {
+                writeJson(downLogsPath, filteredLogs);
+                console.log(`🧹 تم حذف ${logs.length - filteredLogs.length} سجل قديم`);
+            }
+
+            // تنظيف الداونات المنتهية الصلاحية من activeDowns
+            const activeDowns = readJson(activeDownsPath, {});
+            let cleaned = false;
+
+            for (const [downId, down] of Object.entries(activeDowns)) {
+                if (down.endTime && down.endTime < Date.now()) {
+                    delete activeDowns[downId];
+                    cleaned = true;
+                }
+            }
+
+            if (cleaned) {
+                writeJson(activeDownsPath, activeDowns);
+                console.log('🧹 تم تنظيف الداونات المنتهية الصلاحية');
+            }
+
+        } catch (error) {
+            console.error('خطأ في تنظيف البيانات:', error);
+        }
+    }
+
+    // نظام نسخ احتياطي بسيط
+    createBackup() {
+        try {
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const backupDir = path.join(__dirname, '..', 'data', 'backups');
+
+            if (!fs.existsSync(backupDir)) {
+                fs.mkdirSync(backupDir, { recursive: true });
+            }
+
+            // نسخ الملفات المهمة
+            const filesToBackup = [
+                { src: downSettingsPath, name: 'downSettings.json' },
+                { src: activeDownsPath, name: 'activeDowns.json' },
+                { src: downLogsPath, name: 'downLogs.json' }
+            ];
+
+            filesToBackup.forEach(file => {
+                if (fs.existsSync(file.src)) {
+                    const backupPath = path.join(backupDir, `${timestamp}_${file.name}`);
+                    fs.copyFileSync(file.src, backupPath);
+                }
+            });
+
+            console.log(`💾 تم إنشاء نسخة احتياطية: ${timestamp}`);
+            return true;
+        } catch (error) {
+            console.error('خطأ في إنشاء النسخة الاحتياطية:', error);
+            return false;
+        }
+    }
+
+    // التحقق من سلامة البيانات
+    validateDataIntegrity() {
+        try {
+            let fixed = false;
+
+            // فحص activeDowns
+            const activeDowns = readJson(activeDownsPath, {});
+            for (const [downId, down] of Object.entries(activeDowns)) {
+                // التأكد من وجود الحقول المطلوبة
+                if (!down.userId || !down.roleId || !down.guildId) {
+                    delete activeDowns[downId];
+                    fixed = true;
+                    console.log(`🔧 حذف داون فاسد: ${downId}`);
+                }
+
+                // إصلاح الحقول الناقصة
+                if (!down.status) {
+                    down.status = 'active';
+                    fixed = true;
+                }
+                if (!down.timestamp) {
+                    down.timestamp = Date.now();
+                    fixed = true;
+                }
+            }
+
+            if (fixed) {
+                writeJson(activeDownsPath, activeDowns);
+                console.log('🔧 تم إصلاح بعض مشاكل البيانات');
+            }
+
+            return true;
+        } catch (error) {
+            console.error('خطأ في فحص سلامة البيانات:', error);
+            return false;
+        }
+    }
+
+    // مهام الصيانة الدورية
+    startMaintenanceTasks() {
+        // تنظيف البيانات كل 6 ساعات
+        setInterval(() => {
+            console.log('🧹 بدء تنظيف البيانات...');
+            this.cleanupOldData();
+        }, 6 * 60 * 60 * 1000);
+
+        // نسخة احتياطية يومية
+        setInterval(() => {
+            console.log('💾 إنشاء نسخة احتياطية...');
+            this.createBackup();
+        }, 24 * 60 * 60 * 1000);
+
+        // فحص سلامة البيانات كل ساعة
+        setInterval(() => {
+            console.log('🔧 فحص سلامة البيانات...');
+            this.validateDataIntegrity();
+        }, 60 * 60 * 1000);
+
+        // فحص فوري عند بدء التشغيل
+        console.log('🚀 بدء مهام الصيانة الدورية');
+        this.cleanupOldData();
+        this.validateDataIntegrity();
+    }
+
+    // تحسين timezone handling
+    formatTimestamp(timestamp, locale = 'ar-SA') {
+        try {
+            const date = new Date(timestamp);
+            return {
+                unix: Math.floor(timestamp / 1000),
+                readable: date.toLocaleString(locale, {
+                    timeZone: 'Asia/Riyadh',
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                })
+            };
+        } catch (error) {
+            console.error('Error formatting timestamp:', error);
+            return {
+                unix: Math.floor(Date.now() / 1000),
+                readable: 'غير محدد'
+            };
+        }
+    }
+
     // Menu helpers
     createStatusEmbed() {
         const settings = this.getSettings();
         const activeDowns = Object.keys(this.getActiveDowns()).length;
-        
-        const embed = new EmbedBuilder()
-            .setTitle('⚙️ إعدادات نظام الداون')
-            .setColor(colorManager.getColor() || '#0099ff')
+
+        const embed = colorManager.createEmbed()
+            .setTitle('إعدادات نظام الداون')
             .addFields([
                 { 
-                    name: '📋 روم المنيو', 
+                    name: ' روم المنيو', 
                     value: settings.menuChannel ? `<#${settings.menuChannel}>` : 'غير محدد', 
                     inline: true 
                 },
                 { 
-                    name: '📝 روم السجلات', 
+                    name: ' روم السجلات', 
                     value: settings.logChannel ? `<#${settings.logChannel}>` : 'غير محدد', 
                     inline: true 
                 },
@@ -473,12 +896,17 @@ class DownManager {
                     inline: true 
                 },
                 { 
-                    name: '📊 الداونات النشطة', 
+                    name: ' الداونات النشطة', 
                     value: `${activeDowns}`, 
                     inline: true 
                 }
             ])
             .setTimestamp();
+
+        // إضافة أفتار البوت إذا كان متاحاً
+        if (this.client && this.client.user) {
+            embed.setThumbnail(this.client.user.displayAvatarURL({ dynamic: true, size: 256 }));
+        }
 
         return embed;
     }
@@ -489,6 +917,351 @@ class DownManager {
             case 'roles': return 'رولات محددة';
             case 'responsibility': return 'مسؤوليات محددة';
             default: return 'غير محدد';
+        }
+    }
+
+    // Apply down to a member (remove role temporarily or permanently)
+    // This is an alias to createDown for compatibility with commands/down.js
+    async applyDown(member, role, duration, reason, moderator) {
+        const downId = `${member.id}_${role.id}`;
+        const result = await this.createDown(
+            member.guild,
+            this.client || require('../bot').client,
+            member.id,
+            role.id,
+            duration,
+            reason,
+            moderator.id
+        );
+
+        if (result.success) {
+            return {
+                success: true,
+                duration: result.duration,
+                endTime: result.endTime ? `<t:${Math.floor(result.endTime / 1000)}:R>` : null
+            };
+        } else {
+            return result;
+        }
+    }
+
+    // Log down action to configured channel
+    async logDownAction(guild, data) {
+        try {
+            const settings = this.getSettings();
+            if (!settings.logChannel) return;
+
+            const { logEvent } = require('./logs_system');
+
+            logEvent(this.client || require('../bot').client, guild, {
+                type: 'DOWN_SYSTEM',
+                title: data.type === 'ROLE_REMOVED' ? 'تم سحب رول' : 'تم تطبيق إجراء',
+                description: `تم تطبيق داون على العضو ${data.user.username}`,
+                details: `الرول: ${data.role.name} | المدة: ${data.duration} | السبب: ${data.reason}`,
+                user: data.moderator,
+                fields: [
+                    { name: '👤 العضو المتأثر', value: `<@${data.user.id}>`, inline: true },
+                    { name: '🏷️ الرول المسحوب', value: `<@&${data.role.id}>`, inline: true },
+                    { name: ' المدة', value: data.duration, inline: true },
+                    { name: ' السبب', value: data.reason, inline: false },
+                    { name: ' بواسطة', value: `<@${data.moderator.id}>`, inline: true },
+                    { name: '📅 ينتهي في', value: data.endTime || 'نهائي', inline: true }
+                ]
+            });
+
+        } catch (error) {
+            console.error('Error logging down action:', error);
+        }
+    }
+
+    // Remove active down from storage (using flat structure)
+    removeActiveDown(downId) {
+        try {
+            const activeDowns = this.getActiveDowns();
+            if (activeDowns[downId]) {
+                delete activeDowns[downId];
+                writeJson(activeDownsPath, activeDowns);
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error('Error removing active down:', error);
+            return false;
+        }
+    }
+
+    // فحص إذا كان البوت في عملية استعادة رول (لمنع التداخل)
+    isBotRestoring(guildId, userId, roleId) {
+        const restorationKey = `${guildId}_${userId}_${roleId}`;
+        return this.botRestorationTracking.has(restorationKey);
+    }
+
+    // Alias for compatibility with commands/down.js
+    async logDownAction(guild, data) {
+        return await this.logAction('DOWN_SYSTEM', {
+            userId: data.user.id,
+            roleId: data.role.id,
+            guildId: guild.id,
+            moderatorId: data.moderator.id,
+            reason: data.reason,
+            duration: data.duration,
+            endTime: data.endTime,
+            type: data.type
+        });
+    }
+
+    // نظام حماية عند الانسحاب - حفظ بيانات الداون
+    async handleMemberLeave(member) {
+        try {
+            const activeDowns = readJson(activeDownsPath, {});
+            const leftMembersDowns = readJson(leftMembersDownsPath, {});
+            const userDowns = [];
+
+            // البحث عن الداونات النشطة للعضو
+            for (const [downId, downData] of Object.entries(activeDowns)) {
+                if (downData.userId === member.id && downData.guildId === member.guild.id) {
+                    userDowns.push({ downId, ...downData });
+                }
+            }
+
+            if (userDowns.length > 0) {
+                // حفظ بيانات العضو المنسحب
+                const memberKey = `${member.id}_${member.guild.id}`;
+                leftMembersDowns[memberKey] = {
+                    userId: member.id,
+                    guildId: member.guild.id,
+                    username: member.user.username,
+                    displayName: member.displayName,
+                    leftAt: Date.now(),
+                    downs: userDowns
+                };
+
+                writeJson(leftMembersDownsPath, leftMembersDowns);
+
+                // تسجيل انسحاب
+                const settings = this.getSettings();
+                if (settings.logChannel) {
+                    try {
+                        const logChannel = await member.guild.channels.fetch(settings.logChannel);
+                        if (logChannel) {
+                            const embed = colorManager.createEmbed()
+                                .setTitle('🚪 عضو عليه داون قد انسحب')
+                                .setDescription(`قام عضو عليه داون بالانسحاب - تم حفظ بياناته للحماية`)
+                                .addFields([
+                                    { name: '👤 العضو', value: `<@${member.id}>`, inline: true },
+                                    { name: '📅 وقت الانسحاب', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+                                    { name: '📄 عدد الداونات', value: userDowns.length.toString(), inline: true }
+                                ])
+                                .setColor('#ff9500')
+                                .setTimestamp();
+
+                            // إضافة تفاصيل الداونات
+                            let downsList = '';
+                            for (let i = 0; i < Math.min(userDowns.length, 5); i++) {
+                                const downData = userDowns[i];
+                                const role = await member.guild.roles.fetch(downData.roleId).catch(() => null);
+                                const roleName = role ? role.name : `Role ID: ${downData.roleId}`;
+                                const endTime = downData.endTime ? `<t:${Math.floor(downData.endTime / 1000)}:R>` : 'نهائي';
+                                downsList += `• **${roleName}** - ينتهي: ${endTime}\n`;
+                            }
+
+                            if (userDowns.length > 5) {
+                                downsList += `• **+${userDowns.length - 5} داون إضافي**\n`;
+                            }
+
+                            embed.addFields([{ name: '📋 الداونات المحفوظة', value: downsList || 'لا توجد', inline: false }]);
+
+                            await logChannel.send({ embeds: [embed] });
+                        }
+                    } catch (error) {
+                        console.error('خطأ في إرسال لوق الانسحاب:', error);
+                    }
+                }
+
+                console.log(`🚪 تم حفظ ${userDowns.length} داون للعضو المنسحب: ${member.displayName}`);
+            }
+
+        } catch (error) {
+            console.error('خطأ في معالجة انسحاب العضو:', error);
+        }
+    }
+
+    // نظام حماية عند العودة - إعادة تطبيق الداون
+    async handleMemberJoin(member) {
+        try {
+            const leftMembersDowns = readJson(leftMembersDownsPath, {});
+            const memberKey = `${member.id}_${member.guild.id}`;
+            const memberData = leftMembersDowns[memberKey];
+
+            if (memberData && memberData.downs && memberData.downs.length > 0) {
+                const activeDowns = readJson(activeDownsPath, {});
+                let restoredDowns = 0;
+                const failedDowns = [];
+
+                for (const downData of memberData.downs) {
+                    try {
+                        // فحص إذا كان الداون منتهي الصلاحية
+                        if (downData.endTime && downData.endTime <= Date.now()) {
+                            failedDowns.push({
+                                reason: 'انتهت المدة أثناء الغياب',
+                                roleId: downData.roleId
+                            });
+                            continue;
+                        }
+
+                        // التحقق من وجود الرول
+                        const role = await member.guild.roles.fetch(downData.roleId).catch(() => null);
+                        if (!role) {
+                            failedDowns.push({
+                                reason: 'الرول غير موجود',
+                                roleId: downData.roleId
+                            });
+                            continue;
+                        }
+
+                        // التحقق من أن العضو يملك الرول
+                        if (member.roles.cache.has(downData.roleId)) {
+                            // سحب الرول مرة أخرى
+                            await member.roles.remove(downData.roleId, `إعادة تطبيق داون بعد العودة: ${downData.reason}`);
+                        }
+
+                        // إعادة إضافة الداون للقائمة النشطة
+                        const newDownId = `${member.id}_${downData.roleId}_${Date.now()}`;
+                        const restoredDown = {
+                            ...downData,
+                            id: newDownId,
+                            restoredAfterLeave: true,
+                            restoredAt: Date.now(),
+                            originalLeftAt: memberData.leftAt
+                        };
+
+                        activeDowns[newDownId] = restoredDown;
+                        restoredDowns++;
+
+                    } catch (error) {
+                        console.error(`خطأ في إعادة تطبيق داون:`, error);
+                        failedDowns.push({
+                            reason: error.message || 'خطأ غير معروف',
+                            roleId: downData.roleId
+                        });
+                    }
+                }
+
+                // حفظ التغييرات
+                if (restoredDowns > 0) {
+                    writeJson(activeDownsPath, activeDowns);
+                }
+
+                // حذف بيانات العضو المنسحب
+                delete leftMembersDowns[memberKey];
+                writeJson(leftMembersDownsPath, leftMembersDowns);
+
+                // تسجيل العودة
+                const settings = this.getSettings();
+                if (settings.logChannel) {
+                    try {
+                        const logChannel = await member.guild.channels.fetch(settings.logChannel);
+                        if (logChannel) {
+                            const embed = colorManager.createEmbed()
+                                .setTitle('🔄 عاد عضو عليه داون')
+                                .setDescription(`عاد عضو عليه داون وتم إعادة تطبيق الداونات`)
+                                .addFields([
+                                    { name: '👤 العضو', value: `<@${member.id}>`, inline: true },
+                                    { name: '📅 وقت العودة', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+                                    { name: '✅ تم استعادتها', value: restoredDowns.toString(), inline: true }
+                                ])
+                                .setColor('#00ff00')
+                                .setTimestamp();
+
+                            if (failedDowns.length > 0) {
+                                embed.addFields([{ 
+                                    name: '❌ فشل في استعادتها', 
+                                    value: failedDowns.length.toString(), 
+                                    inline: true 
+                                }]);
+                            }
+
+                            const timeSinceLeft = Date.now() - memberData.leftAt;
+                            const timeLeftText = timeSinceLeft > 3600000 ? 
+                                `${Math.floor(timeSinceLeft / 3600000)} ساعة` : 
+                                `${Math.floor(timeSinceLeft / 60000)} دقيقة`;
+
+                            embed.addFields([{ 
+                                name: '⏱️ فترة الغياب', 
+                                value: timeLeftText, 
+                                inline: true 
+                            }]);
+
+                            await logChannel.send({ embeds: [embed] });
+                        }
+                    } catch (error) {
+                        console.error('خطأ في إرسال لوق العودة:', error);
+                    }
+                }
+
+                console.log(`🔄 تم إعادة تطبيق ${restoredDowns} داون للعضو العائد: ${member.displayName}`);
+            }
+
+        } catch (error) {
+            console.error('خطأ في معالجة عودة العضو:', error);
+        }
+    }
+
+    // معالجة انتهاء الداون لعضو خارج السيرفر
+    async handleExpiredDownForLeftMember(expiredDown, guild, role) {
+        try {
+            const settings = this.getSettings();
+            if (!settings.logChannel) return;
+
+            const logChannel = await guild.channels.fetch(settings.logChannel).catch(() => null);
+            if (!logChannel) return;
+
+            // إنشاء embed للعضو الخارج
+            const embed = colorManager.createEmbed()
+                .setTitle('⏰ انتهت مدة الداون - عضو خارج السيرفر')
+                .setDescription(`انتهت مدة الداون لعضو غير موجود في السيرفر`)
+                .addFields([
+                    { name: '👤 العضو', value: `<@${expiredDown.userId}>`, inline: true },
+                    { name: '🏠 الحالة', value: 'خارج السيرفر', inline: true },
+                    { name: '⏰ وقت الانتهاء', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
+                ])
+                .setColor('#ffa500')
+                .setTimestamp();
+
+            if (role) {
+                embed.addFields([
+                    { name: '🏷️ الرول المنتهي', value: `<@&${role.id}>`, inline: true },
+                    { name: '📄 السبب الأصلي', value: expiredDown.reason || 'غير محدد', inline: false }
+                ]);
+            } else {
+                embed.addFields([
+                    { name: '🏷️ الرول المنتهي', value: `Role ID: ${expiredDown.roleId}`, inline: true },
+                    { name: '📄 السبب الأصلي', value: expiredDown.reason || 'غير محدد', inline: false }
+                ]);
+            }
+
+            // إضافة معلومات إضافية
+            const byUser = await this.client.users.fetch(expiredDown.byUserId).catch(() => null);
+            if (byUser) {
+                embed.addFields([{ name: '📅 تم تطبيقه بواسطة', value: `<@${byUser.id}>`, inline: true }]);
+            }
+
+            const startTime = expiredDown.startTime || Date.now();
+            embed.addFields([{ name: '📅 تاريخ التطبيق', value: `<t:${Math.floor(startTime / 1000)}:F>`, inline: true }]);
+
+            // إضافة ملاحظة هامة
+            embed.addFields([{ 
+                name: '⚠️ ملاحظة هامة', 
+                value: 'إذا عاد هذا العضو للسيرفر، لن يعود الداون تلقائياً', 
+                inline: false 
+            }]);
+
+            await logChannel.send({ embeds: [embed] });
+
+            console.log(`⏰ انتهت مدة داون لعضو خارج السيرفر: ${expiredDown.userId}`);
+
+        } catch (error) {
+            console.error('خطأ في معالجة انتهاء داون عضو خارج:', error);
         }
     }
 }
