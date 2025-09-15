@@ -189,12 +189,12 @@ async function handleInteraction(interaction, context) {
             ephemeral: true
         });
         
-        // تعطيل الزر الأصلي فوراً ونهائياً
+        // تعطيل الزر الأصلي فقط بعد تأكيد الإرسال - نقل هذا للـ confirm handler
         try {
             const disabledButton = new ButtonBuilder()
-                .setCustomId(`vac_end_used_${userId}`)
-                .setLabel("✅ تم إرسال الطلب")
-                .setStyle(ButtonStyle.Success)
+                .setCustomId(`vac_end_processing_${userId}`)
+                .setLabel("⏳ جاري المعالجة...")
+                .setStyle(ButtonStyle.Secondary)
                 .setDisabled(true);
 
             const disabledRow = new ActionRowBuilder().addComponents(disabledButton);
