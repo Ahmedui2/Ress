@@ -22,12 +22,20 @@ function loadAdminApplicationSettings() {
                     minMessages: {
                         weak: 20,
                         good: 50,
-                        excellent: 100
+                        excellent: 100,
+                        resetWeekly: false
                     },
                     minVoiceTime: {
                         weak: 2 * 60 * 60 * 1000, // 2 hours in milliseconds
                         good: 5 * 60 * 60 * 1000, // 5 hours in milliseconds
-                        excellent: 10 * 60 * 60 * 1000 // 10 hours in milliseconds
+                        excellent: 10 * 60 * 60 * 1000, // 10 hours in milliseconds
+                        resetWeekly: false
+                    },
+                    minReactions: {
+                        weak: 10,
+                        good: 25,
+                        excellent: 50,
+                        resetWeekly: false
                     },
                     activeDaysPerWeek: {
                         minimum: 3,
@@ -54,12 +62,20 @@ function loadAdminApplicationSettings() {
                     minMessages: {
                         weak: 20,
                         good: 50,
-                        excellent: 100
+                        excellent: 100,
+                        resetWeekly: false
                     },
                     minVoiceTime: {
                         weak: 2 * 60 * 60 * 1000, // 2 hours in milliseconds
                         good: 5 * 60 * 60 * 1000, // 5 hours in milliseconds
-                        excellent: 10 * 60 * 60 * 1000 // 10 hours in milliseconds
+                        excellent: 10 * 60 * 60 * 1000, // 10 hours in milliseconds
+                        resetWeekly: false
+                    },
+                    minReactions: {
+                        weak: 10,
+                        good: 25,
+                        excellent: 50,
+                        resetWeekly: false
                     },
                     activeDaysPerWeek: {
                         minimum: 3,
@@ -591,12 +607,17 @@ async function handleShowSettings(interaction, settings) {
             { name: 'Users in Cooldown', value: `${Object.keys(settings.rejectedCooldowns).length} شخص`, inline: true },
             { 
                 name: 'Evaluation - Messages', 
-                value: `ضعيف: <${minMessages.weak} | جيد: ${minMessages.good}-${minMessages.excellent-1} | ممتاز: ${minMessages.excellent}+`, 
+                value: `ضعيف: <${minMessages.weak} | جيد: ${minMessages.good}-${minMessages.excellent-1} | ممتاز: ${minMessages.excellent}+ | ${minMessages.resetWeekly ? 'أسبوعي' : 'إجمالي'}`, 
                 inline: false 
             },
             { 
                 name: 'Evaluation - Voice Time', 
-                value: `ضعيف: ${Math.round(minVoiceTime.weak / (60 * 60 * 1000))} ساعة | جيد: ${Math.round(minVoiceTime.good / (60 * 60 * 1000))} ساعة | ممتاز: ${Math.round(minVoiceTime.excellent / (60 * 60 * 1000))} ساعة`, 
+                value: `ضعيف: ${Math.round(minVoiceTime.weak / (60 * 60 * 1000))} ساعة | جيد: ${Math.round(minVoiceTime.good / (60 * 60 * 1000))} ساعة | ممتاز: ${Math.round(minVoiceTime.excellent / (60 * 60 * 1000))} ساعة | ${minVoiceTime.resetWeekly ? 'أسبوعي' : 'إجمالي'}`, 
+                inline: false 
+            },
+            { 
+                name: 'Evaluation - Reactions', 
+                value: `ضعيف: <${minReactions.weak} | جيد: ${minReactions.good}-${minReactions.excellent-1} | ممتاز: ${minReactions.excellent}+ | ${minReactions.resetWeekly ? 'أسبوعي' : 'إجمالي'}`, 
                 inline: false 
             },
             { 
@@ -1194,6 +1215,8 @@ async function handleInteraction(interaction) {
                 await handleMessagesCriteriaInteraction(interaction, settings);
             } else if (evaluationType === 'voice_time_criteria') {
                 await handleVoiceTimeCriteriaInteraction(interaction, settings);
+            } else if (evaluationType === 'reactions_criteria') {
+                await handleReactionsCriteriaInteraction(interaction, settings);
             } else if (evaluationType === 'activity_criteria') {
                 await handleActivityCriteriaInteraction(interaction, settings);
             } else if (evaluationType === 'server_time_criteria') {
@@ -1207,6 +1230,7 @@ async function handleInteraction(interaction) {
             const weakLimit = parseInt(interaction.fields.getTextInputValue('min_messages_weak'));
             const goodLimit = parseInt(interaction.fields.getTextInputValue('min_messages_good'));
             const excellentLimit = parseInt(interaction.fields.getTextInputValue('min_messages_excellent'));
+            const resetWeekly = interaction.fields.getTextInputValue('messages_reset_weekly').toLowerCase() === 'true';
 
             if (isNaN(weakLimit) || isNaN(goodLimit) || isNaN(excellentLimit) || 
                 weakLimit >= goodLimit || goodLimit >= excellentLimit || 
@@ -1223,12 +1247,13 @@ async function handleInteraction(interaction) {
             settings.settings.evaluation.minMessages = {
                 weak: weakLimit,
                 good: goodLimit,
-                excellent: excellentLimit
+                excellent: excellentLimit,
+                resetWeekly: resetWeekly
             };
 
             if (saveAdminApplicationSettings(settings)) {
                 await interaction.reply({
-                    content: `تم تحديث معايير الرسائل:\n• ضعيف: أقل من ${weakLimit}\n• جيد: ${weakLimit}-${goodLimit-1}\n• ممتاز: ${excellentLimit}+`
+                    content: `تم تحديث معايير الرسائل:\n• ضعيف: أقل من ${weakLimit}\n• جيد: ${weakLimit}-${goodLimit-1}\n• ممتاز: ${excellentLimit}+\n• نوع التقييم: ${resetWeekly ? 'أسبوعي' : 'إجمالي'}`
                 });
             } else {
                 await interaction.reply({
@@ -1275,6 +1300,7 @@ async function handleInteraction(interaction) {
             const weakHours = parseFloat(interaction.fields.getTextInputValue('min_voice_time_weak'));
             const goodHours = parseFloat(interaction.fields.getTextInputValue('min_voice_time_good'));
             const excellentHours = parseFloat(interaction.fields.getTextInputValue('min_voice_time_excellent'));
+            const resetWeekly = interaction.fields.getTextInputValue('voice_reset_weekly').toLowerCase() === 'true';
 
             if (isNaN(weakHours) || isNaN(goodHours) || isNaN(excellentHours) || 
                 weakHours >= goodHours || goodHours >= excellentHours || 
@@ -1291,12 +1317,13 @@ async function handleInteraction(interaction) {
             settings.settings.evaluation.minVoiceTime = {
                 weak: weakHours * 60 * 60 * 1000, // تحويل للميلي ثانية
                 good: goodHours * 60 * 60 * 1000,
-                excellent: excellentHours * 60 * 60 * 1000
+                excellent: excellentHours * 60 * 60 * 1000,
+                resetWeekly: resetWeekly
             };
 
             if (saveAdminApplicationSettings(settings)) {
                 await interaction.reply({
-                    content: `تم تحديث معايير الوقت الصوتي:\n• ضعيف: ${weakHours} ساعة\n• جيد: ${goodHours} ساعة\n• ممتاز: ${excellentHours} ساعة`
+                    content: `تم تحديث معايير الوقت الصوتي:\n• ضعيف: ${weakHours} ساعة\n• جيد: ${goodHours} ساعة\n• ممتاز: ${excellentHours} ساعة\n• نوع التقييم: ${resetWeekly ? 'أسبوعي' : 'إجمالي'}`
                 });
             } else {
                 await interaction.reply({
@@ -1330,6 +1357,44 @@ async function handleInteraction(interaction) {
             if (saveAdminApplicationSettings(settings)) {
                 await interaction.reply({
                     content: `تم تحديث معايير الوقت في السيرفر:\n• الحد الأدنى: ${minDays} يوم\n• ممتاز: ${excellentDays} يوم`
+                });
+            } else {
+                await interaction.reply({
+                    content: 'فشل في حفظ الإعدادات'
+                });
+            }
+            return;
+        }
+
+        // معالجة مودال معايير التفاعلات
+        if (customId === 'reactions_criteria_modal') {
+            const weakLimit = parseInt(interaction.fields.getTextInputValue('min_reactions_weak'));
+            const goodLimit = parseInt(interaction.fields.getTextInputValue('min_reactions_good'));
+            const excellentLimit = parseInt(interaction.fields.getTextInputValue('min_reactions_excellent'));
+            const resetWeekly = interaction.fields.getTextInputValue('reactions_reset_weekly').toLowerCase() === 'true';
+
+            if (isNaN(weakLimit) || isNaN(goodLimit) || isNaN(excellentLimit) || 
+                weakLimit >= goodLimit || goodLimit >= excellentLimit || 
+                weakLimit < 1 || excellentLimit > 10000) {
+                return interaction.reply({
+                    content: 'قيم غير صحيحة! تأكد أن: ضعيف < جيد < ممتاز، وجميع القيم بين 1-10000',
+                    ephemeral: true
+                });
+            }
+
+            if (!settings.settings.evaluation) {
+                settings.settings.evaluation = {};
+            }
+            settings.settings.evaluation.minReactions = {
+                weak: weakLimit,
+                good: goodLimit,
+                excellent: excellentLimit,
+                resetWeekly: resetWeekly
+            };
+
+            if (saveAdminApplicationSettings(settings)) {
+                await interaction.reply({
+                    content: `تم تحديث معايير التفاعلات:\n• ضعيف: أقل من ${weakLimit}\n• جيد: ${weakLimit}-${goodLimit-1}\n• ممتاز: ${excellentLimit}+\n• نوع التقييم: ${resetWeekly ? 'أسبوعي' : 'إجمالي'}`
                 });
             } else {
                 await interaction.reply({
@@ -1547,6 +1612,11 @@ async function handleSetEvaluationInteraction(interaction, settings) {
                 value: 'voice_time_criteria'
             },
             {
+                label: 'Reactions Criteria',
+                description: 'تعديل معايير التفاعلات للتقييم',
+                value: 'reactions_criteria'
+            },
+            {
                 label: 'Activity Criteria',
                 description: 'تعديل معايير أيام النشاط الأسبوعية',
                 value: 'activity_criteria'
@@ -1569,7 +1639,7 @@ async function handleSetEvaluationInteraction(interaction, settings) {
 // معالج معايير الرسائل
 async function handleMessagesCriteriaInteraction(interaction, settings) {
     const eval = settings.settings.evaluation || {};
-    const minMessages = eval.minMessages || { weak: 20, good: 50, excellent: 100 };
+    const minMessages = eval.minMessages || { weak: 20, good: 50, excellent: 100, resetWeekly: false };
 
     const modal = new ModalBuilder()
         .setCustomId('messages_criteria_modal')
@@ -1599,10 +1669,19 @@ async function handleMessagesCriteriaInteraction(interaction, settings) {
         .setValue(minMessages.excellent.toString())
         .setRequired(true);
 
+    const resetWeeklyInput = new TextInputBuilder()
+        .setCustomId('messages_reset_weekly')
+        .setLabel('أسبوعي أم إجمالي؟ (true/false)')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('true للأسبوعي، false للإجمالي')
+        .setValue((minMessages.resetWeekly || false).toString())
+        .setRequired(true);
+
     const rows = [
         new ActionRowBuilder().addComponents(weakInput),
         new ActionRowBuilder().addComponents(goodInput),
-        new ActionRowBuilder().addComponents(excellentInput)
+        new ActionRowBuilder().addComponents(excellentInput),
+        new ActionRowBuilder().addComponents(resetWeeklyInput)
     ];
 
     modal.addComponents(rows);
@@ -1612,7 +1691,7 @@ async function handleMessagesCriteriaInteraction(interaction, settings) {
 // معالج معايير الوقت الصوتي
 async function handleVoiceTimeCriteriaInteraction(interaction, settings) {
     const eval = settings.settings.evaluation || {};
-    const minVoiceTime = eval.minVoiceTime || { weak: 2 * 60 * 60 * 1000, good: 5 * 60 * 60 * 1000, excellent: 10 * 60 * 60 * 1000 };
+    const minVoiceTime = eval.minVoiceTime || { weak: 2 * 60 * 60 * 1000, good: 5 * 60 * 60 * 1000, excellent: 10 * 60 * 60 * 1000, resetWeekly: false };
 
     const modal = new ModalBuilder()
         .setCustomId('voice_time_criteria_modal')
@@ -1642,10 +1721,71 @@ async function handleVoiceTimeCriteriaInteraction(interaction, settings) {
         .setValue((minVoiceTime.excellent / (60 * 60 * 1000)).toFixed(1))
         .setRequired(true);
 
+    const resetWeeklyInput = new TextInputBuilder()
+        .setCustomId('voice_reset_weekly')
+        .setLabel('أسبوعي أم إجمالي؟ (true/false)')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('true للأسبوعي، false للإجمالي')
+        .setValue((minVoiceTime.resetWeekly || false).toString())
+        .setRequired(true);
+
     const rows = [
         new ActionRowBuilder().addComponents(weakInput),
         new ActionRowBuilder().addComponents(goodInput),
-        new ActionRowBuilder().addComponents(excellentInput)
+        new ActionRowBuilder().addComponents(excellentInput),
+        new ActionRowBuilder().addComponents(resetWeeklyInput)
+    ];
+
+    modal.addComponents(rows);
+    await interaction.showModal(modal);
+}
+
+// معالج معايير التفاعلات
+async function handleReactionsCriteriaInteraction(interaction, settings) {
+    const eval = settings.settings.evaluation || {};
+    const minReactions = eval.minReactions || { weak: 10, good: 25, excellent: 50, resetWeekly: false };
+
+    const modal = new ModalBuilder()
+        .setCustomId('reactions_criteria_modal')
+        .setTitle('تعديل معايير التفاعلات');
+
+    const weakInput = new TextInputBuilder()
+        .setCustomId('min_reactions_weak')
+        .setLabel('الحد الأدنى للتفاعلات - ضعيف')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('مثال: 10')
+        .setValue(minReactions.weak.toString())
+        .setRequired(true);
+
+    const goodInput = new TextInputBuilder()
+        .setCustomId('min_reactions_good')
+        .setLabel('الحد الأدنى للتفاعلات - جيد')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('مثال: 25')
+        .setValue(minReactions.good.toString())
+        .setRequired(true);
+
+    const excellentInput = new TextInputBuilder()
+        .setCustomId('min_reactions_excellent')
+        .setLabel('الحد الأدنى للتفاعلات - ممتاز')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('مثال: 50')
+        .setValue(minReactions.excellent.toString())
+        .setRequired(true);
+
+    const resetWeeklyInput = new TextInputBuilder()
+        .setCustomId('reactions_reset_weekly')
+        .setLabel('أسبوعي أم إجمالي؟ (true/false)')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('true للأسبوعي، false للإجمالي')
+        .setValue((minReactions.resetWeekly || false).toString())
+        .setRequired(true);
+
+    const rows = [
+        new ActionRowBuilder().addComponents(weakInput),
+        new ActionRowBuilder().addComponents(goodInput),
+        new ActionRowBuilder().addComponents(excellentInput),
+        new ActionRowBuilder().addComponents(resetWeeklyInput)
     ];
 
     modal.addComponents(rows);
@@ -1759,12 +1899,17 @@ async function handleShowSettingsInteraction(interaction, settings) {
             { name: 'Users in Cooldown', value: `${Object.keys(settings.rejectedCooldowns).length} شخص`, inline: true },
             { 
                 name: 'Evaluation - Messages', 
-                value: `ضعيف: <${minMessages.weak} | جيد: ${minMessages.good}-${minMessages.excellent-1} | ممتاز: ${minMessages.excellent}+`, 
+                value: `ضعيف: <${minMessages.weak} | جيد: ${minMessages.good}-${minMessages.excellent-1} | ممتاز: ${minMessages.excellent}+ | ${minMessages.resetWeekly ? 'أسبوعي' : 'إجمالي'}`, 
                 inline: false 
             },
             { 
                 name: 'Evaluation - Voice Time', 
-                value: `ضعيف: ${Math.round(minVoiceTime.weak / (60 * 60 * 1000))} ساعة | جيد: ${Math.round(minVoiceTime.good / (60 * 60 * 1000))} ساعة | ممتاز: ${Math.round(minVoiceTime.excellent / (60 * 60 * 1000))} ساعة`, 
+                value: `ضعيف: ${Math.round(minVoiceTime.weak / (60 * 60 * 1000))} ساعة | جيد: ${Math.round(minVoiceTime.good / (60 * 60 * 1000))} ساعة | ممتاز: ${Math.round(minVoiceTime.excellent / (60 * 60 * 1000))} ساعة | ${minVoiceTime.resetWeekly ? 'أسبوعي' : 'إجمالي'}`, 
+                inline: false 
+            },
+            { 
+                name: 'Evaluation - Reactions', 
+                value: `ضعيف: <${minReactions.weak} | جيد: ${minReactions.good}-${minReactions.excellent-1} | ممتاز: ${minReactions.excellent}+ | ${minReactions.resetWeekly ? 'أسبوعي' : 'إجمالي'}`, 
                 inline: false 
             },
             { 
