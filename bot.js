@@ -543,20 +543,11 @@ client.once('ready', async () => {
         }
     }, 3000); // انتظار 3 ثواني لضمان تحميل البيانات
 
-    // تهيئة قاعدة البيانات أولاً
-    try {
-        const dbManager = require('./utils/database');
-        await dbManager.initialize();
-        console.log('✅ تم تهيئة قاعدة البيانات بنجاح');
-    } catch (error) {
-        console.error('❌ خطأ في تهيئة قاعدة البيانات:', error);
-    }
-
-    // تهيئة نظام تتبع النشاط للمستخدمين
+    // تهيئة نظام تتبع النشاط للمستخدمين (يتضمن تهيئة قاعدة البيانات)
     try {
         const { initializeActivityTracking } = require('./utils/userStatsCollector');
         initializeActivityTracking(client);
-        console.log('✅ تم تهيئة نظام تتبع النشاط بنجاح');
+        console.log('✅ تم تهيئة نظام تتبع النشاط وقاعدة البيانات بنجاح');
     } catch (error) {
         console.error('❌ خطأ في تهيئة نظام تتبع النشاط:', error);
     }
@@ -600,7 +591,7 @@ client.once('ready', async () => {
         const oldChannelName = oldState.channel?.name || 'لا يوجد';
         const newChannelName = newState.channel?.name || 'لا يوجد';
 
-        // تحميل نظام تتبع النشاط
+        // تحميل دالة تتبع النشاط
         const { trackUserActivity } = require('./utils/userStatsCollector');
 
         // التحقق من وجود جلسة نشطة
@@ -623,7 +614,7 @@ client.once('ready', async () => {
                 const sessionDuration = now - existingSession.startTime;
                 let timeResult = false;
                 if (sessionDuration > 0 && existingSession.startTime && existingSession.channelId) {
-                    timeResult = trackUserActivity(userId, 'voice_time', { 
+                    timeResult = trackUserActivity(userId, 'voice_time', {
                         duration: sessionDuration,
                         channelId: existingSession.channelId,
                         channelName: existingSession.channelName,
@@ -645,7 +636,7 @@ client.once('ready', async () => {
                 const sessionDuration = now - existingSession.startTime;
                 let timeResult = false;
                 if (sessionDuration > 0 && existingSession.startTime && existingSession.channelId) {
-                    timeResult = trackUserActivity(userId, 'voice_time', { 
+                    timeResult = trackUserActivity(userId, 'voice_time', {
                         duration: sessionDuration,
                         channelId: existingSession.channelId,
                         channelName: existingSession.channelName,
@@ -683,50 +674,13 @@ client.once('ready', async () => {
     });
 
 
-  // تتبع التفاعلات - معالج محسن
-    client.on('messageReactionAdd', async (reaction, user) => {
-        try {
-            // تجاهل البوتات
-            if (user.bot) return;
-
-            // التأكد من وجود الـ guild
-            if (!reaction.message.guild) return;
-
-            console.log(`👍 تفاعل جديد: ${user.username} (${user.id}) على رسالة في ${reaction.message.guild.name}`);
-
-            // تتبع النشاط
-            const success = await trackUserActivity(user.id, 'reaction', {
-                messageId: reaction.message.id,
-                channelId: reaction.message.channelId,
-                emoji: reaction.emoji.name || reaction.emoji.id,
-                timestamp: Date.now()
-            });
-
-            if (success) {
-                console.log(`✅ تم تسجيل تفاعل ${user.username} بنجاح`);
-            } else {
-                console.log(`❌ فشل في تسجيل تفاعل ${user.username}`);
-            }
-        } catch (error) {
-            console.error('خطأ في تتبع التفاعل:', error);
-        }
-    });
-
-    // تتبع إزالة التفاعلات أيضاً (اختياري)
-    client.on('messageReactionRemove', async (reaction, user) => {
-        try {
-            if (user.bot || !reaction.message.guild) return;
-
-            console.log(`👎 تم إزالة تفاعل: ${user.username} (${user.id})`);
-            // يمكن إضافة منطق لتتبع إزالة التفاعلات إذا أردت
-        } catch (error) {
-            console.error('خطأ في تتبع إزالة التفاعل:', error);
-        }
-    });
 
 
   // تنظيف البيانات من المعرفات غير الصحيحة
   cleanInvalidUserIds();
+
+  // تم نقل تتبع الرسائل للمعالج الرئيسي لتجنب التكرار
+
 
   // تهيئة نظام المهام النشطة الجديد - بعد تحميل الأوامر
   setTimeout(() => {
@@ -847,8 +801,103 @@ client.once('ready', async () => {
 
 }); // إغلاق client.once('ready')
 
+// تتبع التفاعلات - معالج واحد فقط محسن
+client.on('messageReactionAdd', async (reaction, user) => {
+  try {
+    // تجاهل البوتات
+    if (user.bot) {
+      return;
+    }
+
+    // التأكد من وجود الـ guild
+    if (!reaction.message.guild) {
+      return;
+    }
+
+    // التأكد من أن الرسالة مُحملة بالكامل
+    if (reaction.partial) {
+      try {
+        await reaction.fetch();
+        console.log(`🔄 تم جلب التفاعل الجزئي بنجاح: ${user.username}`);
+      } catch (error) {
+        console.error('❌ فشل في جلب التفاعل:', error);
+        return;
+      }
+    }
+
+    // التأكد من أن الرسالة محملة أيضاً
+    if (reaction.message.partial) {
+      try {
+        await reaction.message.fetch();
+        console.log(`📨 تم جلب الرسالة الجزئية بنجاح`);
+      } catch (error) {
+        console.error('❌ فشل في جلب الرسالة:', error);
+        return;
+      }
+    }
+
+    // تحميل دالة تتبع النشاط
+    const { trackUserActivity } = require('./utils/userStatsCollector');
+
+    // تتبع النشاط بدون رسائل كونسول مفرطة
+    try {
+      const success = await trackUserActivity(user.id, 'reaction', {
+        messageId: reaction.message.id,
+        channelId: reaction.message.channelId,
+        emoji: reaction.emoji.name || reaction.emoji.id || 'custom_emoji',
+        timestamp: Date.now(),
+        guildId: reaction.message.guild.id,
+        messageAuthorId: reaction.message.author?.id
+      });
+
+      if (!success) {
+        // محاولة إعادة التسجيل مرة واحدة في حالة الفشل
+        await trackUserActivity(user.id, 'reaction', {
+          messageId: reaction.message.id,
+          channelId: reaction.message.channelId,
+          emoji: reaction.emoji.name || reaction.emoji.id || 'retry_reaction',
+          timestamp: Date.now(),
+          guildId: reaction.message.guild.id,
+          messageAuthorId: reaction.message.author?.id
+        });
+      }
+    } catch (trackError) {
+      console.error(`❌ خطأ في تتبع التفاعل من ${user.username}:`, trackError);
+    }
+  } catch (error) {
+    console.error(`❌ خطأ عام في تتبع التفاعل من ${user?.username || 'مستخدم غير معروف'}:`, error);
+  }
+});
+
+// تتبع إزالة التفاعلات أيضاً (اختياري)
+client.on('messageReactionRemove', async (reaction, user) => {
+  try {
+    if (user.bot || !reaction.message.guild) return;
+
+    console.log(`👎 تم إزالة تفاعل: ${user.username} (${user.id})`);
+    // يمكن إضافة منطق لتتبع إزالة التفاعلات إذا أردت
+  } catch (error) {
+    console.error('خطأ في تتبع إزالة التفاعل:', error);
+  }
+});
+
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
+
+  // تتبع النشاط للمستخدمين العاديين (معالج واحد فقط)
+  if (message.guild) {
+    try {
+      const { trackUserActivity } = require('./utils/userStatsCollector');
+      await trackUserActivity(message.author.id, 'message', {
+        channelId: message.channel.id,
+        messageId: message.id,
+        timestamp: Date.now()
+      });
+      // تم إزالة رسالة الكونسول لتجنب الإزعاج
+    } catch (error) {
+      console.error('❌ خطأ في تتبع الرسالة:', error);
+    }
+  }
 
   // فحص البلوك قبل معالجة أي أمر
   const { isUserBlocked } = require('./commands/block.js');
@@ -1235,9 +1284,9 @@ async function handleDownDMInteraction(interaction, context) {
 
             const selectRow = new ActionRowBuilder().addComponents(roleSelect);
 
-            await interaction.reply({ 
-                content: `🔻 **اختر الرول المراد سحبه من ${selectedUser.displayName}:**`, 
-                components: [selectRow] 
+            await interaction.reply({
+                content: `🔻 **اختر الرول المراد سحبه من ${selectedUser.displayName}:**`,
+                components: [selectRow]
             });
             return;
         }
@@ -1470,7 +1519,7 @@ client.on('interactionCreate', async (interaction) => {
 
         try {
             // Handle points editing interactions
-            if (interaction.customId.startsWith('points_edit_') || 
+            if (interaction.customId.startsWith('points_edit_') ||
                 interaction.customId.startsWith('edit_points_') ||
                 interaction.customId === 'edit_points_start') {
 
@@ -1479,16 +1528,16 @@ client.on('interactionCreate', async (interaction) => {
                     await resetCommand.handleMainInteraction(interaction);
                 } else {
                     console.log('⚠️ لم يتم العثور على معالج تعديل النقاط في أمر reset');
-                    await interaction.reply({ 
-                        content: '❌ معالج تعديل النقاط غير متوفر حالياً', 
-                        ephemeral: true 
+                    await interaction.reply({
+                        content: '❌ معالج تعديل النقاط غير متوفر حالياً',
+                        ephemeral: true
                     });
                 }
                 return;
             }
 
             // Handle activity editing interactions
-            if (interaction.customId.startsWith('activity_edit_') || 
+            if (interaction.customId.startsWith('activity_edit_') ||
                 interaction.customId.startsWith('modify_activity_')) {
 
                 const statsCommand = client.commands.get('stats');
@@ -1501,9 +1550,9 @@ client.on('interactionCreate', async (interaction) => {
                     });
                 } else {
                     console.log('⚠️ لم يتم العثور على معالج تعديل النشاط');
-                    await interaction.reply({ 
-                        content: '❌ معالج تعديل النشاط غير متوفر حالياً', 
-                        ephemeral: true 
+                    await interaction.reply({
+                        content: '❌ معالج تعديل النشاط غير متوفر حالياً',
+                        ephemeral: true
                     });
                 }
                 return;
@@ -1517,9 +1566,9 @@ client.on('interactionCreate', async (interaction) => {
                     await setadminCommand.handleInteraction(interaction);
                 } else {
                     console.log('⚠️ لم يتم العثور على معالج تعديل التقييم');
-                    await interaction.reply({ 
-                        content: '❌ معالج تعديل التقييم غير متوفر حالياً', 
-                        ephemeral: true 
+                    await interaction.reply({
+                        content: '❌ معالج تعديل التقييم غير متوفر حالياً',
+                        ephemeral: true
                     });
                 }
                 return;
@@ -1532,9 +1581,9 @@ client.on('interactionCreate', async (interaction) => {
                     await resetCommand.handleMainInteraction(interaction);
                 } else {
                     console.log('⚠️ لم يتم العثور على معالج اختيار المسؤولية للتعديل');
-                    await interaction.reply({ 
-                        content: '❌ معالج اختيار المسؤولية للتعديل غير متوفر حالياً', 
-                        ephemeral: true 
+                    await interaction.reply({
+                        content: '❌ معالج اختيار المسؤولية للتعديل غير متوفر حالياً',
+                        ephemeral: true
                     });
                 }
                 return;
@@ -1542,17 +1591,17 @@ client.on('interactionCreate', async (interaction) => {
 
             // Fallback for any unhandled edit interactions
             console.log(`⚠️ تفاعل تعديل غير مُعرَّف: ${interaction.customId}`);
-            await interaction.reply({ 
-                content: '❌ هذه الميزة قيد التطوير - يرجى المحاولة لاحقاً', 
-                ephemeral: true 
+            await interaction.reply({
+                content: '❌ هذه الميزة قيد التطوير - يرجى المحاولة لاحقاً',
+                ephemeral: true
             });
 
         } catch (error) {
             console.error('خطأ في معالجة تفاعلات تعديل النقاط/النشاط:', error);
             if (!interaction.replied && !interaction.deferred) {
-                await interaction.reply({ 
-                    content: '❌ حدث خطأ أثناء معالجة طلب التعديل', 
-                    ephemeral: true 
+                await interaction.reply({
+                    content: '❌ حدث خطأ أثناء معالجة طلب التعديل',
+                    ephemeral: true
                 });
             }
         }
@@ -1585,9 +1634,9 @@ client.on('interactionCreate', async (interaction) => {
             console.error('خطأ في معالجة تفاعل setadmin:', error);
             try {
                 if (!interaction.replied && !interaction.deferred) {
-                    await interaction.reply({ 
-                        content: 'حدث خطأ في معالجة إعدادات التقديم الإداري.', 
-                        ephemeral: true 
+                    await interaction.reply({
+                        content: 'حدث خطأ في معالجة إعدادات التقديم الإداري.',
+                        ephemeral: true
                     });
                 }
             } catch (replyError) {
@@ -1599,7 +1648,7 @@ client.on('interactionCreate', async (interaction) => {
 
     // --- Admin Application System Interaction Router ---
     if (interaction.customId && (
-        interaction.customId.startsWith('admin_approve_') || 
+        interaction.customId.startsWith('admin_approve_') ||
         interaction.customId.startsWith('admin_reject_') ||
         interaction.customId.startsWith('admin_select_roles_') ||
         interaction.customId.startsWith('admin_details_')
@@ -1615,9 +1664,9 @@ client.on('interactionCreate', async (interaction) => {
             console.error('خطأ في معالجة التقديم الإداري:', error);
             try {
                 if (!interaction.replied && !interaction.deferred) {
-                    await interaction.reply({ 
-                        content: '❌ حدث خطأ في معالجة طلب التقديم الإداري.', 
-                        ephemeral: true 
+                    await interaction.reply({
+                        content: '❌ حدث خطأ في معالجة طلب التقديم الإداري.',
+                        ephemeral: true
                     });
                 }
             } catch (replyError) {
@@ -1632,9 +1681,9 @@ client.on('interactionCreate', async (interaction) => {
         const vacationContext = { client, BOT_OWNERS };
 
         // Route to set-vacation command - تحسين معالجة التفاعلات
-        if (interaction.customId.includes('_set_') || 
-            interaction.customId.includes('_choice_') || 
-            interaction.customId.includes('_select') || 
+        if (interaction.customId.includes('_set_') ||
+            interaction.customId.includes('_choice_') ||
+            interaction.customId.includes('_select') ||
             interaction.customId.includes('_back_') ||
             interaction.customId === 'vac_set_approver' ||
             interaction.customId === 'vac_set_notification' ||
@@ -1660,7 +1709,7 @@ client.on('interactionCreate', async (interaction) => {
         }
 
         // Route to my-vacation (ajazati) command for all vacation ending interactions
-        if (interaction.customId.startsWith('vac_end_request_') || 
+        if (interaction.customId.startsWith('vac_end_request_') ||
             interaction.customId.startsWith('vac_end_confirm_') ||
             interaction.customId === 'vac_end_cancel') {
             const myVacationCommand = client.commands.get('اجازتي');
@@ -1702,9 +1751,9 @@ client.on('interactionCreate', async (interaction) => {
             if (action === 'approve') {
                 // الموافقة على إنهاء الإجازة
                 const result = await require('./utils/vacationManager').endVacation(
-                    interaction.guild, 
+                    interaction.guild,
                     client,
-                    userId, 
+                    userId,
                     'تم إنهاء الإجازة مبكراً بناءً على طلب المستخدم'
                 );
 
@@ -1724,12 +1773,12 @@ client.on('interactionCreate', async (interaction) => {
                             .setDescription('تم الموافقة على طلبك لإنهاء الإجازة مبكراً')
                             .addFields(
                                 { name: 'موافق من قبل', value: `<@${interaction.user.id}>`, inline: true },
-                                { name: 'وقت الموافقة', value: new Date().toLocaleString('en-US', { 
+                                { name: 'وقت الموافقة', value: new Date().toLocaleString('en-US', {
                                     timeZone: 'Asia/Riyadh',
-                                    year: 'numeric', 
-                                    month: '2-digit', 
-                                    day: '2-digit', 
-                                    hour: '2-digit', 
+                                    year: 'numeric',
+                                    month: '2-digit',
+                                    day: '2-digit',
+                                    hour: '2-digit',
                                     minute: '2-digit'
                                 }), inline: true }
                             )
@@ -2727,7 +2776,7 @@ client.on('interactionCreate', async (interaction) => {
     // قائمة الأخطاء المتجاهلة الموسعة
     const ignoredErrorCodes = [
       10008, // Unknown Message
-      40060, // Interaction has already been acknowledged  
+      40060, // Interaction has already been acknowledged
       10062, // Unknown interaction
       10003, // Unknown channel
       50013, // Missing permissions
@@ -2861,7 +2910,7 @@ async function safeReply(interaction, content, options = {}) {
 
     // محاولة الرد مع timeout
     const replyPromise = interaction.reply(replyOptions);
-    const timeoutPromise = new Promise((_, reject) => 
+    const timeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error('Reply timeout')), 5000)
     );
 
