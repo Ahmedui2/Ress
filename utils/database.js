@@ -198,29 +198,62 @@ class DatabaseManager {
         try {
             const { messages = 0, voiceTime = 0, voiceJoins = 0, reactions = 0 } = updates;
 
-            await this.db.run(`
-                INSERT OR REPLACE INTO user_totals (
-                    user_id, total_messages, total_voice_time, total_voice_joins, total_reactions, last_activity
-                ) VALUES (
-                    ?, 
-                    COALESCE((SELECT total_messages FROM user_totals WHERE user_id = ?), 0) + ?,
-                    COALESCE((SELECT total_voice_time FROM user_totals WHERE user_id = ?), 0) + ?,
-                    COALESCE((SELECT total_voice_joins FROM user_totals WHERE user_id = ?), 0) + ?,
-                    COALESCE((SELECT total_reactions FROM user_totals WHERE user_id = ?), 0) + ?,
-                    datetime('now')
-                )
-            `, [userId, userId, messages, userId, voiceTime, userId, voiceJoins, userId, reactions]);
-
-            console.log(`📊 تم تحديث إجماليات المستخدم ${userId}: +${messages} رسائل, +${voiceTime}ms صوت, +${voiceJoins} انضمامات, +${reactions} تفاعلات`);
-
-            // عرض الإجماليات الحالية للتأكد
-            const currentStats = await this.db.get(`
-                SELECT total_messages, total_voice_time, total_voice_joins, total_reactions 
-                FROM user_totals WHERE user_id = ?
+            // التأكد من وجود السجل أولاً
+            await this.run(`
+                INSERT OR IGNORE INTO user_totals (user_id, total_messages, total_voice_time, total_voice_joins, total_reactions)
+                VALUES (?, 0, 0, 0, 0)
             `, [userId]);
 
-            if (currentStats && reactions > 0) {
-                console.log(`✅ الإجماليات الحالية للمستخدم ${userId}: رسائل=${currentStats.total_messages}, تفاعلات=${currentStats.total_reactions}`);
+            // تحديث القيم
+            if (messages > 0) {
+                await this.run(`UPDATE user_totals SET total_messages = total_messages + ?, last_activity = datetime('now') WHERE user_id = ?`, [messages, userId]);
+            }
+            if (voiceTime > 0) {
+                await this.run(`UPDATE user_totals SET total_voice_time = total_voice_time + ?, last_activity = datetime('now') WHERE user_id = ?`, [voiceTime, userId]);
+            }
+            if (voiceJoins > 0) {
+                await this.run(`UPDATE user_totals SET total_voice_joins = total_voice_joins + ?, last_activity = datetime('now') WHERE user_id = ?`, [voiceJoins, userId]);
+            }
+            if (reactions > 0) {
+                // فحص حالة السجل قبل التحديث
+                const beforeUpdate = await this.get(`SELECT total_reactions FROM user_totals WHERE user_id = ?`, [userId]);
+                console.log(`📊 عدد التفاعلات قبل التحديث للمستخدم ${userId}: ${beforeUpdate ? beforeUpdate.total_reactions : 'سجل غير موجود'}`);
+                
+                // تحديث التفاعلات مع التحقق من النجاح
+                const updateResult = await this.run(`UPDATE user_totals SET total_reactions = total_reactions + ?, last_activity = datetime('now') WHERE user_id = ?`, [reactions, userId]);
+                
+                console.log(`🔄 نتيجة تحديث التفاعلات للمستخدم ${userId}: تغييرات=${updateResult.changes}, معرف_آخر=${updateResult.id}`);
+                
+                if (updateResult.changes === 0) {
+                    console.error(`⚠️ لم يتم تحديث أي سجل للمستخدم ${userId} - قد يكون السجل غير موجود`);
+                    
+                    // محاولة إنشاء السجل إذا لم يكن موجوداً
+                    try {
+                        await this.run(`
+                            INSERT INTO user_totals (user_id, total_reactions, total_messages, total_voice_time, total_voice_joins, first_seen, last_activity)
+                            VALUES (?, ?, 0, 0, 0, strftime('%s', 'now'), datetime('now'))
+                        `, [userId, reactions]);
+                        console.log(`✅ تم إنشاء سجل جديد للمستخدم ${userId} مع ${reactions} تفاعل`);
+                    } catch (insertError) {
+                        console.error(`❌ فشل في إنشاء سجل جديد للمستخدم ${userId}:`, insertError);
+                    }
+                } else {
+                    // التحقق من التحديث بجلب البيانات الحالية
+                    const currentStats = await this.get(`
+                        SELECT total_messages, total_voice_time, total_voice_joins, total_reactions 
+                        FROM user_totals WHERE user_id = ?
+                    `, [userId]);
+
+                    if (currentStats) {
+                        console.log(`✅ تم تحديث التفاعلات للمستخدم ${userId}: الإجمالي الآن=${currentStats.total_reactions}, تغييرات=${updateResult.changes}`);
+                    } else {
+                        console.error(`❌ فشل في جلب البيانات المحدثة للمستخدم ${userId}`);
+                    }
+                }
+            }
+
+            if (messages > 0 || voiceTime > 0 || voiceJoins > 0) {
+                console.log(`📊 تم تحديث إجماليات المستخدم ${userId}: +${messages} رسائل, +${Math.round(voiceTime/1000)}s صوت, +${voiceJoins} انضمامات, +${reactions} تفاعلات`);
             }
         } catch (error) {
             console.error('خطأ في تحديث إجماليات المستخدم:', error);
@@ -265,26 +298,33 @@ class DatabaseManager {
     }
 
     // تحديث النشاط اليومي
-    async updateDailyActivity(date, userId, updates) {
+    async updateDailyActivity(date, userId, activity) {
         try {
+            const { messages = 0, voiceTime = 0, voiceJoins = 0, reactions = 0 } = activity;
+
+            // التأكد من وجود السجل أولاً
             await this.run(`
-                INSERT INTO daily_activity (date, user_id, voice_time, messages, reactions, voice_joins)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(date, user_id) DO UPDATE SET
-                    voice_time = voice_time + excluded.voice_time,
-                    messages = messages + excluded.messages,
-                    reactions = reactions + excluded.reactions,
-                    voice_joins = voice_joins + excluded.voice_joins
-            `, [
-                date, 
-                userId, 
-                updates.voiceTime || 0,
-                updates.messages || 0,
-                updates.reactions || 0,
-                updates.voiceJoins || 0
-            ]);
+                INSERT OR IGNORE INTO daily_activity (date, user_id, messages, voice_time, voice_joins, reactions)
+                VALUES (?, ?, 0, 0, 0, 0)
+            `, [date, userId]);
+
+            // تحديث القيم
+            if (messages > 0) {
+                await this.run(`UPDATE daily_activity SET messages = messages + ? WHERE date = ? AND user_id = ?`, [messages, date, userId]);
+            }
+            if (voiceTime > 0) {
+                await this.run(`UPDATE daily_activity SET voice_time = voice_time + ? WHERE date = ? AND user_id = ?`, [voiceTime, date, userId]);
+            }
+            if (voiceJoins > 0) {
+                await this.run(`UPDATE daily_activity SET voice_joins = voice_joins + ? WHERE date = ? AND user_id = ?`, [voiceJoins, date, userId]);
+            }
+            if (reactions > 0) {
+                await this.run(`UPDATE daily_activity SET reactions = reactions + ? WHERE date = ? AND user_id = ?`, [reactions, date, userId]);
+                console.log(`📅 تم تحديث ${reactions} تفاعل يومي للمستخدم ${userId} - التاريخ: ${date}`);
+            }
         } catch (error) {
-            console.error('❌ خطأ في تحديث النشاط اليومي:', error);
+            console.error('خطأ في تحديث النشاط اليومي:', error);
+            throw error;
         }
     }
 
@@ -360,7 +400,7 @@ class DatabaseManager {
                 voiceTime: user.total_voice_time,
                 messages: user.total_messages,
                 activeDays: activeDays,
-                weeklyActiveDays: weeklyActiveDays
+                weeklyActiveDays: weeklyActiveDays,
                 reactions: user.total_reactions,
                 voiceJoins: user.total_voice_joins
             });
@@ -381,13 +421,15 @@ class DatabaseManager {
         }
     }
 
-    // جلب النشاط الأسبوعي
+    // جلب النشاط الأسبوعي مع الرسائل والتفاعلات
     async getWeeklyStats(userId) {
         try {
             const weekStart = new Date();
             weekStart.setDate(weekStart.getDate() - weekStart.getDay());
             weekStart.setHours(0, 0, 0, 0);
+            const weekStartString = weekStart.toDateString();
 
+            // جلب جلسات الفويس الأسبوعية
             const sessions = await this.all(`
                 SELECT * FROM voice_sessions 
                 WHERE user_id = ? AND start_time >= ?
@@ -412,15 +454,80 @@ class DatabaseManager {
                 weeklyChannels[session.channel_id].sessionsCount += 1;
             });
 
+            // جلب النشاط اليومي الأسبوعي (رسائل وتفاعلات)
+            const dailyActivity = await this.all(`
+                SELECT SUM(messages) as weeklyMessages, 
+                       SUM(reactions) as weeklyReactions,
+                       SUM(voice_joins) as weeklyVoiceJoins
+                FROM daily_activity 
+                WHERE user_id = ? AND date >= ?
+            `, [userId, weekStartString]);
+
+            const weeklyMessages = dailyActivity[0]?.weeklyMessages || 0;
+            const weeklyReactions = dailyActivity[0]?.weeklyReactions || 0;
+            const weeklyVoiceJoins = dailyActivity[0]?.weeklyVoiceJoins || 0;
+
             return {
                 weeklyTime,
                 weeklySessions: sessions.length,
-                weeklyChannels
+                weeklyChannels,
+                weeklyMessages,
+                weeklyReactions,
+                weeklyVoiceJoins
             };
 
         } catch (error) {
             console.error('❌ خطأ في جلب الإحصائيات الأسبوعية:', error);
-            return { weeklyTime: 0, weeklySessions: 0, weeklyChannels: {} };
+            return { 
+                weeklyTime: 0, 
+                weeklySessions: 0, 
+                weeklyChannels: {},
+                weeklyMessages: 0,
+                weeklyReactions: 0,
+                weeklyVoiceJoins: 0
+            };
+        }
+    }
+
+    // جلب الرسائل الأسبوعية فقط
+    async getWeeklyMessages(userId) {
+        try {
+            const weekStart = new Date();
+            weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+            weekStart.setHours(0, 0, 0, 0);
+            const weekStartString = weekStart.toDateString();
+
+            const result = await this.get(`
+                SELECT SUM(messages) as weeklyMessages
+                FROM daily_activity 
+                WHERE user_id = ? AND date >= ?
+            `, [userId, weekStartString]);
+
+            return result?.weeklyMessages || 0;
+        } catch (error) {
+            console.error('❌ خطأ في جلب الرسائل الأسبوعية:', error);
+            return 0;
+        }
+    }
+
+    // جلب التفاعلات الأسبوعية فقط
+    async getWeeklyReactions(userId) {
+        try {
+            const weekStart = new Date();
+            weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+            weekStart.setHours(0, 0, 0, 0);
+            const weekStartString = weekStart.toDateString();
+
+            const result = await this.get(`
+                SELECT SUM(reactions) as weeklyReactions
+                FROM daily_activity 
+                WHERE user_id = ? AND date >= ?
+            `, [userId, weekStartString]);
+
+            return result?.weeklyReactions || 0;
+        } catch (error) {
+            console.error('❌ خطأ في جلب التفاعلات الأسبوعية:', error);
+            return 0;
         }
     }
 

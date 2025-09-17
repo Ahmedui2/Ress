@@ -88,7 +88,7 @@ async function trackUserActivity(userId, activityType, data = {}) {
             case 'message':
                 await dbManager.updateUserTotals(userId, { messages: 1 });
                 await dbManager.updateDailyActivity(today, userId, { messages: 1 });
-                console.log(`📝 تم تسجيل رسالة للمستخدم ${userId}`);
+                // تتبع الرسائل بصمت لتجنب إزعاج الكونسول
                 break;
 
             case 'voice_join':
@@ -117,16 +117,34 @@ async function trackUserActivity(userId, activityType, data = {}) {
                 break;
 
             case 'reaction':
-                await dbManager.updateUserTotals(userId, { reactions: 1 });
-                await dbManager.updateDailyActivity(today, userId, { reactions: 1 });
+                try {
+                    // التأكد من وجود السجل أولاً
+                    await dbManager.run(`
+                        INSERT OR IGNORE INTO user_totals (user_id, total_reactions, total_messages, total_voice_time, total_voice_joins)
+                        VALUES (?, 0, 0, 0, 0)
+                    `, [userId]);
+                    
+                    // تحديث إجماليات المستخدم
+                    await dbManager.updateUserTotals(userId, { reactions: 1 });
+                    
+                    // تحديث النشاط اليومي
+                    await dbManager.updateDailyActivity(today, userId, { reactions: 1 });
+                    
+                    // تحديث آخر نشاط
+                    await dbManager.run('UPDATE user_totals SET last_activity = datetime("now") WHERE user_id = ?', [userId]);
+                    
+                    // رسالة واحدة بدلاً من عدة رسائل
+                    console.log(`👍 تم تسجيل تفاعل للمستخدم ${userId} - ${data.emoji || 'تفاعل'}`);
+                    
+                } catch (reactionError) {
+                    console.error(`❌ خطأ في معالجة تفاعل المستخدم ${userId}:`, reactionError);
+                    throw reactionError;
+                }
                 
-                // تسجيل تفاصيل إضافية للتفاعل
-                const reactionDetails = data || {};
-                console.log(`👍 تم تسجيل تفاعل للمستخدم ${userId} - الإيموجي: ${reactionDetails.emoji || 'غير محدد'}`);
                 break;
         }
 
-        console.log(`✅ تم حفظ نشاط المستخدم ${userId} بنجاح - النوع: ${activityType}`);
+        // تم تبسيط رسائل الكونسول
         return true;
 
     } catch (error) {
@@ -308,6 +326,10 @@ async function collectUserStats(member) {
             statusDetails = `داون على دور: ${role ? role.name : 'دور محذوف'}`;
         }
 
+        // جلب البيانات الأسبوعية
+        const dbManager = require('./database');
+        const weeklyStats = await dbManager.getWeeklyStats(userId);
+
         return {
             // معلومات أساسية
             userId: userId,
@@ -322,6 +344,13 @@ async function collectUserStats(member) {
             joinedChannels: realStats.joinedChannels || 0,
             reactionsGiven: realStats.reactionsGiven || 0,
             activeDays: realStats.activeDays || 0,
+
+            // البيانات الأسبوعية
+            weeklyMessages: weeklyStats.weeklyMessages || 0,
+            weeklyVoiceTime: weeklyStats.weeklyTime || 0,
+            formattedWeeklyVoiceTime: formatDuration(weeklyStats.weeklyTime || 0),
+            weeklyReactions: weeklyStats.weeklyReactions || 0,
+            weeklyVoiceJoins: weeklyStats.weeklyVoiceJoins || 0,
 
             // تواريخ مهمة مع تنسيق محسن
             joinedServer: joinedAt,
@@ -390,14 +419,20 @@ async function checkIfHasAdminRoles(member) {
 }
 
 // دالة تحديد نوع التقييم مع دعم الإعدادات المخصصة والتفاعل الصوتي
-function getEvaluationType(messageCount, voiceTime, activeDays, daysInServer) {
+function getEvaluationType(totalMessages, weeklyMessages, totalVoiceTime, weeklyVoiceTime, totalReactions, weeklyReactions, activeDays, daysInServer) {
     // تحميل الإعدادات المخصصة
     const customSettings = loadEvaluationSettings();
+
+    // اختيار القيم المناسبة بناءً على إعدادات resetWeekly
+    const messageCount = customSettings.minMessages.resetWeekly ? weeklyMessages : totalMessages;
+    const voiceTime = customSettings.minVoiceTime.resetWeekly ? weeklyVoiceTime : totalVoiceTime;
+    const reactionCount = customSettings.minReactions.resetWeekly ? weeklyReactions : totalReactions;
 
     // معايير التقييم من الإعدادات أو القيم الافتراضية
     const EXCELLENT_THRESHOLD = {
         messages: customSettings.minMessages.excellent,
         voiceTime: customSettings.minVoiceTime.excellent,
+        reactions: customSettings.minReactions.excellent,
         activeDays: Math.ceil(customSettings.activeDaysPerWeek.minimum * 2), // ضعف الحد الأدنى للنشاط الأسبوعي
         daysInServer: customSettings.timeInServerDays.excellent
     };
@@ -405,23 +440,27 @@ function getEvaluationType(messageCount, voiceTime, activeDays, daysInServer) {
     const GOOD_THRESHOLD = {
         messages: customSettings.minMessages.good,
         voiceTime: customSettings.minVoiceTime.good,
+        reactions: customSettings.minReactions.good,
         activeDays: customSettings.activeDaysPerWeek.minimum,
         daysInServer: customSettings.timeInServerDays.minimum
     };
 
     const WEAK_THRESHOLD = {
         messages: customSettings.minMessages.weak,
-        voiceTime: customSettings.minVoiceTime.weak
+        voiceTime: customSettings.minVoiceTime.weak,
+        reactions: customSettings.minReactions.weak
     };
 
     // حساب التقييم بناءً على المعايير المخصصة (يجب تحقيق جميع الشروط)
     if (messageCount >= EXCELLENT_THRESHOLD.messages &&
         voiceTime >= EXCELLENT_THRESHOLD.voiceTime &&
+        reactionCount >= EXCELLENT_THRESHOLD.reactions &&
         activeDays >= EXCELLENT_THRESHOLD.activeDays &&
         daysInServer >= EXCELLENT_THRESHOLD.daysInServer) {
         return { type: 'ممتاز', emoji: '🌟', color: '#00ff00' };
     } else if (messageCount >= GOOD_THRESHOLD.messages &&
                voiceTime >= GOOD_THRESHOLD.voiceTime &&
+               reactionCount >= GOOD_THRESHOLD.reactions &&
                activeDays >= GOOD_THRESHOLD.activeDays &&
                daysInServer >= GOOD_THRESHOLD.daysInServer) {
         return { type: 'جيد', emoji: '✅', color: '#ffaa00' };
@@ -440,12 +479,14 @@ function loadEvaluationSettings() {
 
             if (evaluation) {
                 return {
-                    minMessages: evaluation.minMessages || { weak: 20, good: 50, excellent: 100 },
+                    minMessages: evaluation.minMessages || { weak: 20, good: 50, excellent: 100, resetWeekly: false },
                     minVoiceTime: evaluation.minVoiceTime || {
                         weak: 2 * 60 * 60 * 1000,
                         good: 5 * 60 * 60 * 1000,
-                        excellent: 10 * 60 * 60 * 1000
+                        excellent: 10 * 60 * 60 * 1000,
+                        resetWeekly: false
                     },
+                    minReactions: evaluation.minReactions || { weak: 10, good: 25, excellent: 50, resetWeekly: false },
                     activeDaysPerWeek: evaluation.activeDaysPerWeek || { minimum: 3, resetWeekly: true },
                     timeInServerDays: evaluation.timeInServerDays || { minimum: 7, excellent: 30 }
                 };
@@ -457,12 +498,14 @@ function loadEvaluationSettings() {
 
     // القيم الافتراضية
     return {
-        minMessages: { weak: 20, good: 50, excellent: 100 },
+        minMessages: { weak: 20, good: 50, excellent: 100, resetWeekly: false },
         minVoiceTime: {
             weak: 2 * 60 * 60 * 1000,
             good: 5 * 60 * 60 * 1000,
-            excellent: 10 * 60 * 60 * 1000
+            excellent: 10 * 60 * 60 * 1000,
+            resetWeekly: false
         },
+        minReactions: { weak: 10, good: 25, excellent: 50, resetWeekly: false },
         activeDaysPerWeek: { minimum: 3, resetWeekly: true },
         timeInServerDays: { minimum: 7, excellent: 30 }
     };
@@ -554,22 +597,67 @@ function getCustomDownStatus(userId) {
 }
 
 // دالة لإنشاء embed المعلومات المحسن
-function createUserStatsEmbed(stats, colorManager) {
+async function createUserStatsEmbed(stats, colorManager, isSimpleView = false, requesterName = null) {
     const { EmbedBuilder } = require('discord.js');
 
     // تحميل إعدادات التقييم
     const evaluationSettings = loadEvaluationSettings();
+    
+    // تحديد النصوص والقيم بناءً على الإعدادات
+    const messagesLabel = evaluationSettings.minMessages.resetWeekly ? "الرسائل (أسبوعي)" : "الرسائل (الإجمالي)";
+    const voiceLabel = evaluationSettings.minVoiceTime.resetWeekly ? "الفويس (أسبوعي)" : "الفويس (الإجمالي)";
+    const reactionsLabel = evaluationSettings.minReactions.resetWeekly ? "التفاعلات (أسبوعي)" : "التفاعلات (الإجمالي)";
+    
+    const messageValue = evaluationSettings.minMessages.resetWeekly ? (stats.weeklyMessages || 0) : (stats.realMessages || 0);
+    const voiceValue = evaluationSettings.minVoiceTime.resetWeekly ? (stats.formattedWeeklyVoiceTime || 'لا يوجد') : (stats.formattedVoiceTime || 'لا يوجد');
+    const reactionValue = evaluationSettings.minReactions.resetWeekly ? (stats.weeklyReactions || 0) : (stats.reactionsGiven || 0);
+
+    if (isSimpleView) {
+        // العرض المبسط للتقديم الإداري
+        const embed = colorManager.createEmbed()
+            .setTitle(`🌟 **طلب تقديم إداري** 🌟`)
+            .setThumbnail(stats.avatar)
+            .addFields([
+                {
+                    name: '🔸 **معلومات المرشح**',
+                    value: `\n 🔸 **الاسم:** ${stats.displayName}\n🔸 **الاي دي :** \`${stats.userId}\`\n 🔸 **حالة الحساب:** ${stats.accountStatus}\n`,
+                    inline: false
+                },
+                {
+                    name: ' **النشاط الأساسي**',
+                    value: `🔸 **${messagesLabel}:** \`${messageValue.toLocaleString()}\`\n🔸 **${voiceLabel}:** ${voiceValue}\n🔸 ** انضمام فويس :** \`${stats.joinedChannels || 0}\`\n🔸 **${reactionsLabel}:** \`${reactionValue.toLocaleString()}\``,
+                    inline: true
+                },
+                {
+                    name: ' **الأدوار**',
+                    value: `🔸 ** عدد الأدوار :** \`${stats.roleCount || 0}\`\n🔸 ** إداري حالياً :** ${stats.hasAdminRoles ? '✅ **نعم**' : '❌ **لا**'}`,
+                    inline: true
+                }
+            ]);
+
+        if (requesterName) {
+            embed.addFields([
+                {
+                    name: '🎯 **مُرشح بواسطة**',
+                    value: `🔸 **${requesterName}**`,
+                    inline: true
+                }
+            ]);
+        }
+
+        return embed;
+    }
+
+    // العرض الكامل والمفصل
     const weeklyActivity = await calculateWeeklyActivity(stats, evaluationSettings);
     const timeInServerDays = Math.floor(stats.timeInServerMs / (24 * 60 * 60 * 1000));
 
-    // حساب الوقت الصوتي لهذا الأسبوع
-    const weeklyVoiceTime = calculateWeeklyVoiceTime(stats.userId);
-
     // تحديد مستوى الرسائل
+    const messagesUsed = evaluationSettings.minMessages.resetWeekly ? (stats.weeklyMessages || 0) : stats.realMessages;
     let messageLevel = 'ضعيف';
-    if (stats.realMessages >= evaluationSettings.minMessages.excellent) {
+    if (messagesUsed >= evaluationSettings.minMessages.excellent) {
         messageLevel = 'ممتاز';
-    } else if (stats.realMessages >= evaluationSettings.minMessages.good) {
+    } else if (messagesUsed >= evaluationSettings.minMessages.good) {
         messageLevel = 'جيد';
     }
 
@@ -591,22 +679,23 @@ function createUserStatsEmbed(stats, colorManager) {
     }
 
     // تحديد مستوى التفاعل الصوتي
+    const voiceTimeUsed = evaluationSettings.minVoiceTime.resetWeekly ? (stats.weeklyVoiceTime || 0) : stats.realVoiceTime;
     let voiceLevel = 'ضعيف';
-    if (stats.realVoiceTime >= evaluationSettings.minVoiceTime.excellent) {
+    if (voiceTimeUsed >= evaluationSettings.minVoiceTime.excellent) {
         voiceLevel = 'ممتاز';
-    } else if (stats.realVoiceTime >= evaluationSettings.minVoiceTime.good) {
+    } else if (voiceTimeUsed >= evaluationSettings.minVoiceTime.good) {
         voiceLevel = 'جيد';
     }
 
     // تحديد التقييم العام
     let evaluation = '';
-    if (stats.realMessages >= evaluationSettings.minMessages.excellent &&
-        stats.realVoiceTime >= evaluationSettings.minVoiceTime.excellent &&
+    if (messagesUsed >= evaluationSettings.minMessages.excellent &&
+        voiceTimeUsed >= evaluationSettings.minVoiceTime.excellent &&
         isActiveWeekly &&
         timeInServerDays >= evaluationSettings.timeInServerDays.excellent) {
         evaluation = '🟢 **مرشح ممتاز** - يحقق جميع المعايير المطلوبة';
-    } else if (stats.realMessages >= evaluationSettings.minMessages.good &&
-               stats.realVoiceTime >= evaluationSettings.minVoiceTime.good &&
+    } else if (messagesUsed >= evaluationSettings.minMessages.good &&
+               voiceTimeUsed >= evaluationSettings.minVoiceTime.good &&
                isActiveWeekly &&
                timeInServerDays >= evaluationSettings.timeInServerDays.minimum) {
         evaluation = '🟡 **مرشح جيد** - يحقق المعايير الأساسية';
@@ -626,7 +715,7 @@ function createUserStatsEmbed(stats, colorManager) {
             },
             {
                 name: ' **Actives**',
-                value: `🔸 ** الرسائل :** \`${(stats.realMessages || 0).toLocaleString()}\`\n🔸 ** الفويس (الإجمالي):** ${stats.formattedVoiceTime || 'لا يوجد'}\n🔸 ** انضمام فويس :** \`${stats.joinedChannels || 0}\`\n🔸 ** التفاعلات :** \`${stats.reactionsGiven || 0}\``,
+                value: `🔸 **${messagesLabel}:** \`${messageValue.toLocaleString()}\`\n🔸 **${voiceLabel}:** ${voiceValue}\n🔸 ** انضمام فويس :** \`${stats.joinedChannels || 0}\`\n🔸 **${reactionsLabel}:** \`${reactionValue.toLocaleString()}\``,
                 inline: true
             },
             {
@@ -660,7 +749,7 @@ function createUserStatsEmbed(stats, colorManager) {
     embed.addFields([
         {
             name: 'Rate',
-            value: `**الرسائل:** ${messageLevel} (${(stats.realMessages || 0).toLocaleString()})\n**التفاعل الصوتي:** ${voiceLevel} (${stats.formattedVoiceTime || 'لا يوجد'})\n**النشاط:** ${isActiveWeekly ? '✅' : '❌'} ${activityStatus}\n**الخبرة:** ${timeLevel} (${timeInServerDays} يوم)`,
+            value: `**${messagesLabel}:** ${messageLevel} (${messageValue.toLocaleString()})\n**${voiceLabel}:** ${voiceLevel} (${voiceValue})\n**النشاط:** ${isActiveWeekly ? '✅' : '❌'} ${activityStatus}\n**الخبرة:** ${timeLevel} (${timeInServerDays} يوم)`,
             inline: true
         },
         {
@@ -677,24 +766,11 @@ function createUserStatsEmbed(stats, colorManager) {
 function initializeActivityTracking(client) {
     console.log('🔄 تهيئة نظام تتبع النشاط...');
 
-    // تتبع الرسائل
-    client.on('messageCreate', (message) => {
-        if (!message.author.bot && message.guild) {
-            trackUserActivity(message.author.id, 'message');
-        }
-    });
+    // ملاحظة: تتبع الرسائل يتم في bot.js المعالج الرئيسي لتجنب التكرار
+    // ملاحظة: تتبع التفاعلات يتم في bot.js المعالج الرئيسي لتجنب التكرار
+    // ملاحظة: تتبع الصوت يتم في bot.js للتحكم المحسن والمنطق المتقدم
 
-    // تتبع التفاعلات
-    client.on('messageReactionAdd', (reaction, user) => {
-        if (!user.bot && reaction.message.guild) {
-            trackUserActivity(user.id, 'reaction');
-        }
-    });
-
-    // ملاحظة: تتبع الصوت تم نقله إلى bot.js للتحكم المحسن والمنطق المتقدم
-    // تم حذف listener المكرر لتجنب التداخل
-
-    console.log('✅ تم تهيئة نظام تتبع النشاط بنجاح');
+    console.log('✅ تم تهيئة نظام تتبع النشاط بنجاح (بدون معالجات مكررة)');
 }
 
 module.exports = {

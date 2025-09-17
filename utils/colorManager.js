@@ -1,4 +1,3 @@
-
 const { EmbedBuilder } = require('discord.js');
 
 class ColorManager {
@@ -59,10 +58,11 @@ class ColorManager {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
 
-            const imageBuffer = await response.buffer();
+            const arrayBuffer = await response.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
 
             // استخراج اللون السائد باستخدام sharp
-            const { data, info } = await sharp(imageBuffer)
+            const { data, info } = await sharp(buffer)
                 .resize(1, 1)
                 .raw()
                 .toBuffer({ resolveWithObject: true });
