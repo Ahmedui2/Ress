@@ -1758,95 +1758,23 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // Handle bulk promotion members view button
-    if (interaction.customId && interaction.customId.startsWith('bulk_promotion_members_')) {
-        console.log(`معالجة تفاعل رؤية الأعضاء المترقين: ${interaction.customId}`);
+    // Handle bulk promotion statistics navigation
+    if (interaction.customId && (interaction.customId.includes('stats_nav_') || interaction.customId.startsWith('bulk_promotion_members_'))) {
+        console.log(`معالجة تفاعل إحصائيات المترقين: ${interaction.customId}`);
 
         try {
-            // تهيئة المتغير إذا لم يكن موجوداً
-            if (!client.bulkPromotionMembers) {
-                client.bulkPromotionMembers = new Map();
-            }
-
-            if (!client.bulkPromotionMembers.has(interaction.customId)) {
-                return interaction.reply({
-                    content: '❌ لم يتم العثور على بيانات الأعضاء المترقين أو انتهت صلاحيتها.',
-                    ephemeral: true
-                });
-            }
-
-            const membersData = client.bulkPromotionMembers.get(interaction.customId);
-            
-            // التحقق من صلاحية البيانات (24 ساعة)
-            const dataAge = Date.now() - membersData.timestamp;
-            if (dataAge > 24 * 60 * 60 * 1000) {
-                client.bulkPromotionMembers.delete(interaction.customId);
-                return interaction.reply({
-                    content: '❌ انتهت صلاحية بيانات الأعضاء المترقين (24 ساعة).',
-                    ephemeral: true
-                });
-            }
-
-            // إنشاء قائمة بالأعضاء المترقين
-            let membersList = '';
-            const maxMembersToShow = 20; // حد أقصى 20 عضو لتجنب تجاوز حد الحقول
-            
-            for (let i = 0; i < Math.min(membersData.successfulMembers.length, maxMembersToShow); i++) {
-                const member = membersData.successfulMembers[i];
-                const memberObj = typeof member === 'object' ? member : { id: member, displayName: null };
-                const displayName = memberObj.displayName || `العضو ${memberObj.id}`;
-                membersList += `<@${memberObj.id}> (${displayName})\n`;
-            }
-
-            if (membersData.successfulMembers.length > maxMembersToShow) {
-                membersList += `\n**+${membersData.successfulMembers.length - maxMembersToShow} عضو إضافي...**`;
-            }
-
-            // محاولة الحصول على أسماء الرولات من السيرفر
-            let sourceRoleName = 'الرول المصدر';
-            let targetRoleName = 'الرول المستهدف';
-            
-            try {
-                if (membersData.sourceRoleId) {
-                    const sourceRole = await interaction.guild.roles.fetch(membersData.sourceRoleId);
-                    if (sourceRole) sourceRoleName = sourceRole.name;
-                }
-                if (membersData.targetRoleId) {
-                    const targetRole = await interaction.guild.roles.fetch(membersData.targetRoleId);
-                    if (targetRole) targetRoleName = targetRole.name;
-                }
-            } catch (roleError) {
-                console.log('خطأ في جلب أسماء الرولات:', roleError);
-            }
-
-            const membersEmbed = colorManager.createEmbed()
-                .setTitle('👥 **الأعضاء المترقين - ترقية جماعية**')
-                .setDescription(`**من:** ${sourceRoleName}\n**إلى:** ${targetRoleName}\n**بواسطة:** <@${membersData.moderator}>`)
-                .addFields([
-                    { name: '📝 **السبب**', value: membersData.reason || 'لم يتم تحديد سبب', inline: false },
-                    { name: '✅ **الأعضاء المترقين**', value: membersList || 'لا يوجد أعضاء', inline: false },
-                    { name: '📊 **العدد الإجمالي**', value: `${membersData.successfulMembers.length} عضو`, inline: true },
-                    { name: '📅 **وقت الترقية**', value: `<t:${Math.floor(membersData.timestamp / 1000)}:F>`, inline: true }
-                ])
-                .setFooter({ text: 'هذه رسالة مخفية - يمكن رؤيتها فقط من قِبل من ضغط على الزر' })
-                .setTimestamp();
-
-            await interaction.reply({
-                embeds: [membersEmbed],
-                ephemeral: true
-            });
-
+            await handleBulkPromotionStats(interaction, client);
         } catch (error) {
-            console.error('خطأ في معالجة رؤية الأعضاء المترقين:', error);
+            console.error('خطأ في معالجة إحصائيات المترقين:', error);
             try {
                 if (!interaction.replied && !interaction.deferred) {
                     await interaction.reply({
-                        content: '❌ حدث خطأ أثناء عرض قائمة الأعضاء.',
+                        content: '❌ حدث خطأ أثناء عرض الإحصائيات.',
                         ephemeral: true
                     });
                 }
             } catch (replyError) {
-                console.error('خطأ في الرد على خطأ رؤية الأعضاء:', replyError);
+                console.error('خطأ في الرد على خطأ الإحصائيات:', replyError);
             }
         }
         return;
@@ -3502,6 +3430,200 @@ async function showUserResponsibilities(message, targetUser, responsibilities, c
 
         await message.channel.send({ embeds: [respEmbed] });
     }
+}
+
+// دالة لعرض إحصائيات المترقين مع التنقل
+async function handleBulkPromotionStats(interaction, client) {
+    const { getRealUserStats } = require('./utils/userStatsCollector');
+    const { ButtonBuilder, ActionRowBuilder, ButtonStyle } = require('discord.js');
+
+    // تهيئة المتغير إذا لم يكن موجوداً
+    if (!client.bulkPromotionMembers) {
+        client.bulkPromotionMembers = new Map();
+    }
+
+    // استخراج معرف البيانات والصفحة الحالية
+    let currentPage = 0;
+    let dataKey = interaction.customId;
+    
+    if (interaction.customId.includes('stats_nav_')) {
+        const parts = interaction.customId.split('_');
+        dataKey = parts.slice(3).join('_'); // كل شيء بعد stats_nav_
+        currentPage = parseInt(parts[2]) || 0;
+    }
+
+    // البحث عن البيانات في جميع المفاتيح المحفوظة
+    let membersData = null;
+    let actualKey = null;
+    
+    for (const [key, data] of client.bulkPromotionMembers.entries()) {
+        if (key === dataKey || key.includes(dataKey.split('_').slice(-1)[0])) {
+            membersData = data;
+            actualKey = key;
+            break;
+        }
+    }
+
+    if (!membersData) {
+        return interaction.reply({
+            content: 'لم يتم العثور على بيانات الأعضاء المترقين أو انتهت صلاحيتها.',
+            ephemeral: true
+        });
+    }
+
+    // التحقق من صلاحية البيانات (24 ساعة)
+    const dataAge = Date.now() - membersData.timestamp;
+    if (dataAge > 24 * 60 * 60 * 1000) {
+        client.bulkPromotionMembers.delete(actualKey);
+        return interaction.reply({
+            content: 'انتهت صلاحية بيانات الأعضاء المترقين (24 ساعة).',
+            ephemeral: true
+        });
+    }
+
+    try {
+        await interaction.deferReply({ ephemeral: true });
+
+        // جمع إحصائيات جميع الأعضاء المترقين
+        const membersWithStats = [];
+        
+        for (const member of membersData.successfulMembers) {
+            const memberObj = typeof member === 'object' ? member : { id: member, displayName: null };
+            
+            try {
+                // الحصول على كائن العضو من السيرفر
+                const guildMember = await interaction.guild.members.fetch(memberObj.id).catch(() => null);
+                
+                if (guildMember) {
+                    // جمع الإحصائيات للعضو
+                    const stats = await getRealUserStats(memberObj.id);
+                    
+                    membersWithStats.push({
+                        id: memberObj.id,
+                        displayName: guildMember.displayName || guildMember.user.username,
+                        username: guildMember.user.username,
+                        stats: stats
+                    });
+                }
+            } catch (error) {
+                console.error(`خطأ في جمع إحصائيات العضو ${memberObj.id}:`, error);
+            }
+        }
+
+        // ترتيب الأعضاء حسب الوقت الصوتي (الأكثر نشاطاً أولاً)
+        membersWithStats.sort((a, b) => (b.stats.voiceTime || 0) - (a.stats.voiceTime || 0));
+
+        // إعداد التنقل
+        const membersPerPage = 10;
+        const totalPages = Math.ceil(membersWithStats.length / membersPerPage);
+        currentPage = Math.max(0, Math.min(currentPage, totalPages - 1));
+
+        const startIndex = currentPage * membersPerPage;
+        const endIndex = Math.min(startIndex + membersPerPage, membersWithStats.length);
+        const currentMembers = membersWithStats.slice(startIndex, endIndex);
+
+        // محاولة الحصول على أسماء الرولات
+        let sourceRoleName = 'الرول المصدر';
+        let targetRoleName = 'الرول المستهدف';
+        
+        try {
+            if (membersData.sourceRoleId) {
+                const sourceRole = await interaction.guild.roles.fetch(membersData.sourceRoleId);
+                if (sourceRole) sourceRoleName = sourceRole.name;
+            }
+            if (membersData.targetRoleId) {
+                const targetRole = await interaction.guild.roles.fetch(membersData.targetRoleId);
+                if (targetRole) targetRoleName = targetRole.name;
+            }
+        } catch (roleError) {
+            console.log('خطأ في جلب أسماء الرولات:', roleError);
+        }
+
+        // إنشاء الإمبد
+        const statsEmbed = colorManager.createEmbed()
+            .setTitle('احصائيات المترقين - ترقية جماعية')
+            .setDescription(`من: ${sourceRoleName}\nإلى: ${targetRoleName}\nبواسطة: <@${membersData.moderator}>\nالسبب: ${membersData.reason || 'لم يتم تحديد سبب'}`)
+            .setFooter({ 
+                text: `الصفحة ${currentPage + 1} من ${totalPages} | إجمالي الأعضاء: ${membersWithStats.length}` 
+            })
+            .setTimestamp();
+
+        // إضافة إحصائيات كل عضو كحقول منفصلة
+        for (let i = 0; i < currentMembers.length; i++) {
+            const member = currentMembers[i];
+            const stats = member.stats;
+
+            // تنسيق الوقت الصوتي
+            const voiceTimeFormatted = formatDuration(stats.voiceTime || 0);
+            
+            const statsValue = `الوقت الصوتي: ${voiceTimeFormatted}\nالانضمامات: ${stats.joinedChannels || 0}\nالرسائل: ${stats.messages || 0}\nالتفاعلات: ${stats.reactionsGiven || 0}`;
+
+            statsEmbed.addFields([{
+                name: `${startIndex + i + 1}. ${member.displayName}`,
+                value: statsValue,
+                inline: true
+            }]);
+        }
+
+        // إنشاء أزرار التنقل
+        const components = [];
+        if (totalPages > 1) {
+            const navigationRow = new ActionRowBuilder();
+            
+            // زر السابق
+            const prevButton = new ButtonBuilder()
+                .setCustomId(`stats_nav_${Math.max(0, currentPage - 1)}_${actualKey}`)
+                .setLabel('السابق')
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(currentPage === 0);
+                
+            // زر التالي
+            const nextButton = new ButtonBuilder()
+                .setCustomId(`stats_nav_${Math.min(totalPages - 1, currentPage + 1)}_${actualKey}`)
+                .setLabel('التالي')
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(currentPage === totalPages - 1);
+
+            navigationRow.addComponents(prevButton, nextButton);
+            components.push(navigationRow);
+        }
+
+        // إرسال الرد
+        await interaction.editReply({
+            embeds: [statsEmbed],
+            components: components
+        });
+
+    } catch (error) {
+        console.error('خطأ في عرض إحصائيات المترقين:', error);
+        await interaction.editReply({
+            content: 'حدث خطأ أثناء جمع الإحصائيات.',
+            embeds: [],
+            components: []
+        });
+    }
+}
+
+// دالة لتنسيق المدة الزمنية
+function formatDuration(milliseconds) {
+    if (!milliseconds || milliseconds <= 0) return 'لا يوجد';
+
+    const totalSeconds = Math.floor(milliseconds / 1000);
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    const totalHours = Math.floor(totalMinutes / 60);
+    const days = Math.floor(totalHours / 24);
+
+    const hours = totalHours % 24;
+    const minutes = totalMinutes % 60;
+    const seconds = totalSeconds % 60;
+
+    const parts = [];
+    if (days > 0) parts.push(`${days} يوم`);
+    if (hours > 0) parts.push(`${hours} ساعة`);
+    if (minutes > 0) parts.push(`${minutes} دقيقة`);
+    if (seconds > 0 && days === 0) parts.push(`${seconds} ثانية`);
+
+    return parts.length > 0 ? parts.join(' و ') : 'أقل من ثانية';
 }
 
 // Helper function for safe replies مع معالجة محسنة
