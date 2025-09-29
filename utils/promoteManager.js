@@ -28,6 +28,40 @@ function readJson(filePath, defaultValue = {}) {
 // عداد للعمليات المتعلقة بالملفات لتجنب race conditions
 const fileLocks = new Map();
 
+async function writeJsonSafe(filePath, data) {
+    const lockKey = filePath;
+
+    // انتظار حتى يصبح الملف متاحاً للكتابة
+    while (fileLocks.has(lockKey)) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+    }
+
+    // قفل الملف
+    fileLocks.set(lockKey, true);
+
+    try {
+        const dir = path.dirname(filePath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+
+        // كتابة إلى ملف مؤقت أولاً
+        const tempPath = `${filePath}.tmp`;
+        fs.writeFileSync(tempPath, JSON.stringify(data, null, 2));
+
+        // استبدال الملف الأصلي (atomic operation)
+        fs.renameSync(tempPath, filePath);
+
+        return true;
+    } catch (error) {
+        console.error(`Error writing ${filePath}:`, error);
+        return false;
+    } finally {
+        // إلغاء قفل الملف
+        fileLocks.delete(lockKey);
+    }
+}
+
 function writeJson(filePath, data) {
     try {
         const dir = path.dirname(filePath);
@@ -117,8 +151,8 @@ class PromoteManager {
         });
     }
 
-    updateSettings(newSettings) {
-        return writeJson(promoteSettingsPath, newSettings);
+    async updateSettings(newSettings) {
+        return await writeJsonSafe(promoteSettingsPath, newSettings);
     }
 
     // Permission Checking
@@ -169,9 +203,9 @@ class PromoteManager {
     // Role Hierarchy Validation for Promotions
     async validateRoleHierarchy(guild, targetUserId, roleId, promoterUserId) {
         try {
-            const targetMember = await guild.members.fetch(targetUserId);
-            const promoterMember = await guild.members.fetch(promoterUserId);
-            const role = await guild.roles.fetch(roleId);
+            const targetMember = await guild.members.fetch(targetUserId).catch(() => null);
+            const promoterMember = await guild.members.fetch(promoterUserId).catch(() => null);
+            const role = await guild.roles.fetch(roleId).catch(() => null);
 
             if (!targetMember || !promoterMember || !role) {
                 return { valid: false, error: 'لا يمكن العثور على العضو أو الرول' };
@@ -181,19 +215,29 @@ class PromoteManager {
             const targetHighestRole = targetMember.roles.highest;
             const promoterHighestRole = promoterMember.roles.highest;
 
-            // Role to be added should be higher than target's current highest role
-            if (role.position <= targetHighestRole.position) {
-                return { 
-                    valid: false, 
-                    error: `الرول المحدد (**${role.name}**) يجب أن يكون أعلى من أعلى رول للعضو (**${targetHighestRole.name}**)` 
+            // تحسين منطق التحقق: إذا كان الشخص المعين مالك البوت، يُسمح بالترقية بغض النظر عن الهرمية
+            const settings = this.getSettings();
+            const botOwnersData = readJson(path.join(__dirname, '..', 'data', 'botConfig.json'), {});
+            const botOwners = botOwnersData.owners || [];
+
+            if (botOwners.includes(promoterUserId)) {
+                // المالكون يمكنهم ترقية أي شخص لأي رول (طالما أن البوت يملك الصلاحية)
+                return { valid: true };
+            }
+
+            // للأشخاص العاديين: الرول الجديد يجب أن يكون أعلى من الرول الحالي للهدف
+            if (role.position <= targetHighestRole.position && targetHighestRole.name !== '@everyone') {
+                return {
+                    valid: false,
+                    error: `الرول المحدد (**${role.name}**) يجب أن يكون أعلى من أعلى رول للعضو (**${targetHighestRole.name}**)`
                 };
             }
 
-            // Role to be added should be lower than promoter's highest role
+            // الرول الجديد يجب أن يكون أقل من أعلى رول للمُرقي (إلا إذا كان مالك)
             if (role.position >= promoterHighestRole.position) {
-                return { 
-                    valid: false, 
-                    error: `لا يمكنك ترقية شخص إلى رول (**${role.name}**) أعلى من أو مساوي لرولك الأعلى (**${promoterHighestRole.name}**)` 
+                return {
+                    valid: false,
+                    error: `لا يمكنك ترقية شخص إلى رول (**${role.name}**) أعلى من أو مساوي لرولك الأعلى (**${promoterHighestRole.name}**)`
                 };
             }
 
@@ -222,9 +266,9 @@ class PromoteManager {
 
             // Check role hierarchy for bot
             if (role.position >= botMember.roles.highest.position) {
-                return { 
-                    valid: false, 
-                    error: `الرول (**${role.name}**) أعلى من رول البوت - لا يمكن إدارته` 
+                return {
+                    valid: false,
+                    error: `الرول (**${role.name}**) أعلى من رول البوت - لا يمكن إدارته`
                 };
             }
 
@@ -262,9 +306,9 @@ class PromoteManager {
 
         try {
             const userStats = await database.get(`
-                SELECT total_voice_time, total_messages, total_reactions, 
+                SELECT total_voice_time, total_messages, total_reactions,
                        total_sessions, active_days
-                FROM user_totals 
+                FROM user_totals
                 WHERE user_id = ?
             `, [userId]);
 
@@ -287,9 +331,36 @@ class PromoteManager {
         }
     }
 
-    // Promotion Operations
-    async createPromotion(guild, client, targetUserId, roleId, duration, reason, byUserId) {
+    // Bulk Promotion Operations
+    async createBulkPromotion(guild, client, targetUserId, sourceRoleId, targetRoleId, duration, reason, byUserId, isBulkOperation = true, sendDM = false) {
         try {
+            // Use the regular promotion logic but skip individual logging and DM for bulk operations
+            const result = await this.createPromotion(guild, client, targetUserId, targetRoleId, duration, reason, byUserId, isBulkOperation, sendDM);
+
+            return result;
+        } catch (error) {
+            console.error('Error in bulk promotion:', error);
+            return { success: false, error: 'حدث خطأ أثناء الترقية الجماعية' };
+        }
+    }
+
+    // Promotion Operations
+    async createPromotion(guild, client, targetUserId, roleId, duration, reason, byUserId, isBulkOperation = false, sendDM = true) {
+        try {
+            // Input validation
+            if (!guild || !targetUserId || !roleId || !byUserId) {
+                return { success: false, error: 'معاملات مطلوبة مفقودة' };
+            }
+
+            // التحقق من صحة المدة - تقبل null للترقيات الدائمة
+            if (duration !== null && duration !== undefined && duration !== 'نهائي' && typeof duration !== 'string') {
+                return { success: false, error: 'مدة غير صحيحة' };
+            }
+
+            if (!reason || reason.trim().length === 0) {
+                return { success: false, error: 'السبب مطلوب' };
+            }
+
             // Validate admin role
             if (!this.isAdminRole(roleId)) {
                 return { success: false, error: 'الرول المحدد ليس من الرولات الإدارية' };
@@ -307,16 +378,24 @@ class PromoteManager {
                 return { success: false, error: hierarchyValidation.error };
             }
 
-            // Get target member
-            const targetMember = await guild.members.fetch(targetUserId);
+            // Get target member with timeout protection
+            const targetMember = await Promise.race([
+                guild.members.fetch(targetUserId),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+            ]).catch(() => null);
+
             if (!targetMember) {
-                return { success: false, error: 'العضو غير موجود' };
+                return { success: false, error: 'العضو غير موجود أو لا يمكن الوصول إليه' };
             }
 
-            // Get role
-            const role = await guild.roles.fetch(roleId);
+            // Get role with timeout protection
+            const role = await Promise.race([
+                guild.roles.fetch(roleId),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+            ]).catch(() => null);
+
             if (!role) {
-                return { success: false, error: 'الرول غير موجود' };
+                return { success: false, error: 'الرول غير موجود أو لا يمكن الوصول إليه' };
             }
 
             // احفظ الرول الأعلى الحالي قبل الترقية
@@ -337,12 +416,12 @@ class PromoteManager {
                 const banEndTime = banData.endTime;
 
                 if (!banEndTime || banEndTime > Date.now()) {
-                    const banEndText = banEndTime ? 
-                        `<t:${Math.floor(banEndTime / 1000)}:R>` : 
+                    const banEndText = banEndTime ?
+                        `<t:${Math.floor(banEndTime / 1000)}:R>` :
                         'نهائي';
-                    return { 
-                        success: false, 
-                        error: `العضو محظور من الترقيات. ينتهي الحظر: ${banEndText}` 
+                    return {
+                        success: false,
+                        error: `العضو محظور من الترقيات. ينتهي الحظر: ${banEndText}`
                     };
                 }
             }
@@ -402,63 +481,69 @@ class PromoteManager {
             activePromotes[promoteId] = promoteRecord;
             writeJson(activePromotesPath, activePromotes);
 
-            // Log the action
-            this.logAction('PROMOTION_APPLIED', {
-                targetUserId,
-                roleId,
-                guildId: guild.id,
-                duration,
-                reason,
-                byUserId,
-                userStats,
-                timestamp: Date.now()
-            });
+            // Log the action only if not part of bulk operation
+            if (!isBulkOperation) {
+                this.logAction('PROMOTION_APPLIED', {
+                    targetUserId,
+                    roleId,
+                    guildId: guild.id,
+                    duration,
+                    reason,
+                    byUserId,
+                    userStats,
+                    timestamp: Date.now()
+                });
 
-            // Send log message
-            await this.sendLogMessage(guild, client, 'PROMOTION_APPLIED', {
-                targetUser: targetMember.user,
-                role: role,
-                previousRole: {
-                    id: previousHighestRole.id,
-                    name: previousRoleName
-                },
-                duration: duration || 'نهائي',
-                reason,
-                byUser: await client.users.fetch(byUserId),
-                userStats,
-                removedOldRole: (!duration || duration === 'نهائي') && shouldRemoveOldRole
-            });
-
-            // Send private message to promoted user
-            try {
-                const dmEmbed = colorManager.createEmbed()
-                    .setTitle('🎉 **تهانينا! تم ترقيتك**')
-                    .setDescription(`تم ترقيتك في خادم **${guild.name}** من **${previousRoleName}** إلى **${role.name}**!`)
-                    .addFields([
-                        { name: '⬆️ **الترقية**', value: `من: ${previousRoleName}\nإلى: **${role.name}**`, inline: true },
-                        { name: '⏰ **المدة**', value: duration || 'نهائي', inline: true },
-                        { name: '📝 **السبب**', value: reason, inline: false },
-                        { name: '👤 **تم بواسطة**', value: `<@${byUserId}>`, inline: true },
-                        { name: '📅 **التاريخ**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
-                    ])
-                    .setThumbnail(targetMember.displayAvatarURL({ dynamic: true }))
-                    .setTimestamp()
-                    .setFooter({ text: `خادم ${guild.name}`, iconURL: guild.iconURL({ dynamic: true }) });
-
-                // إضافة معلومة عن إزالة الرول القديم للترقية النهائية
-                if ((!duration || duration === 'نهائي') && shouldRemoveOldRole) {
-                    dmEmbed.addFields([
-                        { name: '🔄 **ملاحظة**', value: `تم إزالة الرول السابق **${previousRoleName}** لأن الترقية نهائية`, inline: false }
-                    ]);
-                }
-
-                await targetMember.send({ embeds: [dmEmbed] });
-            } catch (dmError) {
-                console.log(`لا يمكن إرسال رسالة خاصة إلى ${targetMember.displayName}`);
+                // Send log message
+                await this.sendLogMessage(guild, client, 'PROMOTION_APPLIED', {
+                    targetUser: targetMember.user,
+                    role: role,
+                    previousRole: {
+                        id: previousHighestRole.id,
+                        name: previousRoleName
+                    },
+                    duration: duration || 'نهائي',
+                    reason,
+                    byUser: await client.users.fetch(byUserId),
+                    userStats,
+                    removedOldRole: (!duration || duration === 'نهائي') && shouldRemoveOldRole
+                });
             }
 
-            return { 
-                success: true, 
+            // Send private message to promoted user only if sendDM is true
+            if (sendDM) {
+                try {
+                    const dmEmbed = colorManager.createEmbed()
+                        .setTitle('**تهانينا! تم ترقيتك**')
+                        .setDescription(`تم ترقيتك في خادم **${guild.name}** من **${previousRoleName}** إلى **${role.name}**`)
+                        .addFields([
+                            { name: '**معلومات الترقية**', value: 'تفاصيل الترقية', inline: false },
+                            { name: '**من**', value: previousRoleName, inline: true },
+                            { name: '**إلى**', value: `**${role.name}**`, inline: true },
+                            { name: '**المدة**', value: duration || 'نهائي', inline: true },
+                            { name: '**السبب**', value: reason, inline: false },
+                            { name: '**تم بواسطة**', value: `<@${byUserId}>`, inline: true },
+                            { name: '**التاريخ**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
+                        ])
+                        .setThumbnail(targetMember.displayAvatarURL({ dynamic: true }))
+                        .setTimestamp()
+                        .setFooter({ text: `خادم ${guild.name}`, iconURL: guild.iconURL({ dynamic: true }) });
+
+                    // إضافة معلومة عن إزالة الرول القديم للترقية النهائية
+                    if ((!duration || duration === 'نهائي') && shouldRemoveOldRole) {
+                        dmEmbed.addFields([
+                            { name: '**ملاحظة مهمة**', value: `تم إزالة الرول السابق **${previousRoleName}** لأن الترقية نهائية`, inline: false }
+                        ]);
+                    }
+
+                    await targetMember.send({ embeds: [dmEmbed] });
+                } catch (dmError) {
+                    console.log(`لا يمكن إرسال رسالة خاصة إلى ${targetMember.displayName}`);
+                }
+            }
+
+            return {
+                success: true,
                 promoteId: promoteId,
                 duration: duration,
                 endTime: endTime
@@ -784,74 +869,92 @@ class PromoteManager {
         try {
             if (!this.client) return;
 
-            const guild = await this.client.guilds.fetch(expiredBan.guildId).catch(() => null);
-            if (!guild) return;
-
-            const member = await guild.members.fetch(expiredBan.userId).catch(() => null);
-
-            // Remove expired ban
+            // إزالة الحظر من الملف
             const promoteBans = readJson(promoteBansPath, {});
-            delete promoteBans[expiredBan.banKey];
-            writeJson(promoteBansPath, promoteBans);
-
-            // Log automatic unban
-            this.logAction('PROMOTION_BAN_EXPIRED', {
-                targetUserId: expiredBan.userId,
-                originalReason: expiredBan.reason,
-                originalDuration: expiredBan.duration,
-                timestamp: Date.now()
-            });
-
-            // Send log message
-            const settings = this.getSettings();
-            if (settings.logChannel) {
-                const logChannel = await this.client.channels.fetch(settings.logChannel).catch(() => null);
-                if (logChannel) {
-                    const embed = colorManager.createEmbed()
-                        .setTitle('**انتهى حظر الترقيات تلقائياً**')
-                        .setDescription('انتهت مدة حظر عضو من الترقيات')
-                        .addFields([
-                            { name: '**العضو**', value: `<@${expiredBan.userId}>`, inline: true },
-                            { name: '**وقت الانتهاء**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
-                            { name: '**السبب الأصلي**', value: expiredBan.reason || 'غير محدد', inline: false },
-                            { name: '**المدة الأصلية**', value: expiredBan.duration || 'نهائي', inline: true },
-                            { name: '**تم الحظر بواسطة**', value: `<@${expiredBan.byUserId}>`, inline: true }
-                        ])
-                        .setTimestamp();
-
-                    await logChannel.send({ embeds: [embed] });
-                }
+            if (promoteBans[expiredBan.banKey]) {
+                delete promoteBans[expiredBan.banKey];
+                await writeJsonSafe(promoteBansPath, promoteBans);
             }
 
-            // Send private message if member still in server
-            if (member) {
-                try {
+            // محاولة إرسال إشعار للمستخدم
+            try {
+                const user = await this.client.users.fetch(expiredBan.userId).catch(() => null);
+                if (user) {
                     const dmEmbed = colorManager.createEmbed()
-                        .setTitle('**انتهى حظرك من الترقيات**')
-                        .setDescription(`انتهت مدة حظرك من الترقيات في خادم **${guild.name}**`)
+                        .setTitle('🎉 **تم إلغاء حظر الترقية**')
+                        .setDescription(`انتهت مدة حظرك من الترقيات وأصبح بإمكانك الحصول على ترقيات مرة أخرى!`)
                         .addFields([
-                            { name: '**وقت الانتهاء**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
-                            { name: '**يمكنك الآن**', value: 'الحصول على ترقيات مرة أخرى', inline: true }
+                            { name: '📅 **وقت الإلغاء**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+                            { name: '⏱️ **السبب الأصلي**', value: expiredBan.reason || 'غير محدد', inline: false }
                         ])
-                        .setThumbnail(member.displayAvatarURL({ dynamic: true }))
+                        .setColor('#00ff00')
                         .setTimestamp();
 
-                    await member.send({ embeds: [dmEmbed] });
-                } catch (dmError) {
-                    console.log(`لا يمكن إرسال رسالة انتهاء الحظر إلى ${member.displayName}`);
+                    await user.send({ embeds: [dmEmbed] });
+                }
+            } catch (dmError) {
+                console.log(`لا يمكن إرسال رسالة خاصة للمستخدم ${expiredBan.userId}`);
+            }
+
+            // تسجيل إلغاء الحظر في السجلات
+            const guild = await this.client.guilds.fetch(expiredBan.guildId).catch(() => null);
+            if (guild) {
+                const settings = this.getSettings();
+                if (settings.logChannel) {
+                    try {
+                        const logChannel = await guild.channels.fetch(settings.logChannel).catch(() => null);
+                        if (logChannel) {
+                            const logEmbed = colorManager.createEmbed()
+                                .setTitle('✅ **انتهت مدة حظر الترقية - تم الإلغاء التلقائي**')
+                                .setDescription(`انتهت مدة حظر عضو من الترقيات وتم إلغاء الحظر تلقائياً`)
+                                .addFields([
+                                    { name: '**العضو**', value: `<@${expiredBan.userId}>`, inline: true },
+                                    { name: '**وقت الإلغاء**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+                                    { name: '**السبب الأصلي**', value: expiredBan.reason || 'غير محدد', inline: false },
+                                    { name: '**مدة الحظر الأصلية**', value: expiredBan.duration || 'غير محدد', inline: true },
+                                    { name: '**تم الحظر بواسطة**', value: `<@${expiredBan.byUserId || 'غير معروف'}>`, inline: true }
+                                ])
+                                .setColor('#00ff00')
+                                .setTimestamp();
+
+                            await logChannel.send({ embeds: [logEmbed] });
+                        }
+                    } catch (logError) {
+                        console.error('خطأ في إرسال سجل إلغاء الحظر:', logError);
+                    }
                 }
             }
 
-            console.log(`انتهى حظر الترقيات تلقائياً للعضو: ${expiredBan.userId}`);
+            console.log(`تم إلغاء حظر الترقية للمستخدم ${expiredBan.userId} تلقائياً`);
 
         } catch (error) {
-            console.error('Error processing expired ban:', error);
+            console.error('خطأ في معالجة إلغاء حظر منتهي الصلاحية:', error);
         }
     }
 
     // Data Retrieval
     getActivePromotes() {
         return readJson(activePromotesPath, {});
+    }
+
+    getSystemStats() {
+        const logs = readJson(promoteLogsPath, []);
+        const activePromotes = this.getActivePromotes();
+        const settings = this.getSettings();
+
+        // حساب إحصائيات مختلفة
+        const totalPromotions = logs.filter(log => log.type === 'PROMOTION_APPLIED').length;
+        const totalEnded = logs.filter(log => log.type === 'PROMOTION_ENDED').length;
+        const activeCounts = Object.keys(activePromotes).length;
+
+        return {
+            totalPromotions,
+            totalEnded,
+            activeCounts,
+            totalLogs: logs.length,
+            systemStartTime: settings.systemStartTime || Date.now(),
+            lastActivity: logs.length > 0 ? logs[logs.length - 1].timestamp : Date.now()
+        };
     }
 
     getUserPromotes(userId) {
@@ -861,8 +964,8 @@ class PromoteManager {
 
     getUserPromoteHistory(userId) {
         const logs = readJson(promoteLogsPath, []);
-        return logs.filter(log => 
-            (log.type === 'PROMOTION_APPLIED' || log.type === 'PROMOTION_ENDED') && 
+        return logs.filter(log =>
+            (log.type === 'PROMOTION_APPLIED' || log.type === 'PROMOTION_ENDED') &&
             log.data.targetUserId === userId
         );
     }
@@ -896,7 +999,7 @@ class PromoteManager {
     }
 
     // Logging
-    logAction(type, data) {
+    async logAction(type, data) {
         const logs = readJson(promoteLogsPath, []);
         logs.push({
             type,
@@ -909,7 +1012,7 @@ class PromoteManager {
             logs.splice(0, logs.length - 1000);
         }
 
-        writeJson(promoteLogsPath, logs);
+        await writeJsonSafe(promoteLogsPath, logs);
     }
 
     async sendLogMessage(guild, client, type, data) {
@@ -921,7 +1024,39 @@ class PromoteManager {
             if (!channel) return;
 
             const embed = this.createLogEmbed(type, data);
-            await channel.send({ embeds: [embed] });
+
+            // إضافة زر رؤية الأعضاء المترقين للترقيات الجماعية
+            if (type === 'BULK_PROMOTION' && data.successfulMembers && data.successfulMembers.length > 0) {
+                const { ButtonBuilder, ActionRowBuilder, ButtonStyle } = require('discord.js');
+
+                const viewMembersButton = new ButtonBuilder()
+                    .setCustomId(`bulk_promotion_members_${Date.now()}_${data.moderatorId}`)
+                    .setLabel('👥 رؤية الأعضاء المترقين')
+                    .setStyle(ButtonStyle.Secondary);
+
+                const buttonRow = new ActionRowBuilder().addComponents(viewMembersButton);
+
+                // حفظ قائمة الأعضاء المترقين في البوت للوصول إليها لاحقاً
+                if (!client.bulkPromotionMembers) {
+                    client.bulkPromotionMembers = new Map();
+                }
+
+                const membersData = {
+                    successfulMembers: data.successfulMembers,
+                    sourceRoleId: data.sourceRoleId,
+                    targetRoleId: data.targetRoleId,
+                    reason: data.reason,
+                    moderator: data.moderatorId,
+                    timestamp: Date.now()
+                };
+
+                const buttonKey = `bulk_promotion_members_${Date.now()}_${data.moderatorId}`;
+                client.bulkPromotionMembers.set(buttonKey, membersData);
+
+                await channel.send({ embeds: [embed], components: [buttonRow] });
+            } else {
+                await channel.send({ embeds: [embed] });
+            }
         } catch (error) {
             console.error('Error sending log message:', error);
         }
@@ -938,72 +1073,77 @@ class PromoteManager {
 
         switch (type) {
             case 'PROMOTION_APPLIED':
-                const promotionDescription = data.previousRole ? 
+                const promotionDescription = data.previousRole ?
                     `تم ترقية العضو <@${data.targetUser.id}> من **${data.previousRole.name}** إلى **${data.role.name}**` :
                     `تم ترقية العضو <@${data.targetUser.id}> إلى **${data.role.name}**`;
 
-                embed.setTitle('⬆️ **تم تطبيق ترقية فردية**')
+                embed.setTitle('**تم تطبيق ترقية فردية**')
                     .setDescription(promotionDescription)
                     .addFields([
-                        { name: '👤 **العضو**', value: `<@${data.targetUser.id}>`, inline: true },
-                        { name: '🏷️ **الرول الجديد**', value: `${data.role.name}`, inline: true },
-                        { name: '⏰ **المدة**', value: data.duration, inline: true },
-                        { name: '📝 **السبب**', value: data.reason, inline: false },
-                        { name: '👨‍💼 **بواسطة**', value: `<@${data.byUser.id}>`, inline: true },
-                        { name: '📅 **التاريخ**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
+                        { name: '**العضو**', value: `<@${data.targetUser.id}>`, inline: true },
+                        { name: '**الرول الجديد**', value: `<@&${data.role.id}>`, inline: true },
+                        { name: '**المدة**', value: data.duration, inline: true },
+                        { name: '**السبب**', value: data.reason, inline: false },
+                        { name: '**بواسطة**', value: `<@${data.byUser.id}>`, inline: true },
+                        { name: '**التاريخ**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
                     ]);
 
                 if (data.previousRole && data.previousRole.name !== 'لا يوجد رول') {
-                    const oldRoleText = data.removedOldRole ? 
-                        `${data.previousRole.name} *(تم إزالته)*` : 
+                    const oldRoleText = data.removedOldRole ?
+                        `${data.previousRole.name} *(تم إزالته)*` :
                         data.previousRole.name;
-                    embed.addFields([{ name: '📊 **الرول السابق**', value: oldRoleText, inline: true }]);
+                    embed.addFields([{ name: '**الرول السابق**', value: oldRoleText, inline: true }]);
                 }
 
                 if (data.removedOldRole) {
-                    embed.addFields([{ name: '🔄 **ملاحظة**', value: 'تم إزالة الرول السابق لأن الترقية نهائية', inline: false }]);
+                    embed.addFields([{ name: '**ملاحظة**', value: 'تم إزالة الرول السابق لأن الترقية نهائية', inline: false }]);
                 }
 
                 // إضافة إحصائيات التفاعل إذا كانت متاحة
                 if (data.userStats) {
                     const voiceTimeHours = Math.round(data.userStats.totalVoiceTime / 3600000);
                     embed.addFields([
-                        { name: '**إحصائيات العضو**', value: 
-                            `الوقت الصوتي: ${voiceTimeHours} ساعة\n` +
-                            `الرسائل: ${data.userStats.totalMessages}\n` +
-                            `التفاعلات: ${data.userStats.totalReactions}\n` +
-                            `الأيام النشطة: ${data.userStats.activeDays}`, 
-                            inline: false 
-                        }
+                        { name: '**إحصائيات العضو**', value: 'معلومات التفاعل', inline: false },
+                        { name: '**الوقت الصوتي**', value: `${voiceTimeHours} ساعة`, inline: true },
+                        { name: '**الرسائل**', value: `${data.userStats.totalMessages}`, inline: true },
+                        { name: '**التفاعلات**', value: `${data.userStats.totalReactions}`, inline: true },
+                        { name: '**الأيام النشطة**', value: `${data.userStats.activeDays}`, inline: true }
                     ]);
                 }
                 break;
 
             case 'BULK_PROMOTION':
-                embed.setTitle('👥 **تم تطبيق ترقية جماعية**')
-                    .setDescription(`تم ترقية جميع أعضاء الرول من **${data.sourceRoleName || 'غير محدد'}** إلى **${data.targetRoleName || 'غير محدد'}**`)
+                const sourceRoleDisplay = data.sourceRoleId ? `<@&${data.sourceRoleId}>` : 'غير محدد';
+                const targetRoleDisplay = data.targetRoleId ? `<@&${data.targetRoleId}>` : 'غير محدد';
+
+                embed.setTitle('**تم تطبيق ترقية جماعية**')
+                    .setDescription(`تم تطبيق ترقية جماعية من الرول ${sourceRoleDisplay} إلى ${targetRoleDisplay}`)
                     .addFields([
-                        { name: '🎯 **الرول المصدر**', value: `<@&${data.sourceRoleId}>`, inline: true },
-                        { name: '🏷️ **الرول المستهدف**', value: `<@&${data.targetRoleId}>`, inline: true },
-                        { name: '⏰ **المدة**', value: data.duration === 'permanent' ? 'نهائي' : data.duration, inline: true },
-                        { name: '✅ **تم بنجاح**', value: data.successCount.toString(), inline: true },
-                        { name: '❌ **فشل**', value: data.failedCount.toString(), inline: true },
-                        { name: '🚫 **محظورين**', value: data.bannedCount.toString(), inline: true },
-                        { name: '📝 **السبب**', value: data.reason, inline: false },
-                        { name: '👨‍💼 **بواسطة**', value: `<@${data.moderatorId}>`, inline: true },
-                        { name: '📅 **التاريخ**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
-                    ]);
+                        { name: '**الرول المصدر**', value: sourceRoleDisplay, inline: true },
+                        { name: '**الرول المستهدف**', value: targetRoleDisplay, inline: true },
+                        { name: '**المدة**', value: data.duration === 'permanent' ? 'نهائي' : data.duration, inline: true },
+                        { name: '**إجمالي الأعضاء**', value: data.totalMembers?.toString() || 'غير محدد', inline: true },
+                        { name: '**تم بنجاح**', value: data.successCount.toString(), inline: true },
+                        { name: '**فشل**', value: data.failedCount.toString(), inline: true },
+                        { name: '**محظورين**', value: data.bannedCount.toString(), inline: true },
+                        { name: '**معدل النجاح**', value: data.totalMembers > 0 ? `${Math.round((data.successCount / data.totalMembers) * 100)}%` : '0%', inline: true },
+                        { name: '**السبب**', value: data.reason, inline: false },
+                        { name: '**بواسطة**', value: `<@${data.moderatorId}>`, inline: true },
+                        { name: '**التاريخ**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
+                    ])
+                    .setColor(data.successCount > 0 ? '#00ff00' : '#ff0000');
                 break;
 
             case 'PROMOTION_ENDED':
                 embed.setTitle('**تم إنهاء ترقية**')
                     .addFields([
-                        { name: '**العضو**', value: `${data.targetUser}`, inline: true },
-                        { name: '**الرول**', value: `${data.role}`, inline: true },
+                        { name: '**معلومات إنهاء الترقية**', value: 'تفاصيل الإنهاء', inline: false },
+                        { name: '**العضو**', value: `<@${data.targetUser.id}>`, inline: true },
+                        { name: '**الرول**', value: `<@&${data.role.id}>`, inline: true },
                         { name: '**المدة الأصلية**', value: data.duration, inline: true },
                         { name: '**السبب الأصلي**', value: data.originalReason, inline: false },
                         { name: '**سبب الإنهاء**', value: data.reason, inline: false },
-                        { name: '**الترقية كانت بواسطة**', value: `${data.byUser}`, inline: true },
+                        { name: '**الترقية كانت بواسطة**', value: `<@${data.byUser.id}>`, inline: true },
                         { name: '**تاريخ الإنهاء**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
                     ]);
                 break;
@@ -1011,11 +1151,12 @@ class PromoteManager {
             case 'PROMOTION_MODIFIED':
                 embed.setTitle('**تم تعديل مدة الترقية**')
                     .addFields([
-                        { name: '**العضو**', value: `${data.targetUser}`, inline: true },
-                        { name: '**الرول**', value: `${data.role}`, inline: true },
+                        { name: '**معلومات التعديل**', value: 'تفاصيل التعديل', inline: false },
+                        { name: '**العضو**', value: `<@${data.targetUser.id}>`, inline: true },
+                        { name: '**الرول**', value: `<@&${data.role.id}>`, inline: true },
                         { name: '**المدة القديمة**', value: data.oldDuration, inline: true },
                         { name: '**المدة الجديدة**', value: data.newDuration, inline: true },
-                        { name: '**تم التعديل بواسطة**', value: `${data.modifiedBy}`, inline: true },
+                        { name: '**تم التعديل بواسطة**', value: `<@${data.modifiedBy.id}>`, inline: true },
                         { name: '**وقت التعديل**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
                     ]);
                 break;
@@ -1023,10 +1164,11 @@ class PromoteManager {
             case 'PROMOTION_BAN_ADDED':
                 embed.setTitle('**تم حظر عضو من الترقيات**')
                     .addFields([
-                        { name: '**العضو**', value: `${data.targetUser}`, inline: true },
-                        { name: '**المدة**', value: data.duration, inline: true },
+                        { name: '**معلومات الحظر**', value: 'تفاصيل الحظر', inline: false },
+                        { name: '**العضو**', value: `<@${data.targetUser.id}>`, inline: true },
+                        { name: '**مدة الحظر**', value: data.duration, inline: true },
                         { name: '**السبب**', value: data.reason, inline: false },
-                        { name: '**بواسطة**', value: `${data.byUser}`, inline: true },
+                        { name: '**بواسطة**', value: `<@${data.byUser.id}>`, inline: true },
                         { name: '**التاريخ**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
                     ]);
                 break;
@@ -1034,9 +1176,10 @@ class PromoteManager {
             case 'PROMOTION_BAN_REMOVED':
                 embed.setTitle('**تم إلغاء حظر عضو من الترقيات**')
                     .addFields([
-                        { name: '**العضو**', value: `${data.targetUser}`, inline: true },
+                        { name: '**معلومات إلغاء الحظر**', value: 'تفاصيل إلغاء الحظر', inline: false },
+                        { name: '**العضو**', value: `<@${data.targetUser.id}>`, inline: true },
                         { name: '**السبب**', value: data.reason, inline: false },
-                        { name: '**بواسطة**', value: `${data.byUser}`, inline: true },
+                        { name: '**بواسطة**', value: `<@${data.byUser.id}>`, inline: true },
                         { name: '**التاريخ**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
                     ]);
                 break;
@@ -1186,8 +1329,8 @@ class PromoteManager {
         // Display first 10 promotes
         for (let i = 0; i < Math.min(promotes.length, 10); i++) {
             const promote = promotes[i];
-            const endTimeText = promote.endTime ? 
-                `<t:${Math.floor(promote.endTime / 1000)}:R>` : 
+            const endTimeText = promote.endTime ?
+                `<t:${Math.floor(promote.endTime / 1000)}:R>` :
                 'دائمة';
 
             embed.addFields([{
@@ -1220,20 +1363,20 @@ class PromoteManager {
         }
 
         embed.addFields([
-            { 
-                name: '**قناة القائمة**', 
-                value: settings.menuChannel ? `<#${settings.menuChannel}>` : 'غير محدد', 
-                inline: true 
+            {
+                name: '**قناة القائمة**',
+                value: settings.menuChannel ? `<#${settings.menuChannel}>` : 'غير محدد',
+                inline: true
             },
-            { 
-                name: '**قناة السجلات**', 
-                value: settings.logChannel ? `<#${settings.logChannel}>` : 'غير محدد', 
-                inline: true 
+            {
+                name: '**قناة السجلات**',
+                value: settings.logChannel ? `<#${settings.logChannel}>` : 'غير محدد',
+                inline: true
             },
-            { 
-                name: '**نوع الصلاحية**', 
-                value: settings.allowedUsers.type || 'غير محدد', 
-                inline: true 
+            {
+                name: '**نوع الصلاحية**',
+                value: settings.allowedUsers.type || 'غير محدد',
+                inline: true
             }
         ]);
 
@@ -1247,10 +1390,10 @@ class PromoteManager {
         }
 
         embed.addFields([
-            { 
-                name: '**المصرح لهم**', 
-                value: allowedText, 
-                inline: false 
+            {
+                name: '**المصرح لهم**',
+                value: allowedText,
+                inline: false
             }
         ]);
 
@@ -1455,22 +1598,22 @@ class PromoteManager {
                                 .setTimestamp();
 
                             if (failedPromotes.length > 0) {
-                                embed.addFields([{ 
-                                    name: '**فشل في استعادتها**', 
-                                    value: failedPromotes.length.toString(), 
-                                    inline: true 
+                                embed.addFields([{
+                                    name: '**فشل في استعادتها**',
+                                    value: failedPromotes.length.toString(),
+                                    inline: true
                                 }]);
                             }
 
                             const timeSinceLeft = Date.now() - memberData.leftAt;
-                            const timeLeftText = timeSinceLeft > 3600000 ? 
-                                `${Math.floor(timeSinceLeft / 3600000)} ساعة` : 
+                            const timeLeftText = timeSinceLeft > 3600000 ?
+                                `${Math.floor(timeSinceLeft / 3600000)} ساعة` :
                                 `${Math.floor(timeSinceLeft / 60000)} دقيقة`;
 
-                            embed.addFields([{ 
-                                name: '**فترة الغياب**', 
-                                value: timeLeftText, 
-                                inline: true 
+                            embed.addFields([{
+                                name: '**فترة الغياب**',
+                                value: timeLeftText,
+                                inline: true
                             }]);
 
                             await logChannel.send({ embeds: [embed] });
@@ -1531,10 +1674,10 @@ class PromoteManager {
             embed.addFields([{ name: '**تاريخ التطبيق**', value: `<t:${Math.floor(startTime / 1000)}:F>`, inline: true }]);
 
             // إضافة ملاحظة هامة
-            embed.addFields([{ 
-                name: '**ملاحظة هامة**', 
-                value: 'إذا عاد هذا العضو للسيرفر، لن تعود الترقية تلقائياً', 
-                inline: false 
+            embed.addFields([{
+                name: '**ملاحظة هامة**',
+                value: 'إذا عاد هذا العضو للسيرفر، لن تعود الترقية تلقائياً',
+                inline: false
             }]);
 
             await logChannel.send({ embeds: [embed] });
@@ -1552,8 +1695,8 @@ class PromoteManager {
             const logs = readJson(promoteLogsPath, []);
             return logs.filter(log => {
                 if (log.type === 'PROMOTION_APPLIED' || log.type === 'PROMOTION_ENDED') {
-                    return log.data.targetUserId === userId && 
-                           (!guildId || !log.data.guildId || log.data.guildId === guildId);
+                    return log.data.targetUserId === userId &&
+                        (!guildId || !log.data.guildId || log.data.guildId === guildId);
                 }
                 return false;
             }).sort((a, b) => b.timestamp - a.timestamp); // Sort by newest first
