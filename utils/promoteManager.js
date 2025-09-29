@@ -1031,7 +1031,7 @@ class PromoteManager {
 
                 const viewMembersButton = new ButtonBuilder()
                     .setCustomId(`bulk_promotion_members_${Date.now()}_${data.moderatorId}`)
-                    .setLabel('👥 رؤية الأعضاء المترقين')
+                    .setLabel('احصائيات المترقين')
                     .setStyle(ButtonStyle.Secondary);
 
                 const buttonRow = new ActionRowBuilder().addComponents(viewMembersButton);
@@ -1292,7 +1292,7 @@ class PromoteManager {
             try {
                 const dmEmbed = colorManager.createEmbed()
                     .setTitle('**انتهت مدة الترقية**')
-                    .setDescription(`انتهت مدة ترقيتك في خادم **${guild.name}**`)
+                    .setDescription(`انتهت مدة ترقيتك في سيرفر **${guild.name}**`)
                     .addFields([
                         { name: '**الرول المُزال**', value: `${role.name}`, inline: true },
                         { name: '**وقت الانتهاء**', value: `<t:${this.formatTimestamp(Date.now()).unix}:f>`, inline: true },
