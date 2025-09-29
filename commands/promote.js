@@ -1792,18 +1792,40 @@ async function handlePromoteInteractions(interaction, context) {
             return;
         }
 
-        // Get promotion records from promoteLogs.json
+        // Get promotion records from promoteLogs.json with improved filtering
         const promoteLogsPath = path.join(__dirname, '..', 'data', 'promoteLogs.json');
         const promoteLogs = readJson(promoteLogsPath, []);
 
-        const roleRecords = promoteLogs.filter(log => 
-            log.data && log.data.roleId === selectedRoleId
-        ).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        // تحسين فلترة السجلات لتشمل جميع أنواع الترقيات المتعلقة بالرول
+        const roleRecords = promoteLogs.filter(log => {
+            if (!log.data) return false;
+            
+            // فلترة بناءً على أنواع مختلفة من الترقيات
+            if (log.type === 'BULK_PROMOTION') {
+                // للترقية الجماعية، تحقق من الرول المصدر أو المستهدف
+                return log.data.targetRoleId === selectedRoleId || log.data.sourceRoleId === selectedRoleId;
+            } else if (log.type === 'PROMOTION_APPLIED' || log.type === 'PROMOTION_ENDED') {
+                // للترقية الفردية، تحقق من الرول المستهدف
+                return log.data.roleId === selectedRoleId || log.data.role?.id === selectedRoleId;
+            }
+            
+            // فلترة إضافية بناءً على معرف الرول
+            return log.data.roleId === selectedRoleId;
+        }).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
         if (roleRecords.length === 0) {
+            // تحسين رسالة عدم وجود سجلات
+            const backButton = new ButtonBuilder()
+                .setCustomId('promote_records_back')
+                .setLabel('العودة لقائمة الرولات')
+                .setStyle(ButtonStyle.Secondary);
+            
+            const backRow = new ActionRowBuilder().addComponents(backButton);
+            
             await interaction.update({
-                content: ` **الرول** <@&${selectedRoleId}> **ليس لديه أي سجلات ترقيات.**`,
-                components: []
+                content: `📋 **الرول** <@&${selectedRoleId}> **ليس لديه أي سجلات ترقيات مسجلة.**\n\n` +
+                        `هذا يعني أنه لم يتم تسجيل أي عمليات ترقية من/إلى هذا الرول منذ تفعيل نظام التسجيل.`,
+                components: [backRow]
             });
             return;
         }
@@ -1906,10 +1928,50 @@ async function handlePromoteInteractions(interaction, context) {
 
         const embed = createRoleRecordsEmbed(currentPage);
 
+        // إضافة أزرار التنقل إذا كان هناك أكثر من صفحة
+        const components = [];
+        
+        if (totalPages > 1) {
+            const navigationRow = new ActionRowBuilder();
+            
+            // زر السابق
+            const prevButton = new ButtonBuilder()
+                .setCustomId(`role_records_prev_${selectedRoleId}_${currentPage}`)
+                .setLabel('◀ السابق')
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(currentPage === 0);
+            
+            // عرض الصفحة الحالية
+            const pageButton = new ButtonBuilder()
+                .setCustomId(`role_records_page_info`)
+                .setLabel(`${currentPage + 1}/${totalPages}`)
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(true);
+            
+            // زر التالي
+            const nextButton = new ButtonBuilder()
+                .setCustomId(`role_records_next_${selectedRoleId}_${currentPage}`)
+                .setLabel('التالي ▶')
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(currentPage === totalPages - 1);
+            
+            navigationRow.addComponents(prevButton, pageButton, nextButton);
+            components.push(navigationRow);
+        }
+        
+        // زر العودة
+        const backButton = new ButtonBuilder()
+            .setCustomId('promote_records_back')
+            .setLabel('العودة لقائمة الرولات')
+            .setStyle(ButtonStyle.Primary);
+        
+        const backRow = new ActionRowBuilder().addComponents(backButton);
+        components.push(backRow);
+
         await interaction.update({
             embeds: [embed],
             content: '',
-            components: []
+            components: components
         });
         return;
     }
@@ -3065,6 +3127,220 @@ async function handlePromoteInteractions(interaction, context) {
             content: ' **تم إعادة تعيين النظام بنجاح! جميع البيانات والإعدادات تم حذفها.**',
             embeds: [],
             components: []
+        });
+        return;
+    }
+
+    // Handle role records navigation buttons
+    if (interaction.isButton() && (customId.startsWith('role_records_prev_') || customId.startsWith('role_records_next_'))) {
+        const parts = customId.split('_');
+        const direction = parts[2]; // prev or next
+        const selectedRoleId = parts[3];
+        let currentPage = parseInt(parts[4]) || 0;
+
+        // تحديث الصفحة الحالية بناءً على الاتجاه
+        if (direction === 'prev') {
+            currentPage = Math.max(0, currentPage - 1);
+        } else if (direction === 'next') {
+            currentPage = currentPage + 1;
+        }
+
+        // إعادة جلب البيانات وإنشاء الإمبد للصفحة الجديدة
+        const promoteLogsPath = path.join(__dirname, '..', 'data', 'promoteLogs.json');
+        const promoteLogs = readJson(promoteLogsPath, []);
+
+        const roleRecords = promoteLogs.filter(log => {
+            if (!log.data) return false;
+            
+            if (log.type === 'BULK_PROMOTION') {
+                return log.data.targetRoleId === selectedRoleId || log.data.sourceRoleId === selectedRoleId;
+            } else if (log.type === 'PROMOTION_APPLIED' || log.type === 'PROMOTION_ENDED') {
+                return log.data.roleId === selectedRoleId || log.data.role?.id === selectedRoleId;
+            }
+            
+            return log.data.roleId === selectedRoleId;
+        }).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+        const recordsPerPage = 5;
+        const totalPages = Math.ceil(roleRecords.length / recordsPerPage);
+        currentPage = Math.max(0, Math.min(currentPage, totalPages - 1));
+
+        const role = interaction.guild.roles.cache.get(selectedRoleId);
+        if (!role) {
+            await interaction.update({
+                content: 'لم يتم العثور على الرول!',
+                components: []
+            });
+            return;
+        }
+
+        function createRoleRecordsEmbed(page) {
+            const start = page * recordsPerPage;
+            const end = start + recordsPerPage;
+            const pageRecords = roleRecords.slice(start, end);
+
+            const embed = colorManager.createEmbed()
+                .setTitle('📋 سجلات الترقيات - الرول')
+                .setDescription(`**الرول المحدد:** <@&${selectedRoleId}> (${role.name})\n` +
+                              `**الصفحة:** ${page + 1} من ${totalPages} • **إجمالي السجلات:** ${roleRecords.length}\n` +
+                              `**آخر تحديث:** <t:${Math.floor(Date.now() / 1000)}:R>`)
+                .setThumbnail(interaction.guild.iconURL({ dynamic: true }))
+                .setTimestamp();
+
+            pageRecords.forEach((record, index) => {
+                const globalIndex = start + index + 1;
+                const recordDate = new Date(record.timestamp || Date.now());
+                const timestamp = Math.floor(recordDate.getTime() / 1000);
+
+                let actionText = '';
+                let actionIcon = '';
+                let statusColor = '';
+
+                switch (record.type) {
+                    case 'BULK_PROMOTION':
+                        const sourceRoleName = record.data?.sourceRoleName || 'غير محدد';
+                        actionText = `ترقية جماعية من رول "${sourceRoleName}"`;
+                        actionIcon = '👥';
+                        statusColor = '🟢';
+                        break;
+
+                    case 'PROMOTION_APPLIED':
+                        const userName = record.data?.targetUser?.username || 
+                                       record.data?.targetUser?.displayName || 
+                                       `العضو ID: ${record.data?.targetUserId}`;
+                        const previousRoleName = record.data?.previousRole?.name || 'بدون رول سابق';
+                        actionText = `ترقية فردية للعضو "${userName}" من "${previousRoleName}"`;
+                        actionIcon = '⬆️';
+                        statusColor = '🟢';
+                        break;
+
+                    case 'PROMOTION_ENDED':
+                        const endedUserName = record.data?.targetUser?.username || 
+                                             `العضو ID: ${record.data?.targetUserId}`;
+                        actionText = `انتهت ترقية العضو "${endedUserName}"`;
+                        actionIcon = '⏰';
+                        statusColor = '🔴';
+                        break;
+
+                    default:
+                        actionText = `إجراء غير معروف (${record.type || 'بدون نوع'})`;
+                        actionIcon = '❓';
+                        statusColor = '🟡';
+                        break;
+                }
+
+                const moderatorId = record.data?.byUserId || record.data?.moderatorId;
+                const targetUserId = record.data?.targetUserId || record.data?.userId;
+                const duration = record.data?.duration || 'نهائي';
+                const reason = record.data?.reason || 'لم يتم تحديد سبب';
+
+                let statusInfo = '';
+                if (record.type === 'PROMOTION_APPLIED' && duration !== 'نهائي') {
+                    const endTime = record.data?.endTime;
+                    if (endTime) {
+                        const isExpired = Date.now() > endTime;
+                        statusInfo = isExpired ? '\n🔴 **الحالة:** منتهية' : '\n🟢 **الحالة:** نشطة';
+                    }
+                }
+
+                embed.addFields([
+                    {
+                        name: `${statusColor} ${actionIcon} سجل رقم ${globalIndex}`,
+                        value: `**النوع:** ${actionText}\n` +
+                               `**العضو المستهدف:** <@${targetUserId}>\n` +
+                               `**الرول:** <@&${record.data?.roleId}>\n` +
+                               `**المدة المحددة:** ${duration}\n` +
+                               `**السبب:** ${reason}\n` +
+                               `**تم بواسطة:** <@${moderatorId}>\n` +
+                               `**تاريخ الإجراء:** <t:${timestamp}:F> (<t:${timestamp}:R>)` +
+                               statusInfo,
+                        inline: false
+                    }
+                ]);
+            });
+
+            return embed;
+        }
+
+        const embed = createRoleRecordsEmbed(currentPage);
+
+        // إعادة إنشاء أزرار التنقل مع الصفحة المحدثة
+        const components = [];
+        
+        if (totalPages > 1) {
+            const navigationRow = new ActionRowBuilder();
+            
+            const prevButton = new ButtonBuilder()
+                .setCustomId(`role_records_prev_${selectedRoleId}_${currentPage}`)
+                .setLabel('◀ السابق')
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(currentPage === 0);
+            
+            const pageButton = new ButtonBuilder()
+                .setCustomId(`role_records_page_info`)
+                .setLabel(`${currentPage + 1}/${totalPages}`)
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(true);
+            
+            const nextButton = new ButtonBuilder()
+                .setCustomId(`role_records_next_${selectedRoleId}_${currentPage}`)
+                .setLabel('التالي ▶')
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(currentPage === totalPages - 1);
+            
+            navigationRow.addComponents(prevButton, pageButton, nextButton);
+            components.push(navigationRow);
+        }
+        
+        const backButton = new ButtonBuilder()
+            .setCustomId('promote_records_back')
+            .setLabel('العودة لقائمة الرولات')
+            .setStyle(ButtonStyle.Primary);
+        
+        const backRow = new ActionRowBuilder().addComponents(backButton);
+        components.push(backRow);
+
+        await interaction.update({
+            embeds: [embed],
+            content: '',
+            components: components
+        });
+        return;
+    }
+
+    // Handle back to roles list button
+    if (interaction.isButton() && customId === 'promote_records_back') {
+        // إعادة توجيه إلى قائمة الرولات
+        const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
+        const adminRoles = readJson(adminRolesPath, []);
+
+        if (adminRoles.length === 0) {
+            await interaction.update({
+                content: 'لا توجد رولات إدارية محددة!',
+                components: []
+            });
+            return;
+        }
+
+        const availableRoles = adminRoles.map(roleId => {
+            const role = interaction.guild.roles.cache.get(roleId);
+            return role ? {
+                label: role.name,
+                value: roleId,
+                description: `عرض سجلات ترقيات ${role.name}`
+            } : null;
+        }).filter(Boolean).slice(0, 25);
+
+        const roleSelect = new StringSelectMenuBuilder()
+            .setCustomId('promote_records_select_role')
+            .setPlaceholder('اختر الرول لعرض سجلات ترقياته...')
+            .addOptions(availableRoles);
+
+        const roleRow = new ActionRowBuilder().addComponents(roleSelect);
+
+        await interaction.update({
+            content: 'اختر الرول لعرض سجلات ترقياته:',
+            components: [roleRow]
         });
         return;
     }
