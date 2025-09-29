@@ -158,7 +158,7 @@ function loadPendingReports() {
 }
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMessageReactions],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildPresences],
   partials: [Partials.Channel, Partials.Message, Partials.Reaction]
 });
 
@@ -751,6 +751,16 @@ client.once(Events.ClientReady, async () => {
         }
       }
     }
+
+    // تنظيف بيانات الأعضاء المترقين القديمة (أكثر من 24 ساعة)
+    if (client.bulkPromotionMembers) {
+      const now = Date.now();
+      for (const [key, data] of client.bulkPromotionMembers.entries()) {
+        if (now - data.timestamp > 24 * 60 * 60 * 1000) { // 24 ساعة
+          client.bulkPromotionMembers.delete(key);
+        }
+      }
+    }
   }, 300 * 1000); // كل 5 دقائق
 
 
@@ -870,7 +880,7 @@ client.on('messageReactionAdd', async (reaction, user) => {
     try {
       const { getDatabase } = require('./utils/database');
       const dbManager = getDatabase();
-      
+
       if (!dbManager || !dbManager.isInitialized) {
         console.log('⚠️ قاعدة البيانات غير مهيأة - تم تجاهل تتبع التفاعل');
         return;
@@ -881,7 +891,7 @@ client.on('messageReactionAdd', async (reaction, user) => {
 
       // تتبع النشاط مع معلومات مفصلة
       console.log(`📊 محاولة تتبع تفاعل المستخدم ${user.username} (${user.id})`);
-      
+
       const success = await trackUserActivity(user.id, 'reaction', {
         messageId: reaction.message.id,
         channelId: reaction.message.channelId,
@@ -914,11 +924,11 @@ client.on('messageReactionRemove', async (reaction, user) => {
     if (user.bot || !reaction.message.guild) return;
 
     console.log(`👎 تم إزالة تفاعل: ${user.username} (${user.id}) - الإيموجي: ${reaction.emoji.name || reaction.emoji.id || 'custom'}`);
-    
+
     // يمكن إضافة منطق لتتبع إزالة التفاعلات هنا إذا أردت
     // const { trackUserActivity } = require('./utils/userStatsCollector');
     // await trackUserActivity(user.id, 'reaction_remove', { ... });
-    
+
   } catch (error) {
     if (error.code === 10008 || error.code === 50001) {
       return;
@@ -935,7 +945,7 @@ client.on('messageCreate', async message => {
     try {
       const { getDatabase } = require('./utils/database');
       const dbManager = getDatabase();
-      
+
       // التحقق من أن قاعدة البيانات مهيأة
       if (dbManager && dbManager.isInitialized) {
         const { trackUserActivity } = require('./utils/userStatsCollector');
@@ -1238,7 +1248,7 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
                                 .setTimestamp();
 
                             await user.send({ embeds: [warningEmbed] });
-                            console.log(`📧 تم إرسال تحذير للمستخدم ${user.tag} حول محاولة استعادة الرول أثناء الإجازة`);
+                            console.log(`📧 تم إرسال تحذير للمستخدم ${userId} حول محاولة استعادة الرول أثناء الإجازة`);
                         } catch (dmError) {
                             console.error(`❌ فشل في إرسال تحذير للمستخدم ${userId}:`, dmError.message);
                         }
@@ -1259,17 +1269,17 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 client.on('guildMemberRemove', async (member) => {
     try {
         console.log(`📤 عضو غادر السيرفر: ${member.displayName} (${member.id})`);
-        
+
         // Handle down system member leave
         const downManager = require('./utils/downManager');
         await downManager.handleMemberLeave(member);
-        
+
         // Handle promotion system member leave
         await promoteManager.handleMemberLeave(member);
-        
+
         // Handle vacation system member leave
         await vacationManager.handleMemberLeave(member);
-        
+
     } catch (error) {
         console.error('خطأ في معالج الانسحاب:', error);
     }
@@ -1279,17 +1289,17 @@ client.on('guildMemberRemove', async (member) => {
 client.on('guildMemberAdd', async (member) => {
     try {
         console.log(`📥 عضو انضم للسيرفر: ${member.displayName} (${member.id})`);
-        
+
         // Handle down system member join
         const downManager = require('./utils/downManager');
         await downManager.handleMemberJoin(member);
-        
+
         // Handle promotion system member join
         await promoteManager.handleMemberJoin(member);
-        
+
         // Handle vacation system member join
         await vacationManager.handleMemberJoin(member);
-        
+
     } catch (error) {
         console.error('خطأ في معالج العودة:', error);
     }
@@ -1748,6 +1758,100 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
+    // Handle bulk promotion members view button
+    if (interaction.customId && interaction.customId.startsWith('bulk_promotion_members_')) {
+        console.log(`معالجة تفاعل رؤية الأعضاء المترقين: ${interaction.customId}`);
+
+        try {
+            // تهيئة المتغير إذا لم يكن موجوداً
+            if (!client.bulkPromotionMembers) {
+                client.bulkPromotionMembers = new Map();
+            }
+
+            if (!client.bulkPromotionMembers.has(interaction.customId)) {
+                return interaction.reply({
+                    content: '❌ لم يتم العثور على بيانات الأعضاء المترقين أو انتهت صلاحيتها.',
+                    ephemeral: true
+                });
+            }
+
+            const membersData = client.bulkPromotionMembers.get(interaction.customId);
+            
+            // التحقق من صلاحية البيانات (24 ساعة)
+            const dataAge = Date.now() - membersData.timestamp;
+            if (dataAge > 24 * 60 * 60 * 1000) {
+                client.bulkPromotionMembers.delete(interaction.customId);
+                return interaction.reply({
+                    content: '❌ انتهت صلاحية بيانات الأعضاء المترقين (24 ساعة).',
+                    ephemeral: true
+                });
+            }
+
+            // إنشاء قائمة بالأعضاء المترقين
+            let membersList = '';
+            const maxMembersToShow = 20; // حد أقصى 20 عضو لتجنب تجاوز حد الحقول
+            
+            for (let i = 0; i < Math.min(membersData.successfulMembers.length, maxMembersToShow); i++) {
+                const member = membersData.successfulMembers[i];
+                const memberObj = typeof member === 'object' ? member : { id: member, displayName: null };
+                const displayName = memberObj.displayName || `العضو ${memberObj.id}`;
+                membersList += `<@${memberObj.id}> (${displayName})\n`;
+            }
+
+            if (membersData.successfulMembers.length > maxMembersToShow) {
+                membersList += `\n**+${membersData.successfulMembers.length - maxMembersToShow} عضو إضافي...**`;
+            }
+
+            // محاولة الحصول على أسماء الرولات من السيرفر
+            let sourceRoleName = 'الرول المصدر';
+            let targetRoleName = 'الرول المستهدف';
+            
+            try {
+                if (membersData.sourceRoleId) {
+                    const sourceRole = await interaction.guild.roles.fetch(membersData.sourceRoleId);
+                    if (sourceRole) sourceRoleName = sourceRole.name;
+                }
+                if (membersData.targetRoleId) {
+                    const targetRole = await interaction.guild.roles.fetch(membersData.targetRoleId);
+                    if (targetRole) targetRoleName = targetRole.name;
+                }
+            } catch (roleError) {
+                console.log('خطأ في جلب أسماء الرولات:', roleError);
+            }
+
+            const membersEmbed = colorManager.createEmbed()
+                .setTitle('👥 **الأعضاء المترقين - ترقية جماعية**')
+                .setDescription(`**من:** ${sourceRoleName}\n**إلى:** ${targetRoleName}\n**بواسطة:** <@${membersData.moderator}>`)
+                .addFields([
+                    { name: '📝 **السبب**', value: membersData.reason || 'لم يتم تحديد سبب', inline: false },
+                    { name: '✅ **الأعضاء المترقين**', value: membersList || 'لا يوجد أعضاء', inline: false },
+                    { name: '📊 **العدد الإجمالي**', value: `${membersData.successfulMembers.length} عضو`, inline: true },
+                    { name: '📅 **وقت الترقية**', value: `<t:${Math.floor(membersData.timestamp / 1000)}:F>`, inline: true }
+                ])
+                .setFooter({ text: 'هذه رسالة مخفية - يمكن رؤيتها فقط من قِبل من ضغط على الزر' })
+                .setTimestamp();
+
+            await interaction.reply({
+                embeds: [membersEmbed],
+                ephemeral: true
+            });
+
+        } catch (error) {
+            console.error('خطأ في معالجة رؤية الأعضاء المترقين:', error);
+            try {
+                if (!interaction.replied && !interaction.deferred) {
+                    await interaction.reply({
+                        content: '❌ حدث خطأ أثناء عرض قائمة الأعضاء.',
+                        ephemeral: true
+                    });
+                }
+            } catch (replyError) {
+                console.error('خطأ في الرد على خطأ رؤية الأعضاء:', replyError);
+            }
+        }
+        return;
+    }
+
     // --- Promotion System Interaction Router ---
     if (interaction.customId && interaction.customId.startsWith('promote_')) {
         console.log(`معالجة تفاعل نظام الترقيات: ${interaction.customId}`);
@@ -1755,7 +1859,7 @@ client.on('interactionCreate', async (interaction) => {
         try {
             const promoteContext = { client, BOT_OWNERS };
             const promoteCommand = client.commands.get('promote');
-            
+
             if (promoteCommand && promoteCommand.handleInteraction) {
                 await promoteCommand.handleInteraction(interaction, promoteContext);
             } else {
@@ -1909,7 +2013,7 @@ client.on('interactionCreate', async (interaction) => {
 
                 const rejectionEmbed = new EmbedBuilder()
                     .setColor('#FF0000')
-                    .setDescription(`❌ **تم رفض طلب إنهاء إجازة <@${userId}>**`);
+                    .setDescription(`❌ **تم رفض إجازة <@${userId}>**`);
 
                 await interaction.update({ embeds: [rejectionEmbed], components: [] });
 
@@ -2026,12 +2130,23 @@ client.on('interactionCreate', async (interaction) => {
         // The old handler for early termination has been moved to my-vacation.js
     }
 
-    // Handle adminroles interactions
-    if (interaction.customId && (interaction.customId.startsWith('adminroles_') ||
-        interaction.customId === 'adminroles_select_role')) {
-        console.log(`معالجة تفاعل رولات المشرفين: ${interaction.customId}`);
-        // These are handled within the adminroles command itself
-        return;
+    // Handle adminroles interactions (including refresh buttons)
+    if (customId.startsWith('adminroles_') || customId === 'admin_roles_select' || customId === 'admin_roles_add' || customId === 'admin_roles_remove') {
+      try {
+        const adminrolesCommand = client.commands.get('adminroles');
+        if (adminrolesCommand && adminrolesCommand.handleInteraction) {
+          await adminrolesCommand.handleInteraction(interaction, context);
+        } else {
+          // Handle directly in main bot file as fallback
+          await handleAdminRolesInteraction(interaction, context);
+        }
+      } catch (error) {
+        console.error('Error in adminroles interaction:', error);
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({ content: '❌ حدث خطأ أثناء معالجة التفاعل!', ephemeral: true });
+        }
+      }
+      return;
     }
 
     // Handle DM down interactions separately
@@ -2141,15 +2256,19 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // Handle adminroles interactions
+    // Handle adminroles interactions (including refresh buttons)
     if (interaction.customId && interaction.customId.startsWith('adminroles_')) {
-        console.log(`معالجة تفاعل adminroles: ${interaction.customId}`);
-        const adminRolesCommand = client.commands.get('adminroles');
-        if (adminRolesCommand && adminRolesCommand.handleInteraction) {
-            await adminRolesCommand.handleInteraction(interaction, context);
-        }
-        return;
+      console.log(`معالجة تفاعل adminroles: ${interaction.customId}`);
+      const adminRolesCommand = client.commands.get('adminroles');
+      if (adminRolesCommand && adminRolesCommand.handleInteraction) {
+        await adminRolesCommand.handleInteraction(interaction, context);
+      } else {
+        // Fallback handler if the command doesn't exist or doesn't have handleInteraction
+        await handleAdminRolesInteraction(interaction, context);
+      }
+      return;
     }
+
 
     // Handle claim buttons - استخدام المعالج الجديد من masoul.js
     if (interaction.isButton() && interaction.customId.startsWith('claim_task_')) {
@@ -2285,7 +2404,8 @@ client.on('interactionCreate', async (interaction) => {
         const jumpLink = `https://discord.com/channels/${interaction.guild?.id || '@me'}/${channelId}/${messageId}`;
 
         const responseEmbed = colorManager.createEmbed()
-          .setDescription(`**✅ تم استلام الاستدعاء من <@${adminId}>**\n\n**[اضغط هنا للذهاب للرسالة](${jumpLink})**`)
+          .setDescription(`**✅ تم استلام الاستدعاء من <@${adminId}>**`)
+          .addFields([{ name: '\u200B', value: `[**اضغط هنا للذهاب للرسالة**](${jumpLink})`}])
           .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400677612304470086/images__5_-removebg-preview.png?ex=688d822e&is=688c30ae&hm=1ea7a63bb89b38bcd76c0f5668984d7fc919214096a3d3ee92f5d948497fcb51&');
 
         // تحديث الرسالة لتعطيل الزر
@@ -2609,7 +2729,407 @@ client.on('interactionCreate', async (interaction) => {
 
             const responsibilityName = parts[2];
             const userId = parts[3]; // Store the target user ID
+            // Check cooldown
+            const { checkCooldown } = require('./commands/cooldown.js');
+            const cooldownTime = checkCooldown(buttonInteraction.user.id, responsibilityName);
+            if (cooldownTime > 0) {
+              return buttonInteraction.reply({
+                content: `**لقد استخدمت هذا الأمر مؤخرًا. يرجى الانتظار ${Math.ceil(cooldownTime / 1000)} ثانية أخرى.**`,
+                flags: 64
+              });
+            }
 
+            // إظهار نموذج السبب
+            const modal = new ModalBuilder()
+              .setCustomId(`setup_reason_modal_${responsibilityName}_${userId}_${Date.now()}`) // Include target user ID in customId
+              .setTitle('call reason');
+
+            const reasonInput = new TextInputBuilder()
+              .setCustomId('reason')
+              .setLabel('Reason')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+              .setPlaceholder('اكتب سبب الحاجة للمسؤول...')
+              .setMaxLength(1000);
+
+            const reasonRow = new ActionRowBuilder().addComponents(reasonInput);
+            modal.addComponents(reasonRow);
+
+            await buttonInteraction.showModal(modal);
+
+          } catch (error) {
+            console.error('Error in setup button collector:', error);
+          }
+        });
+
+        // Set a timeout to delete the message after 10 minutes if no action is taken
+        const deleteTimeout = setTimeout(async () => {
+          try {
+            await interaction.deleteReply().catch(() => {});
+            console.log('تم حذف رسالة الاستدعاء بعد انتهاء الوقت المحدد من المعالج العام');
+
+            // Try to update all setup menus
+            try {
+              const setupCommand = client.commands.get('setup');
+              if (setupCommand && setupCommand.updateAllSetupMenus) {
+                setupCommand.updateAllSetupMenus(client);
+                console.log('تم تحديث جميع منيو السيتب من المعالج العام');
+              }
+            } catch (error) {
+              console.error('خطأ في تحديث منيو السيتب من المعالج العام:', error);
+            }
+          } catch (error) {
+            console.error('خطأ في حذف رسالة الاستدعاء من المعالج العام:', error);
+          }
+        }, 10 * 60 * 1000); // 10 دقائق
+
+        buttonCollector.on('collect', async (buttonInteraction) => {
+          // Clear the delete timeout when any button is clicked
+          clearTimeout(deleteTimeout);
+        });
+
+        buttonCollector.on('end', async (collected, reason) => {
+          try {
+            console.log(`Button collector ended in global handler: ${reason}`);
+
+            // Clear the timeout
+            clearTimeout(deleteTimeout);
+
+            // Only delete message if collector ended due to timeout or manual stop
+            if (reason === 'time' || reason === 'manual') {
+              try {
+                await interaction.deleteReply().catch(() => {});
+                console.log('تم حذف رسالة الاستدعاء من المعالج العام');
+              } catch (error) {
+                console.error('خطأ في حذف رسالة الاستدعاء من المعالج العام:', error);
+              }
+
+              // Try to update all setup menus
+              try {
+                const setupCommand = client.commands.get('setup');
+                if (setupCommand && setupCommand.updateAllSetupMenus) {
+                  setupCommand.updateAllSetupMenus(client);
+                  console.log('تم تحديث جميع منيو السيتب من المعالج العام');
+                }
+              } catch (error) {
+                console.error('خطأ في تحديث منيو السيتب من المعالج العام:', error);
+              }
+            }
+          } catch (error) {
+            console.error('خطأ في إنهاء button collector في المعالج العام:', error);
+          }
+        });
+
+      } catch (error) {
+        console.error('Error in setup select menu:', error);
+        try {
+          await interaction.reply({
+            content: '**حدث خطأ أثناء معالجة الطلب.**',
+            flags: 64
+          });
+        } catch (replyError) {
+          console.error('Failed to send error reply:', replyError);
+        }
+      }
+      return;
+    }
+
+    // Handle button clicks for setup contacts - الآن يعمل مع جميع الرسائل
+    if (interaction.isButton() && interaction.customId.startsWith('setup_contact_')) {
+      console.log(`🔘 معالجة زر الاتصال: ${interaction.customId}`);
+
+      // التأكد من أن التفاعل لم يتم الرد عليه مسبقاً
+      if (interaction.replied || interaction.deferred) {
+        console.log('تم تجاهل تفاعل متكرر في أزرار السيتب');
+        return;
+      }
+
+      // هذا الزر تم معالجته بالفعل في معالج select menu أعلاه
+      // لا نحتاج معالجة إضافية هنا
+      return;
+    }
+
+    // Handle modal submissions for setup
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('setup_reason_modal_')) {
+      // منع التفاعلات المتكررة
+      if (interaction.replied || interaction.deferred) {
+        console.log('تم تجاهل تفاعل متكرر في نموذج السيتب');
+        return;
+      }
+
+      const customIdParts = interaction.customId.replace('setup_reason_modal_', '').split('_');
+      const responsibilityName = customIdParts[0];
+      const target = customIdParts[1]; // This is the target user ID from the button click
+      let reason = interaction.fields.getTextInputValue('reason').trim();
+
+      // التعامل مع المنشن في النص
+      if (reason.includes('<@')) {
+        // استخراج المنشن وإزالة العلامات
+        reason = reason.replace(/<@!?(\d+)>/g, (match, userId) => {
+          try {
+            return `<@${userId}>`;
+          } catch (error) {
+            return match;
+          }
+        });
+      }
+
+      // التعامل مع معرفات المستخدمين في النص
+      const userIdPattern = /\b\d{17,19}\b/g;
+      const foundIds = reason.match(userIdPattern);
+      if (foundIds) {
+        for (const id of foundIds) {
+          try {
+            await client.users.fetch(id);
+            reason = reason.replace(new RegExp(`\\b${id}\\b`, 'g'), `<@${id}>`);
+          } catch (error) {
+            // ID غير صحيح، نتركه كما هو
+          }
+        }
+      }
+
+      if (!reason || reason.trim() === '') {
+        reason = 'لا يوجد سبب محدد';
+      }
+
+      if (!responsibilities[responsibilityName]) {
+        return interaction.reply({ content: '**المسؤولية غير موجودة!**', flags: 64 });
+      }
+
+      const responsibility = responsibilities[responsibilityName];
+      const responsibles = responsibility.responsibles || [];
+
+      if (responsibles.length === 0) {
+        return interaction.reply({ content: '**لا يوجد مسؤولين معينين لهذه المسؤولية.**', flags: 64 });
+      }
+
+      // Check cooldown
+      const cooldownTime = checkCooldown(interaction.user.id, responsibilityName);
+      if (cooldownTime > 0) {
+        return interaction.reply({
+          content: `**لقد استخدمت هذا الأمر مؤخرًا. يرجى الانتظار ${Math.ceil(cooldownTime / 1000)} ثانية أخرى.**`,
+          flags: 64
+        });
+      }
+
+      // Start cooldown for user
+      startCooldown(interaction.user.id, responsibilityName);
+
+      // Get stored image URL for this user
+      const storedImageUrl = client.setupImageData?.get(interaction.user.id);
+
+      const embed = colorManager.createEmbed()
+        .setTitle(`**طلب مساعدة في المسؤولية: ${responsibilityName}**`)
+        .setDescription(`**السبب:** ${reason}\n**من:** ${interaction.user}`);
+
+      // Add image if available
+      if (storedImageUrl) {
+        embed.setImage(storedImageUrl);
+      }
+
+      const claimButton = new ButtonBuilder()
+        .setCustomId(`claim_task_${responsibilityName}_${Date.now()}_${interaction.user.id}`)
+        .setLabel('claim')
+        .setStyle(ButtonStyle.Success);
+
+      const buttonRow = new ActionRowBuilder().addComponents(claimButton);
+
+      if (target === 'all') {
+        // Send to all responsibles
+        let sentCount = 0;
+        for (const userId of responsibles) {
+          try {
+            const user = await client.users.fetch(userId);
+            await user.send({ embeds: [embed], components: [buttonRow] });
+            sentCount++;
+          } catch (error) {
+            console.error(`Failed to send DM to user ${userId}:`, error);
+          }
+        }
+
+        // Start tracking this task for reminders
+        const taskId = `${responsibilityName}_${Date.now()}`;
+        const notificationsCommand = client.commands.get('notifications');
+        if (notificationsCommand && notificationsCommand.trackTask) {
+          notificationsCommand.trackTask(taskId, responsibilityName, responsibles, client);
+        }
+
+        await interaction.reply({ content: `**تم إرسال الطلب لـ ${sentCount} من المسؤولين.**`, flags: 64 });
+      } else {
+        // Send to specific user
+        try {
+          // التحقق من صحة معرف المستخدم المستهدف
+          if (!/^\d{17,19}$/.test(target)) {
+            return interaction.reply({ content: '**معرف المستخدم المستهدف غير صحيح.**', flags: 64 });
+          }
+
+          const user = await client.users.fetch(target);
+          await user.send({ embeds: [embed], components: [buttonRow] });
+
+          // Start tracking this task for reminders
+          const taskId = `${responsibilityName}_${Date.now()}`;
+          const notificationsCommand = client.commands.get('notifications');
+          if (notificationsCommand && notificationsCommand.trackTask) {
+            notificationsCommand.trackTask(taskId, responsibilityName, [target], client);
+          }
+
+          await interaction.reply({ content: `**تم إرسال الطلب إلى ${user.username}.**`, flags: 64 });
+        } catch (error) {
+          await interaction.reply({ content: '**فشل في إرسال الرسالة الخاصة أو المستخدم غير موجود.**', flags: 64 });
+        }
+      }
+
+      // Log the task requested event
+        logEvent(client, interaction.guild, {
+            type: 'TASK_LOGS',
+            title: 'Task Requested',
+            description: `Responsibility: **${responsibilityName}**`,
+            user: interaction.user,
+            fields: [
+                { name: 'Reason', value: reason, inline: false },
+                { name: 'Target', value: target === 'all' ? 'All' : `<@${target}>`, inline: true }
+            ]
+        });
+      return;
+    }
+
+    // Handle setup select menu interactions - معالج عام للسيتب يعمل مع جميع الرسائل
+    if (interaction.isStringSelectMenu() && interaction.customId === 'setup_select_responsibility') {
+      console.log(`🔄 معالجة اختيار المسؤولية من السيتب: ${interaction.values[0]} - Message ID: ${interaction.message.id}`);
+
+      // التأكد من أن التفاعل لم يتم الرد عليه مسبقاً
+      if (interaction.replied || interaction.deferred) {
+        console.log('تم تجاهل تفاعل متكرر في منيو السيتب');
+        return;
+      }
+
+      try {
+        const selected = interaction.values[0];
+        console.log(`✅ تم اختيار المسؤولية: ${selected}`);
+
+        if (selected === 'no_responsibilities') {
+          return interaction.reply({
+            content: '**لا توجد مسؤوليات معرفة حتى الآن. يرجى إضافة مسؤوليات أولاً.**',
+            flags: 64
+          });
+        }
+
+        // التأكد من أن الرسالة التي تم الرد عليها هي رسالة الإعدادات
+        if (!interaction.message.content.includes('Select a responsibility')) {
+          return interaction.reply({ content: '**هذا ليس تفاعل إعدادات صالح.**', flags: 64 });
+        }
+
+        // التحقق من أن المستخدم الذي تفاعل هو نفس المستخدم الذي استدعى أمر setup
+        const setupCommand = client.commands.get('setup');
+        if (setupCommand && setupCommand.setupInitiatorId !== interaction.user.id) {
+          return interaction.reply({ content: '**ليس لديك الإذن لاستخدام هذا التفاعل.**', flags: 64 });
+        }
+
+        // قراءة المسؤوليات مباشرة من الملف
+        const fs = require('fs');
+        const path = require('path');
+        const responsibilitiesPath = path.join(__dirname, 'data', 'responsibilities.json');
+
+        let currentResponsibilities = {};
+        try {
+          const data = fs.readFileSync(responsibilitiesPath, 'utf8');
+          currentResponsibilities = JSON.parse(data);
+        } catch (error) {
+          console.error('Failed to load responsibilities:', error);
+          return interaction.reply({ content: '**خطأ في تحميل المسؤوليات!**', flags: 64 });
+        }
+
+        const responsibility = currentResponsibilities[selected];
+        if (!responsibility) {
+          return interaction.reply({ content: '**المسؤولية غير موجودة!**', flags: 64 });
+        }
+
+        const desc = responsibility.description && responsibility.description.toLowerCase() !== 'لا'
+          ? responsibility.description
+          : '**No desc**';
+
+        // بناء أزرار المسؤولين
+        const buttons = [];
+        const responsiblesList = [];
+
+        if (responsibility.responsibles && responsibility.responsibles.length > 0) {
+          for (let i = 0; i < responsibility.responsibles.length; i++) {
+            const userId = responsibility.responsibles[i];
+            try {
+              const guild = interaction.guild;
+              const member = await guild.members.fetch(userId);
+              const displayName = member.displayName || member.user.username;
+              responsiblesList.push(`${i + 1}. ${displayName}`);
+              buttons.push(
+                new ButtonBuilder()
+                  .setCustomId(`setup_contact_${selected}_${userId}`)
+                  .setLabel(`${i + 1}`)
+                  .setStyle(ButtonStyle.Primary)
+              );
+            } catch (error) {
+              console.error(`Failed to fetch member ${userId}:`, error);
+              responsiblesList.push(`${i + 1}. User ${userId}`);
+              buttons.push(
+                new ButtonBuilder()
+                  .setCustomId(`setup_contact_${selected}_${userId}`)
+                  .setLabel(`${i + 1}`)
+                  .setStyle(ButtonStyle.Primary)
+              );
+            }
+          }
+        }
+
+        if (buttons.length > 0) {
+          buttons.push(
+            new ButtonBuilder()
+              .setCustomId(`setup_contact_${selected}_all`)
+              .setLabel('الكل')
+              .setStyle(ButtonStyle.Success)
+          );
+        }
+
+        if (buttons.length === 0) {
+          return interaction.reply({
+            content: `**المسؤولية:** __${selected}__\n**الشرح:** *${desc}*\n**لا يوجد مسؤولين معينين لهذه المسؤولية!**`,
+            flags: 64
+          });
+        }
+
+        // إنشاء الإيمبد والأزرار
+        const responseEmbed = colorManager.createEmbed()
+          .setTitle(`استدعاء مسؤولي: ${selected}`)
+          .setDescription(`**الشرح:** *${desc}*\n\n**المسؤولين المتاحين:**\n*${responsiblesList.join('\n')}*\n\n**اختر من تريد استدعائه:**`)
+          .setThumbnail('https://cdn.discordapp.com/emojis/1303973825591115846.png?v=1');
+
+        const actionRows = [];
+        for (let i = 0; i < buttons.length; i += 5) {
+          actionRows.push(new ActionRowBuilder().addComponents(buttons.slice(i, i + 5)));
+        }
+
+        await interaction.reply({
+          embeds: [responseEmbed],
+          components: actionRows,
+          flags: 64
+        });
+
+        // إنشاء collector للأزرار - persistent
+        const buttonCollector = interaction.channel.createMessageComponentCollector({
+          filter: i => i.customId.startsWith('setup_contact_') && i.user.id === interaction.user.id
+        });
+
+        buttonCollector.on('collect', async buttonInteraction => {
+          try {
+            if (buttonInteraction.replied || buttonInteraction.deferred) {
+              return;
+            }
+
+            const parts = buttonInteraction.customId.split('_');
+            if (parts.length < 4) {
+              return;
+            }
+
+            const responsibilityName = parts[2];
+            const userId = parts[3]; // Store the target user ID
             // التحقق من الكولداون
             const { checkCooldown } = require('./commands/cooldown.js');
             const cooldownTime = checkCooldown(buttonInteraction.user.id, responsibilityName);
@@ -2900,16 +3420,16 @@ client.on('interactionCreate', async (interaction) => {
 
     // تجاهل أخطاء Discord المعروفة
     if (error.code && ignoredErrorCodes.includes(error.code)) {
-      console.log(`تم تجاهل خطأ Discord معروف: ${error.code}`);
+      console.log(`تم تجاهل خطأ Discord المعروف: ${error.code}`);
       return;
     }
 
-    // تجاهل أخطاء التفاعلات المنتهية الصلاحية أو المعروفة
+    // تجاهل رسائل الأخطاء المعروفة
     if (error.message && (
       error.message.includes('Unknown interaction') ||
-      error.message.includes('already been acknowledged') ||
+      error.message.includes('Already replied') ||
       error.message.includes('Unknown user') ||
-      error.message.includes('already replied') ||
+      error.message.includes('already been acknowledged') ||
       error.message.includes('Interaction has already been acknowledged') ||
       error.message.includes('Unknown Message') ||
       error.message.includes('Invalid Form Body') ||
@@ -3067,7 +3587,7 @@ process.on('uncaughtException', (error) => {
   // تجاهل أخطاء Discord المعروفة
   const ignoredCodes = [10008, 40060, 10062, 10003, 50013, 50001, 50027, 10015, 50035, 10014, 10020, 40061];
   if (error.code && ignoredCodes.includes(error.code)) {
-    console.log(`تم تجاهل خطأ Discord معروف: ${error.code} - ${error.message}`);
+    console.log(`تم تجاهل خطأ Discord المعروف: ${error.code} - ${error.message}`);
     return;
   }
 
@@ -3138,5 +3658,16 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('❌ فشل في حفظ البيانات:', saveError);
   }
 });
+
+// Need to define handleAdminRolesInteraction if it's used as a fallback
+async function handleAdminRolesInteraction(interaction, context) {
+  console.log(`Fallback handler for adminroles interaction: ${interaction.customId}`);
+  // Implement basic logic or reply with a message indicating fallback
+  await interaction.reply({
+    content: 'Fallback handler for adminroles. The command might not be loaded correctly.',
+    ephemeral: true
+  });
+}
+
 
 client.login(process.env.DISCORD_BOT_TOKEN);
