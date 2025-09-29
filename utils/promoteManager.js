@@ -1113,25 +1113,72 @@ class PromoteManager {
                 break;
 
             case 'BULK_PROMOTION':
-                const sourceRoleDisplay = data.sourceRoleId ? `<@&${data.sourceRoleId}>` : 'غير محدد';
-                const targetRoleDisplay = data.targetRoleId ? `<@&${data.targetRoleId}>` : 'غير محدد';
-
-                embed.setTitle('**تم تطبيق ترقية جماعية**')
-                    .setDescription(`تم تطبيق ترقية جماعية من الرول ${sourceRoleDisplay} إلى ${targetRoleDisplay}`)
+                embed.setTitle('**تم ترقية رول**')
                     .addFields([
-                        { name: '**الرول المصدر**', value: sourceRoleDisplay, inline: true },
-                        { name: '**الرول المستهدف**', value: targetRoleDisplay, inline: true },
-                        { name: '**المدة**', value: data.duration === 'permanent' ? 'نهائي' : data.duration, inline: true },
-                        { name: '**إجمالي الأعضاء**', value: data.totalMembers?.toString() || 'غير محدد', inline: true },
-                        { name: '**تم بنجاح**', value: data.successCount.toString(), inline: true },
-                        { name: '**فشل**', value: data.failedCount.toString(), inline: true },
-                        { name: '**محظورين**', value: data.bannedCount.toString(), inline: true },
-                        { name: '**معدل النجاح**', value: data.totalMembers > 0 ? `${Math.round((data.successCount / data.totalMembers) * 100)}%` : '0%', inline: true },
-                        { name: '**السبب**', value: data.reason, inline: false },
-                        { name: '**بواسطة**', value: `<@${data.moderatorId}>`, inline: true },
-                        { name: '**التاريخ**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
+                        { name: '**من الرول:**', value: data.sourceRoleName || 'غير محدد', inline: true },
+                        { name: '**الى الرول:**', value: data.targetRoleName || 'غير محدد', inline: true },
+                        { name: '**بواسطة:**', value: `<@${data.moderatorId}>`, inline: true },
+                        { name: '**السبب:**', value: data.reason, inline: false },
+                        { name: '**المده:**', value: data.duration, inline: true },
+                        { name: '**التاريخ:**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
                     ])
                     .setColor(data.successCount > 0 ? '#00ff00' : '#ff0000');
+
+                // إنشاء قائمة الأعضاء المتأثرين
+                let affectedMembersText = '';
+                
+                // إضافة الأعضاء الناجحين
+                if (data.successfulMembers && data.successfulMembers.length > 0) {
+                    const successfulMentions = data.successfulMembers.map(member => `<@${member.id}>`);
+                    if (successfulMentions.length <= 10) {
+                        affectedMembersText += successfulMentions.join(' ');
+                    } else {
+                        affectedMembersText += successfulMentions.slice(0, 10).join(' ');
+                        affectedMembersText += `\n**و ${successfulMentions.length - 10} عضو آخر**`;
+                    }
+                }
+
+                // إضافة الأعضاء الذين فشلت ترقيتهم
+                if (data.failedMembers && data.failedMembers.length > 0) {
+                    if (affectedMembersText) affectedMembersText += '\n\n';
+                    affectedMembersText += '**الأعضاء الذين فشلت ترقيتهم:**\n';
+                    data.failedMembers.slice(0, 5).forEach(failed => {
+                        affectedMembersText += `<@${failed.member.id}> خطأ (${failed.reason})\n`;
+                    });
+                    if (data.failedMembers.length > 5) {
+                        affectedMembersText += `**و ${data.failedMembers.length - 5} آخرين فشلوا**`;
+                    }
+                }
+
+                // إضافة الأعضاء المحظورين
+                if (data.bannedMembers && data.bannedMembers.length > 0) {
+                    if (affectedMembersText) affectedMembersText += '\n\n';
+                    affectedMembersText += '**الأعضاء المحظورين:**\n';
+                    data.bannedMembers.slice(0, 5).forEach(banned => {
+                        affectedMembersText += `<@${banned.member.id}> خطأ (${banned.reason})\n`;
+                    });
+                    if (data.bannedMembers.length > 5) {
+                        affectedMembersText += `**و ${data.bannedMembers.length - 5} آخرين محظورين**`;
+                    }
+                }
+
+                if (!affectedMembersText) {
+                    affectedMembersText = 'لا يوجد أعضاء متأثرين';
+                }
+
+                // إضافة حقل الأعضاء المتأثرين
+                if (affectedMembersText.length > 1024) {
+                    affectedMembersText = affectedMembersText.substring(0, 1000) + '...\n**القائمة مقطوعة بسبب الطول**';
+                }
+                
+                embed.addFields([
+                    { name: '**الادارة المتاثرين:**', value: affectedMembersText, inline: false }
+                ]);
+
+                // إضافة إحصائيات في النهاية
+                embed.addFields([
+                    { name: '**إحصائيات:**', value: `✅ نجح: ${data.successCount} | ❌ فشل: ${data.failedCount} | 🚫 محظور: ${data.bannedCount} | 👥 الإجمالي: ${data.totalMembers}`, inline: false }
+                ]);
                 break;
 
             case 'PROMOTION_ENDED':
