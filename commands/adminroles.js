@@ -10,43 +10,41 @@ const name = 'adminroles';
 // مسار ملف رولات المشرفين
 const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
 
-// دالة لقراءة رولات المشرفين من قاعدة البيانات
+// دالة لقراءة رولات المشرفين من ملف JSON
 function loadAdminRoles(client) {
   try {
-    if (client && client.db) {
-      const adminRoles = client.db.getAllAdminRoles();
+    if (fs.existsSync(adminRolesPath)) {
+      const data = fs.readFileSync(adminRolesPath, 'utf8');
+      const adminRoles = JSON.parse(data);
       return Array.isArray(adminRoles) ? adminRoles : [];
     }
-    console.warn('⚠️ قاعدة البيانات غير متوفرة في loadAdminRoles');
+    console.log('📄 ملف adminRoles غير موجود، سيتم إنشاؤه');
     return [];
   } catch (error) {
-    console.error('خطأ في قراءة adminRoles من قاعدة البيانات:', error);
+    console.error('خطأ في قراءة adminRoles من الملف:', error);
     return [];
   }
 }
 
-// دالة لحفظ رولات المشرفين في قاعدة البيانات
+// دالة لحفظ رولات المشرفين في ملف JSON
 function saveAdminRoles(adminRoles, client) {
   try {
-    if (!client || !client.db) {
-      console.error('⚠️ قاعدة البيانات غير متوفرة في saveAdminRoles');
-      return false;
-    }
-
     const finalAdminRoles = Array.isArray(adminRoles) ? adminRoles : [];
     
-    // حذف جميع الرولات الحالية
-    client.db.clearAdminRoles();
-    
-    // إضافة الرولات الجديدة
-    for (const roleId of finalAdminRoles) {
-      client.db.addAdminRole(roleId);
+    // التأكد من وجود مجلد البيانات
+    const dataDir = path.dirname(adminRolesPath);
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
     }
     
-    console.log('✅ تم حفظ رولات المشرفين في قاعدة البيانات');
+    // حفظ الرولات في ملف JSON
+    fs.writeFileSync(adminRolesPath, JSON.stringify(finalAdminRoles, null, 2), 'utf8');
+    
+    console.log('✅ تم حفظ رولات المشرفين في ملف JSON');
+    console.log('📝 الرولات المحفوظة:', finalAdminRoles);
     return true;
   } catch (error) {
-    console.error('خطأ في حفظ adminRoles في قاعدة البيانات:', error);
+    console.error('خطأ في حفظ adminRoles في الملف:', error);
     return false;
   }
 }

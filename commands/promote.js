@@ -2527,6 +2527,8 @@ async function handlePromoteInteractions(interaction, context) {
             let bannedCount = 0;
             let results = [];
             let successfulMembers = [];
+            let failedMembers = [];
+            let bannedMembers = [];
 
             // إرسال رسالة تحديث للمستخدم
             await interaction.editReply({
@@ -2549,6 +2551,10 @@ async function handlePromoteInteractions(interaction, context) {
 
                     if (!banEndTime || banEndTime > Date.now()) {
                         bannedCount++;
+                        bannedMembers.push({
+                            member: member,
+                            reason: 'محظور من الترقيات'
+                        });
                         results.push(`🚫 ${member.displayName}: محظور من الترقيات`);
                         continue;
                     }
@@ -2564,6 +2570,10 @@ async function handlePromoteInteractions(interaction, context) {
 
                 if (!validation.valid) {
                     failedCount++;
+                    failedMembers.push({
+                        member: member,
+                        reason: validation.error
+                    });
                     results.push(`❌ ${member.displayName}: ${validation.error}`);
                     continue;
                 }
@@ -2586,6 +2596,10 @@ async function handlePromoteInteractions(interaction, context) {
                     results.push(`✅ ${member.displayName}: تم ترقيته بنجاح`);
                 } else {
                     failedCount++;
+                    failedMembers.push({
+                        member: member,
+                        reason: result.error
+                    });
                     results.push(`❌ ${member.displayName}: ${result.error}`);
                 }
             }
@@ -2593,19 +2607,18 @@ async function handlePromoteInteractions(interaction, context) {
             // إرسال رسائل DM للأعضاء الذين تم ترقيتهم بنجاح (رسالة جماعية موحدة)
             if (successfulMembers.length > 0) {
                 const dmEmbed = colorManager.createEmbed()
-                    .setTitle('🎉 **ترقية جماعية - تهانينا!**')
+                    .setTitle('**ترقية جماعية - تهانينا!**')
                     .setDescription(`**تم ترقيتك ضمن ترقية جماعية**`)
                     .addFields([
-                        { name: '📈 **نوع الترقية**', value: 'ترقية جماعية لجميع أعضاء الرول', inline: false },
-                        { name: '🏷️ **من الرول**', value: `${bulkSourceRole.name}`, inline: true },
-                        { name: '🏷️ **إلى الرول**', value: `**${targetRole.name}**`, inline: true },
-                        { name: '⏰ **المدة**', value: duration === 'نهائي' ? 'نهائي' : duration, inline: true },
-                        { name: '📝 **السبب**', value: reason, inline: false },
-                        { name: '👨‍💼 **تم بواسطة**', value: `${interaction.user.username}`, inline: true },
-                        { name: '📅 **التاريخ**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
-                        { name: '👥 **العدد الإجمالي**', value: `${successCount} عضو تم ترقيتهم`, inline: true }
+                        { name: '**نوع الترقية**', value: 'ترقية جماعية لجميع أعضاء الرول', inline: false },
+                        { name: '**من الرول**', value: `${bulkSourceRole.name}`, inline: true },
+                        { name: '**إلى الرول**', value: `**${targetRole.name}**`, inline: true },
+                        { name: '**المدة**', value: duration === 'نهائي' ? 'نهائي' : duration, inline: true },
+                        { name: '**السبب**', value: reason, inline: false },
+                        { name: '**تم بواسطة**', value: `${interaction.user.username}`, inline: true },
+                        { name: '**التاريخ**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+                        { name: '**العدد الإجمالي**', value: `${successCount} عضو تم ترقيتهم`, inline: true }
                     ])
-                    .setColor('#00ff00')
                     .setThumbnail(interaction.guild.iconURL({ dynamic: true }))
                     .setTimestamp()
                     .setFooter({ text: `خادم ${interaction.guild.name}`, iconURL: interaction.guild.iconURL({ dynamic: true }) });
@@ -2628,18 +2641,17 @@ async function handlePromoteInteractions(interaction, context) {
 
             // Create summary embed
             const summaryEmbed = colorManager.createEmbed()
-                .setTitle('📊 **نتائج الترقية الجماعية**')
+                .setTitle('**نتائج الترقية الجماعية**')
                 .setDescription(`**تم تطبيق ترقية جماعية من الرول** **${bulkSourceRole.name}** **إلى** **${targetRole.name}**`)
                 .addFields([
-                    { name: '✅ **نجح**', value: successCount.toString(), inline: true },
-                    { name: '❌ **فشل**', value: failedCount.toString(), inline: true },
-                    { name: '🚫 **محظورين**', value: bannedCount.toString(), inline: true },
-                    { name: '👥 **إجمالي الأعضاء**', value: membersWithRole.size.toString(), inline: true },
-                    { name: '⏰ **المدة**', value: duration, inline: true },
-                    { name: '📅 **التاريخ**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
-                    { name: '📝 **السبب**', value: reason, inline: false }
+                    { name: '**نجح**', value: successCount.toString(), inline: true },
+                    { name: '**فشل**', value: failedCount.toString(), inline: true },
+                    { name: '**محظورين**', value: bannedCount.toString(), inline: true },
+                    { name: '**إجمالي الأعضاء**', value: membersWithRole.size.toString(), inline: true },
+                    { name: '**المدة**', value: duration, inline: true },
+                    { name: '**التاريخ**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+                    { name: '**السبب**', value: reason, inline: false }
                 ])
-                .setColor(successCount > 0 ? '#00ff00' : '#ff0000')
                 .setTimestamp();
 
             // Add results if there are failures or bans
@@ -2680,16 +2692,20 @@ async function handlePromoteInteractions(interaction, context) {
             // إرسال سجل موحد بدلاً من سجلات فردية
             await promoteManager.sendLogMessage(interaction.guild, context.client, 'BULK_PROMOTION', {
                 sourceRoleId: sourceRoleId,
-                sourceRoleName: sourceRoleName || bulkSourceRole.name, // Use provided name or fallback
+                sourceRoleName: bulkSourceRole.name,
                 targetRoleId: targetRoleId,
-                targetRoleName: targetRoleName || targetRole.name, // Use provided name or fallback
+                targetRoleName: targetRole.name,
                 moderatorId: interaction.user.id,
-                duration,
+                moderatorUser: interaction.user,
+                duration: duration || 'نهائي',
                 reason,
                 successCount,
                 failedCount,
                 bannedCount,
-                totalMembers: membersWithRole.size
+                totalMembers: membersWithRole.size,
+                successfulMembers: successfulMembers,
+                failedMembers: failedMembers,
+                bannedMembers: bannedMembers
             });
 
         } catch (error) {
