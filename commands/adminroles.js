@@ -10,37 +10,50 @@ const name = 'adminroles';
 // مسار ملف رولات المشرفين
 const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
 
-// دالة لقراءة رولات المشرفين
-function loadAdminRoles() {
+// دالة لقراءة رولات المشرفين من قاعدة البيانات
+function loadAdminRoles(client) {
   try {
-    if (fs.existsSync(adminRolesPath)) {
-      const data = fs.readFileSync(adminRolesPath, 'utf8');
-      const adminRoles = JSON.parse(data);
+    if (client && client.db) {
+      const adminRoles = client.db.getAllAdminRoles();
       return Array.isArray(adminRoles) ? adminRoles : [];
     }
+    console.warn('⚠️ قاعدة البيانات غير متوفرة في loadAdminRoles');
     return [];
   } catch (error) {
-    console.error('خطأ في قراءة adminRoles:', error);
+    console.error('خطأ في قراءة adminRoles من قاعدة البيانات:', error);
     return [];
   }
 }
 
-// دالة لحفظ رولات المشرفين
-function saveAdminRoles(adminRoles) {
+// دالة لحفظ رولات المشرفين في قاعدة البيانات
+function saveAdminRoles(adminRoles, client) {
   try {
+    if (!client || !client.db) {
+      console.error('⚠️ قاعدة البيانات غير متوفرة في saveAdminRoles');
+      return false;
+    }
+
     const finalAdminRoles = Array.isArray(adminRoles) ? adminRoles : [];
-    fs.writeFileSync(adminRolesPath, JSON.stringify(finalAdminRoles, null, 2));
-    console.log('✅ تم حفظ رولات المشرفين في JSON');
+    
+    // حذف جميع الرولات الحالية
+    client.db.clearAdminRoles();
+    
+    // إضافة الرولات الجديدة
+    for (const roleId of finalAdminRoles) {
+      client.db.addAdminRole(roleId);
+    }
+    
+    console.log('✅ تم حفظ رولات المشرفين في قاعدة البيانات');
     return true;
   } catch (error) {
-    console.error('خطأ في حفظ adminRoles:', error);
+    console.error('خطأ في حفظ adminRoles في قاعدة البيانات:', error);
     return false;
   }
 }
 
 async function execute(message, args, { saveData, BOT_OWNERS, client }) {
   // فحص البلوك أولاً
-  if (isUserBlocked(message.author.id)) {
+  if (isUserBlocked(message.author.id, client)) {
     const blockedEmbed = colorManager.createEmbed()
       .setDescription('**🚫 أنت محظور من استخدام أوامر البوت**\n**للاستفسار، تواصل مع إدارة السيرفر**')
       .setThumbnail(client.user.displayAvatarURL({ format: 'png', size: 128 }));
@@ -49,10 +62,7 @@ async function execute(message, args, { saveData, BOT_OWNERS, client }) {
     return;
   }
 
-  // إعادة تحميل المالكين من الملف للتأكد من أحدث البيانات
-  if (global.reloadBotOwners) {
-    global.reloadBotOwners();
-  }
+  // المالكين محدثين من قاعدة البيانات تلقائياً - لا حاجة لإعادة تحميل
   
   // معالجات قوية للسيرفرات الكبيرة
   const MAX_CONCURRENT_OPERATIONS = 10;
@@ -117,7 +127,7 @@ async function execute(message, args, { saveData, BOT_OWNERS, client }) {
   }
 
   // تحميل رولات المشرفين من الملف مباشرة
-  let ADMIN_ROLES = loadAdminRoles();
+  let ADMIN_ROLES = loadAdminRoles(client);
 
   // إنشاء الإيمبد الرئيسي
   function createMainEmbed() {
@@ -179,7 +189,7 @@ async function execute(message, args, { saveData, BOT_OWNERS, client }) {
         }
 
         // إعادة تحميل رولات المشرفين في كل تفاعل
-        ADMIN_ROLES = loadAdminRoles();
+        ADMIN_ROLES = loadAdminRoles(client);
 
       if (interaction.customId === 'adminroles_add') {
         // Send message asking for roles with mention or ID
@@ -231,7 +241,7 @@ async function execute(message, args, { saveData, BOT_OWNERS, client }) {
 
             // حفظ التغييرات في JSON
             if (addedRoles.length > 0) {
-              saveAdminRoles(ADMIN_ROLES);
+              saveAdminRoles(ADMIN_ROLES, client);
 
               // تحديث الكاش
               if (global.updateAdminRolesCache) {
@@ -343,7 +353,7 @@ async function execute(message, args, { saveData, BOT_OWNERS, client }) {
 
             // حفظ التغييرات في JSON
             if (removedRoles.length > 0) {
-              saveAdminRoles(ADMIN_ROLES);
+              saveAdminRoles(ADMIN_ROLES, client);
 
               // تحديث الكاش
               if (global.updateAdminRolesCache) {

@@ -1,4 +1,4 @@
-;;const { ButtonBuilder, ActionRowBuilder, ButtonStyle, StringSelectMenuBuilder, UserSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, RoleSelectMenuBuilder, ChannelSelectMenuBuilder, ChannelType } = require('discord.js');
+const { ButtonBuilder, ActionRowBuilder, ButtonStyle, StringSelectMenuBuilder, UserSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, RoleSelectMenuBuilder, ChannelSelectMenuBuilder, ChannelType } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const ms = require('ms');
@@ -1264,7 +1264,7 @@ async function handlePromoteInteractions(interaction, context) {
 
         // Get target role for checking if members already have it
         const targetRoleId = interaction.customId.split('_')[4]; // This will be set later, for now we'll get it from the next step
-        
+
         // Get database stats for all members
         const database = context.database;
         let statsText = '';
@@ -1320,7 +1320,7 @@ async function handlePromoteInteractions(interaction, context) {
             }
 
             let memberIsValid = true;
-            
+
             if (database) {
                 try {
                     const userStats = await database.get(
@@ -1348,7 +1348,7 @@ async function handlePromoteInteractions(interaction, context) {
                     // لا نستبعد العضو بسبب خطأ في قاعدة البيانات، بل نعرض بيانات أساسية
                     const joinedDate = member.joinedTimestamp ? 
                         `<t:${Math.floor(member.joinedTimestamp / 1000)}:d>` : 'غير معروف';
-                    
+
                     statsText += `**${member.displayName}** <@${userId}>\n`;
                     statsText += `├─ 📅 **انضم :** ${joinedDate}\n`;
                     statsText += `└─ ⚠️ خطأ في قراءة البيانات (سيتم المتابعة)\n\n`;
@@ -1357,7 +1357,7 @@ async function handlePromoteInteractions(interaction, context) {
                 // قاعدة البيانات غير متاحة - نعرض بيانات أساسية
                 const joinedDate = member.joinedTimestamp ? 
                     `<t:${Math.floor(member.joinedTimestamp / 1000)}:d>` : 'غير معروف';
-                    
+
                 statsText += `**${member.displayName}** <@${userId}>\n`;
                 statsText += `├─ 📅 **انضم :** ${joinedDate}\n`;
                 statsText += `└─ ⚠️ بيانات غير متاحة\n\n`;
@@ -1384,7 +1384,7 @@ async function handlePromoteInteractions(interaction, context) {
         // إضافة تفاصيل الأعضاء المستبعدين
         if (excludedMembers.length > 0 || bannedMembers.length > 0) {
             let excludedText = '';
-            
+
             // الأعضاء المحظورين
             if (bannedMembers.length > 0) {
                 excludedText += `**محظورين من الترقيات (${bannedMembers.length}):**\n`;
@@ -1392,7 +1392,7 @@ async function handlePromoteInteractions(interaction, context) {
                 if (bannedMembers.length > 5) excludedText += `\n*+${bannedMembers.length - 5} محظور إضافي*`;
                 excludedText += '\n\n';
             }
-            
+
             // الأعضاء المستبعدين لأسباب أخرى
             if (excludedMembers.length > 0) {
                 excludedText += `**مستبعدين لأسباب أخرى (${excludedMembers.length}):**\n`;
@@ -1478,6 +1478,46 @@ async function handlePromoteInteractions(interaction, context) {
     if (interaction.isStringSelectMenu() && customId === 'promote_bulk_role_target') {
         const [sourceRoleId, targetRoleId] = interaction.values[0].split('_');
 
+        // التحقق من هرمية الرولات قبل إظهار النموذج
+        const sourceRole = interaction.guild.roles.cache.get(sourceRoleId);
+        const targetRole = interaction.guild.roles.cache.get(targetRoleId);
+
+        if (!sourceRole || !targetRole) {
+            await interaction.reply({
+                content: '❌ **لم يتم العثور على أحد الرولات!**',
+                ephemeral: true
+            });
+            return;
+        }
+
+        // فحص أن الرول المستهدف أعلى من الرول المصدر
+        if (targetRole.position <= sourceRole.position) {
+            await interaction.reply({
+                content: `❌ **الرول المستهدف (${targetRole.name}) يجب أن يكون أعلى من الرول المصدر (${sourceRole.name})**`,
+                ephemeral: true
+            });
+            return;
+        }
+
+        // فحص أن الرول المستهدف أقل من رول المُرقي
+        const promoterMember = await interaction.guild.members.fetch(interaction.user.id);
+        const promoterHighestRole = promoterMember.roles.highest;
+
+        // تحسين منطق التحقق: إذا كان الشخص المعين مالك البوت، يُسمح بالترقية بغض النظر عن الهرمية
+        const settings = promoteManager.getSettings();
+        const botOwnersData = readJson(path.join(__dirname, '..', 'data', 'botConfig.json'), {});
+        const botOwners = botOwnersData.owners || [];
+
+        if (!botOwners.includes(interaction.user.id)) {
+            if (targetRole.position >= promoterHighestRole.position) {
+                await interaction.reply({
+                    content: `❌ **لا يمكنك ترقية أعضاء إلى رول (${targetRole.name}) أعلى من أو مساوي لرولك الأعلى (${promoterHighestRole.name})**`,
+                    ephemeral: true
+                });
+                return;
+            }
+        }
+
         // Create modal for duration and reason
         const modal = new ModalBuilder()
             .setCustomId(`promote_bulk_modal_${sourceRoleId}_${targetRoleId}`)
@@ -1543,8 +1583,11 @@ async function handlePromoteInteractions(interaction, context) {
             return;
         }
 
-        // Filter admin roles that user doesn't already have and show higher roles only
+        // Check if member has multiple admin roles to support multiple selection
+        const memberAdminRoles = member.roles.cache.filter(role => adminRoles.includes(role.id));
         const memberHighestRole = member.roles.highest;
+
+        // Filter admin roles that user doesn't already have and show higher roles only
         const availableRoles = adminRoles.filter(roleId => {
             if (member.roles.cache.has(roleId)) return false; // العضو يملكه بالفعل
             const targetRole = interaction.guild.roles.cache.get(roleId);
@@ -1567,51 +1610,120 @@ async function handlePromoteInteractions(interaction, context) {
             return;
         }
 
+        // تحسين النظام لدعم الاختيار المتعدد
+        const maxSelections = Math.min(availableRoles.length, 10); // الحد الأقصى 10 رولات
+        const hasMultipleOptions = availableRoles.length > 1;
+
         const roleSelect = new StringSelectMenuBuilder()
             .setCustomId(`promote_role_${selectedUserId}`)
-            .setPlaceholder('اختر الرول للترقية...')
+            .setPlaceholder(hasMultipleOptions ? 'اختر الرول/الرولات للترقية (يمكن اختيار متعدد)...' : 'اختر الرول للترقية...')
+            .setMinValues(1)
+            .setMaxValues(maxSelections)
             .addOptions(availableRoles);
 
         const roleRow = new ActionRowBuilder().addComponents(roleSelect);
 
+        const embedContent = colorManager.createEmbed()
+            .setTitle('🎯 اختيار رولات الترقية')
+            .setDescription(`**العضو المختار:** <@${selectedUserId}>\n\n` +
+                          `✅ **رولات متاحة للترقية:** ${availableRoles.length}\n` +
+                          `🎮 **اختيار متعدد:** ${hasMultipleOptions ? 'متاح' : 'غير متاح'}\n\n` +
+                          `${hasMultipleOptions ? 
+                              '**يمكنك اختيار رول واحد أو عدة رولات للترقية دفعة واحدة.**' : 
+                              '**يوجد رول واحد فقط متاح للترقية.**'}`)
+            .addFields([
+                {
+                    name: '📋 **الرولات المتاحة**',
+                    value: availableRoles.map((role, index) => 
+                        `${index + 1}. **${role.label}**`
+                    ).join('\n'),
+                    inline: false
+                }
+            ])
+            .setTimestamp();
+
         await interaction.reply({
-            content: ` **اختر الرول لترقية العضو** <@${selectedUserId}>:`,
+            embeds: [embedContent],
             components: [roleRow],
             ephemeral: true
         });
         return;
     }
 
-    // Handle role selection for promotion
+    // Handle role selection for promotion - محسن لدعم الاختيار المتعدد
     if (interaction.isStringSelectMenu() && customId.startsWith('promote_role_')) {
         const userId = customId.split('_')[2];
-        const roleId = interaction.values[0];
+        const selectedRoleIds = interaction.values; // دعم الاختيار المتعدد
+        const isMultipleRoles = selectedRoleIds.length > 1;
+
+        // إنشاء embed لعرض المختارات قبل إظهار المودال
+        const selectedRoles = selectedRoleIds.map(roleId => {
+            const role = interaction.guild.roles.cache.get(roleId);
+            return role ? role.name : 'رول غير معروف';
+        });
+
+        const confirmationEmbed = colorManager.createEmbed()
+            .setTitle(isMultipleRoles ? '🎯 ترقية متعددة مختارة' : '🎯 ترقية فردية مختارة')
+            .setDescription(`**العضو:** <@${userId}>\n**عدد الرولات المختارة:** ${selectedRoleIds.length}`)
+            .addFields([
+                {
+                    name: isMultipleRoles ? '🏷️ **الرولات المختارة**' : '🏷️ **الرول المختار**',
+                    value: selectedRoles.map((roleName, index) => `${index + 1}. **${roleName}**`).join('\n'),
+                    inline: false
+                },
+                {
+                    name: '⏭️ **الخطوة التالية**',
+                    value: 'سيتم فتح نافذة لإدخال المدة والسبب',
+                    inline: false
+                }
+            ])
+            .setTimestamp();
+
+        // Join roleIds with comma for modal customId
+        const roleIdsString = selectedRoleIds.join(',');
 
         // Create modal for duration and reason
         const modal = new ModalBuilder()
-            .setCustomId(`promote_modal_${userId}_${roleId}`)
-            .setTitle('تفاصيل الترقية');
+            .setCustomId(`promote_modal_${userId}_${roleIdsString}`)
+            .setTitle(isMultipleRoles ? 'تفاصيل الترقية المتعددة' : 'تفاصيل الترقية');
 
         const durationInput = new TextInputBuilder()
             .setCustomId('promote_duration')
             .setLabel('المدة (مثل: 7d أو 12h أو نهائي)')
             .setStyle(TextInputStyle.Short)
             .setRequired(true)
-            .setPlaceholder('7d, 12h, 30m, نهائي');
+            .setPlaceholder('7d, 12h, 30m, نهائي')
+            .setValue('نهائي'); // قيمة افتراضية
 
         const reasonInput = new TextInputBuilder()
             .setCustomId('promote_reason')
             .setLabel('السبب')
             .setStyle(TextInputStyle.Paragraph)
             .setRequired(true)
-            .setPlaceholder('اذكر سبب الترقية...');
+            .setPlaceholder(isMultipleRoles ? 
+                'اذكر سبب الترقية المتعددة...' : 
+                'اذكر سبب الترقية...');
 
         modal.addComponents(
             new ActionRowBuilder().addComponents(durationInput),
             new ActionRowBuilder().addComponents(reasonInput)
         );
 
+        // إظهار المودال مباشرة مع معلومات توضيحية في العنوان
         await interaction.showModal(modal);
+
+        // إرسال رسالة توضيحية منفصلة
+        setTimeout(async () => {
+            try {
+                await interaction.followUp({
+                    embeds: [confirmationEmbed],
+                    ephemeral: true
+                });
+            } catch (error) {
+                console.log('تم إغلاق التفاعل أو انتهت صلاحيته');
+            }
+        }, 2000);
+
         return;
     }
 
@@ -1707,38 +1819,83 @@ async function handlePromoteInteractions(interaction, context) {
             const pageRecords = roleRecords.slice(start, end);
 
             const embed = colorManager.createEmbed()
-                .setTitle('Role Promotion Records')
-                .setDescription(`**سجلات ترقيات الرول** <@&${selectedRoleId}>\n**الصفحة ${page + 1} من ${totalPages}** • **إجمالي السجلات: ${roleRecords.length}**`)
+                .setTitle('📋 سجلات الترقيات - الرول')
+                .setDescription(`**الرول المحدد:** <@&${selectedRoleId}> (${role.name})\n` +
+                              `**الصفحة:** ${page + 1} من ${totalPages} • **إجمالي السجلات:** ${roleRecords.length}\n` +
+                              `**آخر تحديث:** <t:${Math.floor(Date.now() / 1000)}:R>`)
+                .setThumbnail(interaction.guild.iconURL({ dynamic: true }))
                 .setTimestamp();
 
             pageRecords.forEach((record, index) => {
                 const globalIndex = start + index + 1;
+                const recordDate = new Date(record.timestamp || Date.now());
+                const timestamp = Math.floor(recordDate.getTime() / 1000);
 
-                // تحديد نوع الترقية والنص المناسب
+                // تحسين تحديد نوع الترقية والنص المناسب
                 let actionText = '';
-                if (record.type === 'BULK_PROMOTION') {
-                    const sourceRoleName = record.data.sourceRoleName || 'غير محدد';
-                    actionText = `تم ترقية جماعية من رول ${sourceRoleName} الى هذا الرول`;
-                } else if (record.type === 'PROMOTION_APPLIED') {
-                    const userName = record.data.targetUser?.username || `<@${record.data.targetUserId}>`;
-                    const previousRoleName = record.data.previousRole?.name || 'لا يوجد رول';
-                    actionText = `تم ترقية الشخص ${userName} الى هذا الرول من الرول ${previousRoleName}`;
-                } else if (record.type === 'PROMOTION_ENDED') {
-                    actionText = 'انتهت الترقية';
-                } else {
-                    actionText = 'إجراء غير معروف';
+                let actionIcon = '';
+                let statusColor = '';
+
+                switch (record.type) {
+                    case 'BULK_PROMOTION':
+                        const sourceRoleName = record.data?.sourceRoleName || 'غير محدد';
+                        actionText = `ترقية جماعية من رول "${sourceRoleName}"`;
+                        actionIcon = '👥';
+                        statusColor = '🟢';
+                        break;
+
+                    case 'PROMOTION_APPLIED':
+                        const userName = record.data?.targetUser?.username || 
+                                       record.data?.targetUser?.displayName || 
+                                       `العضو ID: ${record.data?.targetUserId}`;
+                        const previousRoleName = record.data?.previousRole?.name || 'بدون رول سابق';
+                        actionText = `ترقية فردية للعضو "${userName}" من "${previousRoleName}"`;
+                        actionIcon = '⬆️';
+                        statusColor = '🟢';
+                        break;
+
+                    case 'PROMOTION_ENDED':
+                        const endedUserName = record.data?.targetUser?.username || 
+                                             `العضو ID: ${record.data?.targetUserId}`;
+                        actionText = `انتهت ترقية العضو "${endedUserName}"`;
+                        actionIcon = '⏰';
+                        statusColor = '🔴';
+                        break;
+
+                    default:
+                        actionText = `إجراء غير معروف (${record.type || 'بدون نوع'})`;
+                        actionIcon = '❓';
+                        statusColor = '🟡';
+                        break;
+                }
+
+                // تحسين معلومات إضافية
+                const moderatorId = record.data?.byUserId || record.data?.moderatorId;
+                const targetUserId = record.data?.targetUserId || record.data?.userId;
+                const duration = record.data?.duration || 'نهائي';
+                const reason = record.data?.reason || 'لم يتم تحديد سبب';
+
+                // إضافة معلومات حالة الترقية
+                let statusInfo = '';
+                if (record.type === 'PROMOTION_APPLIED' && duration !== 'نهائي') {
+                    const endTime = record.data?.endTime;
+                    if (endTime) {
+                        const isExpired = Date.now() > endTime;
+                        statusInfo = isExpired ? '\n🔴 **الحالة:** منتهية' : '\n🟢 **الحالة:** نشطة';
+                    }
                 }
 
                 embed.addFields([
                     {
-                        name: ` سجل رقم ${globalIndex}`,
-                        value: `**الإجراء:** ${actionText}\n` +
-                               `**العضو:** <@${record.data.targetUserId || record.data.userId}>\n` +
-                               `**الرول:** <@&${record.data.roleId}>\n` +
-                               `**المدة:** ${record.data.duration || 'نهائي'}\n` +
-                               `**السبب:** ${record.data.reason || 'غير محدد'}\n` +
-                               `**بواسطة:** <@${record.data.byUserId || record.data.moderatorId}>\n` +
-                               `**التاريخ:** <t:${Math.floor(new Date(record.timestamp).getTime() / 1000)}:F>`,
+                        name: `${statusColor} ${actionIcon} سجل رقم ${globalIndex}`,
+                        value: `**النوع:** ${actionText}\n` +
+                               `**العضو المستهدف:** <@${targetUserId}>\n` +
+                               `**الرول:** <@&${record.data?.roleId}>\n` +
+                               `**المدة المحددة:** ${duration}\n` +
+                               `**السبب:** ${reason}\n` +
+                               `**تم بواسطة:** <@${moderatorId}>\n` +
+                               `**تاريخ الإجراء:** <t:${timestamp}:F> (<t:${timestamp}:R>)` +
+                               statusInfo,
                         inline: false
                     }
                 ]);
@@ -1771,27 +1928,78 @@ async function handlePromoteInteractions(interaction, context) {
             return;
         }
 
+        // تحسين عرض السجلات الخاصة بالمستخدم
+        const member = await interaction.guild.members.fetch(selectedUserId).catch(() => null);
+        const memberName = member ? member.displayName : `العضو ID: ${selectedUserId}`;
+
         const recordsEmbed = colorManager.createEmbed()
-            .setTitle(' **سجلات الترقيات**')
-            .setDescription(`سجلات ترقيات العضو <@${selectedUserId}>`)
-            .addFields(records.slice(0, 25).map((record, index) => {
-                // تحديد نوع الترقية والنص المناسب
+            .setTitle('👤 سجلات الترقيات - العضو')
+            .setDescription(`**العضو المحدد:** <@${selectedUserId}> (${memberName})\n` +
+                          `**إجمالي السجلات:** ${records.length}\n` +
+                          `**آخر تحديث:** <t:${Math.floor(Date.now() / 1000)}:R>`)
+            .setThumbnail(member?.displayAvatarURL({ dynamic: true }) || interaction.guild.iconURL({ dynamic: true }))
+            .addFields(records.slice(0, 20).map((record, index) => {
+                const recordDate = new Date(record.timestamp || Date.now());
+                const timestamp = Math.floor(recordDate.getTime() / 1000);
+
+                // تحسين تحديد نوع الترقية والنص المناسب
                 let actionDescription = '';
-                if (record.type === 'BULK_PROMOTION') {
-                    const sourceRoleName = record.data?.sourceRoleName || 'غير محدد';
-                    const targetRoleName = record.roleName || `Role ID: ${record.roleId}`;
-                    actionDescription = `تم ترقية جماعية من رول ${sourceRoleName} الى ${targetRoleName}`;
-                } else if (record.type === 'PROMOTION_APPLIED') {
-                    const previousRoleName = record.data?.previousRole?.name || 'لا يوجد رول';
-                    const targetRoleName = record.roleName || `Role ID: ${record.roleId}`;
-                    actionDescription = `تم ترقية الشخص الى ${targetRoleName} من الرول ${previousRoleName}`;
-                } else {
-                    actionDescription = record.roleName || `Role ID: ${record.roleId}`;
+                let actionIcon = '';
+                let statusColor = '';
+
+                switch (record.type) {
+                    case 'BULK_PROMOTION':
+                        const sourceRoleName = record.data?.sourceRoleName || 'غير محدد';
+                        const targetRoleName = record.roleName || `الرول ID: ${record.roleId}`;
+                        actionDescription = `ترقية جماعية من "${sourceRoleName}" إلى "${targetRoleName}"`;
+                        actionIcon = '👥';
+                        statusColor = '🟢';
+                        break;
+
+                    case 'PROMOTION_APPLIED':
+                        const previousRoleName = record.data?.previousRole?.name || 'بدون رول سابق';
+                        const currentRoleName = record.roleName || `الرول ID: ${record.roleId}`;
+                        actionDescription = `ترقية فردية من "${previousRoleName}" إلى "${currentRoleName}"`;
+                        actionIcon = '⬆️';
+                        statusColor = '🟢';
+                        break;
+
+                    case 'PROMOTION_ENDED':
+                        const endedRoleName = record.roleName || `الرول ID: ${record.roleId}`;
+                        actionDescription = `انتهاء ترقية الرول "${endedRoleName}"`;
+                        actionIcon = '⏰';
+                        statusColor = '🔴';
+                        break;
+
+                    default:
+                        actionDescription = `إجراء غير معروف في الرول "${record.roleName || record.roleId}"`;
+                        actionIcon = '❓';
+                        statusColor = '🟡';
+                        break;
+                }
+
+                // تحديد حالة الترقية
+                const duration = record.duration || 'نهائي';
+                const reason = record.reason || 'لم يتم تحديد سبب';
+                const moderatorId = record.data?.byUserId || record.data?.moderatorId || 'غير معروف';
+
+                let statusInfo = '';
+                if (record.type === 'PROMOTION_APPLIED' && duration !== 'نهائي') {
+                    const endTime = record.data?.endTime;
+                    if (endTime) {
+                        const isExpired = Date.now() > endTime;
+                        statusInfo = isExpired ? '\n🔴 **حالة الترقية:** منتهية' : '\n🟢 **حالة الترقية:** نشطة';
+                    }
                 }
 
                 return {
-                    name: `${index + 1}. ${actionDescription}`,
-                    value: `**السبب:** ${record.reason}\n**المدة:** ${record.duration || 'نهائي'}\n**التاريخ:** <t:${Math.floor(new Date(record.timestamp).getTime() / 1000)}:F>`,
+                    name: `${statusColor} ${actionIcon} سجل رقم ${index + 1}`,
+                    value: `**النوع:** ${actionDescription}\n` +
+                           `**المدة المحددة:** ${duration}\n` +
+                           `**السبب:** ${reason}\n` +
+                           `**تم بواسطة:** <@${moderatorId}>\n` +
+                           `**تاريخ الإجراء:** <t:${timestamp}:F> (<t:${timestamp}:R>)` +
+                           statusInfo,
                     inline: false
                 };
             }))
@@ -2297,13 +2505,15 @@ async function handlePromoteInteractions(interaction, context) {
         const reason = interaction.fields.getTextInputValue('promote_reason');
 
         try {
+            // إرجاء الرد فوراً لتجنب انتهاء صلاحية التفاعل
+            await interaction.deferReply({ ephemeral: true });
+
             const bulkSourceRole = interaction.guild.roles.cache.get(sourceRoleId);
             const targetRole = interaction.guild.roles.cache.get(targetRoleId);
 
             if (!bulkSourceRole || !targetRole) {
-                await interaction.reply({
-                    content: ' **لم يتم العثور على أحد الرولات!**',
-                    ephemeral: true
+                await interaction.editReply({
+                    content: ' **لم يتم العثور على أحد الرولات!**'
                 });
                 return;
             }
@@ -2316,10 +2526,21 @@ async function handlePromoteInteractions(interaction, context) {
             let failedCount = 0;
             let bannedCount = 0;
             let results = [];
+            let successfulMembers = [];
+
+            // إرسال رسالة تحديث للمستخدم
+            await interaction.editReply({
+                content: `⏳ **جاري معالجة الترقية الجماعية...**\n**الأعضاء المستهدفين:** ${membersWithRole.size}\n**من:** ${bulkSourceRole.name}\n**إلى:** ${targetRole.name}`
+            });
 
             // Process each member
             for (const [userId, member] of membersWithRole) {
                 const banKey = `${userId}_${interaction.guild.id}`;
+
+                // تجاهل البوتات
+                if (member.user.bot) {
+                    continue;
+                }
 
                 // Check if banned
                 if (promoteBans[banKey]) {
@@ -2328,6 +2549,7 @@ async function handlePromoteInteractions(interaction, context) {
 
                     if (!banEndTime || banEndTime > Date.now()) {
                         bannedCount++;
+                        results.push(`🚫 ${member.displayName}: محظور من الترقيات`);
                         continue;
                     }
                 }
@@ -2346,11 +2568,12 @@ async function handlePromoteInteractions(interaction, context) {
                     continue;
                 }
 
-                // Process promotion
-                const result = await promoteManager.createPromotion(
+                // Process promotion (mark as bulk operation)
+                const result = await promoteManager.createBulkPromotion(
                     interaction.guild,
                     context.client,
                     userId,
+                    sourceRoleId,
                     targetRoleId,
                     duration,
                     reason,
@@ -2359,215 +2582,312 @@ async function handlePromoteInteractions(interaction, context) {
 
                 if (result.success) {
                     successCount++;
+                    successfulMembers.push(member);
                     results.push(`✅ ${member.displayName}: تم ترقيته بنجاح`);
-
-                    // Send DM notification
-                    try {
-                        const dmEmbed = colorManager.createEmbed()
-                            .setTitle('** تم ترقيتك من رولك**')
-                            .setDescription(`**تم ترقيتك من **${bulkSourceRole.name}** إلى **${targetRole.name}** ضمن ترقية للرول **`)
-                            .addFields([
-                                { name: '**الترقية**', value: `من: ${bulkSourceRole.name}\nإلى: **${targetRole.name}**`, inline: true },
-                                { name: '**تمت الترقية بواسطة**', value: `${interaction.user.username}`, inline: true },
-                                { name: '**المدة**', value: result.duration || 'نهائي', inline: true },
-                                { name: '**السبب**', value: reason, inline: false },
-                                { name: '**ينتهي في**', value: result.endTime ? `<t:${Math.floor(Number(result.endTime) / 1000)}:R>` : 'نهائي', inline: true }
-                            ])
-                            .setTimestamp()
-                            .setFooter({ text: `سيرفرنا ${interaction.guild.name}`, iconURL: interaction.guild.iconURL({ dynamic: true }) });
-
-                        await member.send({ embeds: [dmEmbed] });
-                    } catch (dmError) {
-                        console.log(`لا يمكن إرسال رسالة خاصة إلى ${member.displayName} - قد تكون الرسائل الخاصة مغلقة`);
-                    }
                 } else {
                     failedCount++;
                     results.push(`❌ ${member.displayName}: ${result.error}`);
                 }
             }
 
-            // Collect mentions of successfully promoted members
-            const promotedMembersMentions = [];
-            for (const [userId, member] of membersWithRole) {
-                if (results.some(result => result.includes(`✅ ${member.displayName}`))) {
-                    promotedMembersMentions.push(`<@${userId}>`);
+            // إرسال رسائل DM للأعضاء الذين تم ترقيتهم بنجاح (رسالة جماعية موحدة)
+            if (successfulMembers.length > 0) {
+                const dmEmbed = colorManager.createEmbed()
+                    .setTitle('🎉 **ترقية جماعية - تهانينا!**')
+                    .setDescription(`**تم ترقيتك ضمن ترقية جماعية**`)
+                    .addFields([
+                        { name: '📈 **نوع الترقية**', value: 'ترقية جماعية لجميع أعضاء الرول', inline: false },
+                        { name: '🏷️ **من الرول**', value: `${bulkSourceRole.name}`, inline: true },
+                        { name: '🏷️ **إلى الرول**', value: `**${targetRole.name}**`, inline: true },
+                        { name: '⏰ **المدة**', value: duration === 'نهائي' ? 'نهائي' : duration, inline: true },
+                        { name: '📝 **السبب**', value: reason, inline: false },
+                        { name: '👨‍💼 **تم بواسطة**', value: `${interaction.user.username}`, inline: true },
+                        { name: '📅 **التاريخ**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+                        { name: '👥 **العدد الإجمالي**', value: `${successCount} عضو تم ترقيتهم`, inline: true }
+                    ])
+                    .setColor('#00ff00')
+                    .setThumbnail(interaction.guild.iconURL({ dynamic: true }))
+                    .setTimestamp()
+                    .setFooter({ text: `خادم ${interaction.guild.name}`, iconURL: interaction.guild.iconURL({ dynamic: true }) });
+
+                let dmSuccessCount = 0;
+                let dmFailCount = 0;
+
+                for (const member of successfulMembers) {
+                    try {
+                        await member.send({ embeds: [dmEmbed] });
+                        dmSuccessCount++;
+                    } catch (dmError) {
+                        dmFailCount++;
+                        console.log(`لا يمكن إرسال رسالة خاصة إلى ${member.displayName}`);
+                    }
                 }
+
+                console.log(`تم إرسال ${dmSuccessCount} رسالة خاصة من أصل ${successfulMembers.length} عضو`);
             }
 
             // Create summary embed
             const summaryEmbed = colorManager.createEmbed()
-                .setTitle(' **نتائج الترقية لرول**')
-                .setDescription(`**تم ترقية أعضاء الرول من** <@&${sourceRoleId}> **إلى** <@&${targetRoleId}>\n\n` +
-                    `**الإداريون المتأثرون:** ${promotedMembersMentions.slice(0, 10).join(' ')}\n` +
-                    `${promotedMembersMentions.length > 10 ? `**وعدد إضافي: ${promotedMembersMentions.length - 10}**` : ''}`)
+                .setTitle('📊 **نتائج الترقية الجماعية**')
+                .setDescription(`**تم تطبيق ترقية جماعية من الرول** **${bulkSourceRole.name}** **إلى** **${targetRole.name}**`)
                 .addFields([
-                    { name: ' **تم بنجاح**', value: successCount.toString(), inline: true },
-                    { name: ' **فشل**', value: failedCount.toString(), inline: true },
-                    { name: ' **محظورين**', value: bannedCount.toString(), inline: true },
-                    { name: ' **المدة**', value: duration === 'permanent' ? 'نهائي' : duration, inline: true },
-                    { name: '**السبب**', value: String(reason), inline: false }
+                    { name: '✅ **نجح**', value: successCount.toString(), inline: true },
+                    { name: '❌ **فشل**', value: failedCount.toString(), inline: true },
+                    { name: '🚫 **محظورين**', value: bannedCount.toString(), inline: true },
+                    { name: '👥 **إجمالي الأعضاء**', value: membersWithRole.size.toString(), inline: true },
+                    { name: '⏰ **المدة**', value: duration, inline: true },
+                    { name: '📅 **التاريخ**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+                    { name: '📝 **السبب**', value: reason, inline: false }
                 ])
+                .setColor(successCount > 0 ? '#00ff00' : '#ff0000')
                 .setTimestamp();
 
-            if (results.length > 0) {
-                const resultText = results.slice(0, 10).join('\n') + (results.length > 10 ? '\n**...والمزيد**' : '');
+            // Add results if there are failures or bans
+            if (failedCount > 0 || bannedCount > 0) {
+                const problemResults = results.filter(r => r.startsWith('❌') || r.startsWith('🚫')).slice(0, 15);
+                if (problemResults.length > 0) {
+                    summaryEmbed.addFields([
+                        { name: '⚠️ **تفاصيل المشاكل**', value: problemResults.join('\n'), inline: false }
+                    ]);
+                }
+            }
+
+            if (successCount > 0) {
                 summaryEmbed.addFields([
-                    { name: ' تفاصيل النتائج', value: resultText, inline: false }
+                    { name: '✅ **ملاحظة**', value: `تم إرسال إشعارات خاصة لجميع الأعضاء الذين تم ترقيتهم بنجاح`, inline: false }
                 ]);
             }
 
-            await interaction.reply({ embeds: [summaryEmbed], ephemeral: true });
+            await interaction.editReply({ embeds: [summaryEmbed] });
 
-            // Log the bulk promotion
+            // Log bulk promotion with unified logging
             promoteManager.logAction('BULK_PROMOTION', {
-                sourceRoleId: bulkSourceRole.id,
+                sourceRoleId,
                 sourceRoleName: bulkSourceRole.name,
-                targetRoleId: targetRole.id,
+                targetRoleId,
                 targetRoleName: targetRole.name,
                 moderatorId: interaction.user.id,
-                duration: duration,
-                reason: reason,
-                successCount: successCount,
-                failedCount: failedCount,
-                bannedCount: bannedCount,
+                duration,
+                reason,
+                successCount,
+                failedCount,
+                bannedCount,
+                totalMembers: membersWithRole.size,
                 guildId: interaction.guild.id,
                 timestamp: Date.now()
             });
 
+            // إرسال سجل موحد بدلاً من سجلات فردية
+            await promoteManager.sendLogMessage(interaction.guild, context.client, 'BULK_PROMOTION', {
+                sourceRoleId: sourceRoleId,
+                sourceRoleName: sourceRoleName || bulkSourceRole.name, // Use provided name or fallback
+                targetRoleId: targetRoleId,
+                targetRoleName: targetRoleName || targetRole.name, // Use provided name or fallback
+                moderatorId: interaction.user.id,
+                duration,
+                reason,
+                successCount,
+                failedCount,
+                bannedCount,
+                totalMembers: membersWithRole.size
+            });
+
         } catch (error) {
             console.error('خطأ في معالجة الترقية الجماعية:', error);
-            await interaction.reply({
-                content: ' **حدث خطأ أثناء معالجة الترقية الجماعية!**',
-                ephemeral: true
-            });
+            try {
+                if (interaction.deferred) {
+                    await interaction.editReply({
+                        content: ' **حدث خطأ أثناء معالجة الترقية الجماعية!**'
+                    });
+                } else {
+                    await interaction.reply({
+                        content: ' **حدث خطأ أثناء معالجة الترقية الجماعية!**',
+                        ephemeral: true
+                    });
+                }
+            } catch (replyError) {
+                console.error('خطأ في الرد على خطأ الترقية الجماعية:', replyError);
+            }
         }
         return;
     }
 
     // Handle modal submission for promotion
     if (interaction.isModalSubmit() && customId.startsWith('promote_modal_')) {
-        const [, , userId, roleId] = customId.split('_');
-        const duration = interaction.fields.getTextInputValue('promote_duration');
-        const reason = interaction.fields.getTextInputValue('promote_reason');
+        const parts = customId.split('_');
+        const userId = parts[2];
+        const roleIds = parts[3].split(','); // Support multiple roles
+        let duration = interaction.fields.getTextInputValue('promote_duration').trim();
+        const reason = interaction.fields.getTextInputValue('promote_reason').trim();
+
+        // Normalize duration input - تحسين معالجة المدة
+        if (!duration || duration.trim() === '') {
+            duration = null; // empty input means permanent
+        } else if (duration.toLowerCase() === 'نهائي' || duration.toLowerCase() === 'permanent' || duration.toLowerCase() === 'دائم') {
+            duration = null; // null for permanent promotions
+        } else {
+            // تنظيف المدة وإضافة دعم للغة العربية
+            duration = duration.trim()
+                .replace('ايام', 'd').replace('ايام', 'd').replace('يوم', 'd')
+                .replace('ساعات', 'h').replace('ساعة', 'h')
+                .replace('دقائق', 'm').replace('دقيقة', 'm');
+        }
 
         try {
             const member = await interaction.guild.members.fetch(userId);
-            const role = await interaction.guild.roles.fetch(roleId);
-
-            if (!member || !role) {
+            if (!member) {
                 await interaction.reply({
-                    content: ' **لم يتم العثور على العضو أو الرول!**',
+                    content: '❌ **لم يتم العثور على العضو!**',
                     ephemeral: true
                 });
                 return;
             }
 
-            // Process the promotion
-            const result = await promoteManager.createPromotion(
-                interaction.guild,
-                context.client,
-                userId,
-                roleId,
-                duration,
-                reason,
-                interaction.user.id
-            );
-
-            if (result.success) {
-                const successEmbed = colorManager.createEmbed()
-                    .setTitle('Promotion Applied Successfully')
-                    .setDescription(`تم ترقية العضو وإعطاؤه الرول كما هو مطلوب`)
-                    .addFields([
-                        { name: ' العضو', value: `<@${userId}>`, inline: true },
-                        { name: ' الرول', value: `<@&${roleId}>`, inline: true },
-                        { name: ' المدة', value: result.duration || 'نهائي', inline: true },
-                        { name: ' السبب', value: reason, inline: false },
-                        { name: ' بواسطة', value: `<@${interaction.user.id}>`, inline: true },
-                        { name: 'ينتهي في', value: result.endTime ? `<t:${Math.floor(Number(result.endTime) / 1000)}:R>` : 'نهائي', inline: true }
-                    ])
-                    .setTimestamp();
-
-                await interaction.reply({ embeds: [successEmbed], ephemeral: true });
-
-                // Send notification to the promoted member
+            // Validate duration with better error handling
+            if (duration && duration !== null) {
                 try {
-                    const dmEmbed = colorManager.createEmbed()
-                        .setTitle('Role Promoted')
-                        .setDescription(`تم ترقيتك وإعطاؤك رول **${role.name}** من قبل الإدارة.`)
-                        .addFields([
-                            { name: 'الرول الجديد', value: `${role.name}`, inline: true },
-                            { name: ' تمت الترقية بواسطة', value: `${interaction.user.username}`, inline: true },
-                            { name: ' المدة', value: result.duration || 'نهائي', inline: true },
-                            { name: ' السبب', value: reason, inline: false },
-                            { name: 'ينتهي في', value: result.endTime ? `<t:${Math.floor(Number(result.endTime) / 1000)}:R>` : 'نهائي', inline: true }
-                        ])
-                        .setTimestamp();
-
-                    await member.send({ embeds: [dmEmbed] });
-                } catch (dmError) {
-                    console.log(`لا يمكن إرسال رسالة خاصة إلى ${member.displayName} - قد تكون الرسائل الخاصة مغلقة`);
+                    const durationMs = ms(duration);
+                    if (!durationMs || durationMs <= 0) {
+                        await interaction.reply({
+                            content: '❌ **صيغة المدة غير صحيحة!**\n\n**أمثلة صحيحة:**\n• `7d` أو `7 ايام` - لسبعة أيام\n• `12h` أو `12 ساعات` - لاثني عشر ساعة\n• `30m` أو `30 دقائق` - لثلاثين دقيقة\n• `نهائي` أو `دائم` - للترقية الدائمة',
+                            ephemeral: true
+                        });
+                        return;
+                    }
+                } catch (durationError) {
+                    console.error('خطأ في تحليل المدة:', durationError);
+                    await interaction.reply({
+                        content: '❌ **خطأ في تحليل المدة المدخلة!**\n\nيرجى التأكد من الصيغة الصحيحة.',
+                        ephemeral: true
+                    });
+                    return;
                 }
-
-                // Log the action - استخدام الدالة الصحيحة
-                promoteManager.logAction('PROMOTION_APPLIED', {
-                    targetUserId: userId,
-                    roleId: roleId,
-                    guildId: interaction.guild.id,
-                    duration: duration,
-                    reason: reason,
-                    byUserId: interaction.user.id,
-                    endTime: result.endTime,
-                    timestamp: Date.now()
-                });
-
-            } else {
-                const errorEmbed = colorManager.createEmbed()
-                    .setDescription(` **فشل في تطبيق الترقية:** ${result.error}`);
-
-                await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
             }
 
-        } catch (error) {
-            console.error('خطأ في معالجة الترقية:', error);
-            await interaction.reply({
-                content: ' **حدث خطأ أثناء معالجة الترقية!**',
-                ephemeral: true
-            });
-        }
-        return;
-    }
+            const results = [];
+            const failedPromotions = [];
+            let successCount = 0;
 
-    // Handle modal submission for banning
-    if (interaction.isModalSubmit() && customId.startsWith('promote_ban_modal_')) {
-        const userId = customId.replace('promote_ban_modal_', '');
-        const duration = interaction.fields.getTextInputValue('ban_duration');
-        const reason = interaction.fields.getTextInputValue('ban_reason');
+            // Process each role
+            for (const roleId of roleIds) {
+                const role = await interaction.guild.roles.fetch(roleId).catch(() => null);
+                if (!role) {
+                    failedPromotions.push(`Role ID ${roleId}: الرول غير موجود`);
+                    continue;
+                }
 
-        const result = await promoteManager.banFromPromotions(
-            userId,
-            interaction.guild.id,
-            duration,
-            reason,
-            interaction.user
-        );
+                // Process the promotion
+                const result = await promoteManager.createPromotion(
+                    interaction.guild,
+                    context.client,
+                    userId,
+                    roleId,
+                    duration,
+                    reason,
+                    interaction.user.id
+                );
 
-        if (result.success) {
+                if (result.success) {
+                    successCount++;
+                    results.push({
+                        roleId: roleId,
+                        roleName: role.name,
+                        success: true,
+                        duration: result.duration,
+                        endTime: result.endTime
+                    });
+                } else {
+                    failedPromotions.push(`${role.name}: ${result.error}`);
+                    results.push({
+                        roleId: roleId,
+                        roleName: role.name,
+                        success: false,
+                        error: result.error
+                    });
+                }
+            }
+
+            // Create response embed
+            const isMultipleRoles = roleIds.length > 1;
             const successEmbed = colorManager.createEmbed()
-                .setTitle('User Banned from Promotions')
-                .setDescription(`تم حظر العضو من الترقيات بنجاح`)
+                .setTitle(isMultipleRoles ? '👥 **نتائج الترقية المتعددة**' : '✅ **تم تطبيق الترقية بنجاح**')
+                .setDescription(isMultipleRoles ? 
+                    `**العضو:** <@${userId}>\n**تمت معالجة ${roleIds.length} رول` : 
+                    `تم ترقية العضو وإعطاؤه الرول كما هو مطلوب`)
                 .addFields([
-                    { name: ' العضو', value: `<@${userId}>`, inline: true },
-                    { name: ' المدة', value: result.duration || 'نهائي', inline: true },
-                    { name: ' السبب', value: reason, inline: false },
-                    { name: ' بواسطة', value: `<@${interaction.user.id}>`, inline: true },
-                    { name: ' ينتهي في', value: result.endTime ? `<t:${Math.floor(Number(result.endTime) / 1000)}:R>` : 'نهائي', inline: true }
+                    { name: '👤 **العضو**', value: `<@${userId}>`, inline: true },
+                    { name: '✅ **نجح**', value: successCount.toString(), inline: true },
+                    { name: '❌ **فشل**', value: failedPromotions.length.toString(), inline: true },
+                    { name: '⏰ **المدة**', value: duration || 'نهائي', inline: true },
+                    { name: '📝 **السبب**', value: reason, inline: false },
+                    { name: '👤 **بواسطة**', value: `<@${interaction.user.id}>`, inline: true }
                 ])
                 .setTimestamp();
 
+            // Add successful promotions list
+            if (successCount > 0) {
+                const successfulRoles = results.filter(r => r.success).map(r => 
+                    `• <@&${r.roleId}> - ينتهي: ${r.endTime ? `<t:${Math.floor(Number(r.endTime) / 1000)}:R>` : 'نهائي'}`
+                ).join('\n');
+
+                successEmbed.addFields([
+                    { name: '🎉 **الرولات المضافة بنجاح**', value: successfulRoles, inline: false }
+                ]);
+            }
+
+            // Add failed promotions if any
+            if (failedPromotions.length > 0) {
+                successEmbed.addFields([
+                    { name: '⚠️ **الرولات التي فشلت**', value: failedPromotions.join('\n'), inline: false }
+                ]);
+            }
+
             await interaction.reply({ embeds: [successEmbed], ephemeral: true });
-        } else {
+
+            // Send DM notification to the promoted member if any promotion succeeded
+            if (successCount > 0) {
+                try {
+                    const successfulRolesList = results.filter(r => r.success);
+                    const dmEmbed = colorManager.createEmbed()
+                        .setTitle(isMultipleRoles ? '🎉 **تم ترقيتك (رولات متعددة)**' : '🎉 **تم ترقيتك**')
+                        .setDescription(isMultipleRoles ? 
+                            `تم ترقيتك وإعطاؤك ${successCount} رول إداري جديد من قبل الإدارة.` :
+                            `تم ترقيتك وإعطاؤك رول **${successfulRolesList[0].roleName}** من قبل الإدارة.`)
+                        .addFields([
+                            { name: '👤 **تمت الترقية بواسطة**', value: `${interaction.user.username}`, inline: true },
+                            { name: '⏰ **المدة**', value: duration || 'نهائي', inline: true },
+                            { name: '📝 **السبب**', value: reason, inline: false }
+                        ])
+                        .setTimestamp()
+                        .setFooter({ text: `سيرفر ${interaction.guild.name}`, iconURL: interaction.guild.iconURL({ dynamic: true }) });
+
+                    // Add roles list for multiple promotions
+                    if (isMultipleRoles) {
+                        const rolesText = successfulRolesList.map(r => 
+                            `• **${r.roleName}** - ينتهي: ${r.endTime ? `<t:${Math.floor(Number(r.endTime) / 1000)}:R>` : 'نهائي'}`
+                        ).join('\n');
+
+                        dmEmbed.addFields([
+                            { name: '🏷️ **الرولات الجديدة**', value: rolesText, inline: false }
+                        ]);
+                    } else {
+                        dmEmbed.addFields([
+                            { name: '🏷️ **الرول الجديد**', value: `${successfulRolesList[0].roleName}`, inline: true },
+                            { name: '📅 **ينتهي في**', value: successfulRolesList[0].endTime ? `<t:${Math.floor(Number(successfulRolesList[0].endTime) / 1000)}:R>` : 'نهائي', inline: true }
+                        ]);
+                    }
+
+                    await member.send({ embeds: [dmEmbed] });
+                } catch (dmError) {
+                    console.log(`لا يمكن إرسال رسالة خاصة إلى ${member.displayName}`);
+                }
+            }
+
+        } catch (error) {
+            console.error('Error in promotion modal submission:', error);
             await interaction.reply({
-                content: ` **فشل في حظر العضو:** ${result.error}`,
+                content: '❌ **حدث خطأ أثناء معالجة الترقية!**\n\n' +
+                        `**تفاصيل الخطأ:** ${error.message || 'خطأ غير معروف'}`,
                 ephemeral: true
             });
         }
@@ -3030,6 +3350,27 @@ async function handleEditMenuChannel(interaction, context) {
         content: ' **اختر روم المنيو الجديدة:**',
         components: [channelRow]
     });
+}
+
+async function createSystemStats() {
+    const stats = promoteManager.getSystemStats();
+    const activePromotes = promoteManager.getActivePromotes();
+    const totalPromotes = Object.keys(activePromotes).length;
+    const bans = promoteManager.getPromotionBans();
+    const totalBans = Object.keys(bans).length;
+
+    const embed = colorManager.createEmbed()
+        .setTitle('📊 **إحصائيات نظام الترقيات**')
+        .setDescription('ملخص شامل لحالة النظام')
+        .addFields([
+            { name: '🎖️ **الترقيات النشطة**', value: `${totalPromotes}`, inline: true },
+            { name: '🚫 **المحظورين**', value: `${totalBans}`, inline: true },
+            { name: '📈 **إجمالي الترقيات**', value: `${stats?.totalPromotions || 0}`, inline: true },
+            { name: '⏰ **النظام يعمل منذ**', value: `<t:${Math.floor((stats?.systemStartTime || Date.now()) / 1000)}:R>`, inline: false }
+        ])
+        .setTimestamp();
+
+    return embed;
 }
 
 async function handleDetailedStats(interaction, context) {
