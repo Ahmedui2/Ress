@@ -345,7 +345,7 @@ class PromoteManager {
     }
 
     // Promotion Operations
-    async createPromotion(guild, client, targetUserId, roleId, duration, reason, byUserId, isBulkOperation = false, sendDM = true) {
+    async createPromotion(guild, client, targetUserId, roleId, duration, reason, byUserId, isBulkOperation = false, sendDM = true, isMultiPromotion = false, transactionId = null) {
         try {
             // Input validation
             if (!guild || !targetUserId || !roleId || !byUserId) {
@@ -398,11 +398,6 @@ class PromoteManager {
                 return { success: false, error: 'الرول غير موجود أو لا يمكن الوصول إليه' };
             }
 
-            // احفظ الرول الأعلى الحالي قبل الترقية
-            const previousHighestRole = targetMember.roles.highest;
-            const previousRoleName = previousHighestRole.name === '@everyone' ? 'لا يوجد رول' : previousHighestRole.name;
-            const shouldRemoveOldRole = previousHighestRole.name !== '@everyone' && this.isAdminRole(previousHighestRole.id);
-
             // Check if member already has the role
             if (targetMember.roles.cache.has(roleId)) {
                 return { success: false, error: 'العضو يملك هذا الرول بالفعل' };
@@ -429,6 +424,17 @@ class PromoteManager {
             // Get user interaction statistics
             const userStats = await this.getUserInteractionStats(targetUserId);
 
+            // احفظ جميع الرولات الإدارية الحالية قبل الترقية فقط للترقيات النهائية المفردة
+            const currentAdminRoles = targetMember.roles.cache.filter(r => 
+                r.name !== '@everyone' && this.isAdminRole(r.id)
+            );
+            const previousHighestRole = targetMember.roles.highest;
+            const previousRoleName = previousHighestRole.name === '@everyone' ? 'لا يوجد رول' : previousHighestRole.name;
+
+            // تحديد إذا كان يجب إزالة الرولات القديمة (فقط للترقيات النهائية المفردة وليس المتعددة)
+            const isPermanentPromotion = !duration || duration === null || duration === undefined || duration === 'نهائي';
+            const shouldRemoveOldRoles = isPermanentPromotion && currentAdminRoles.size > 0 && !isMultiPromotion;
+
             // Add the role with error handling
             try {
                 await targetMember.roles.add(roleId, `ترقية بواسطة ${await guild.members.fetch(byUserId).then(m => m.displayName).catch(() => 'غير معروف')}: ${reason}`);
@@ -437,14 +443,19 @@ class PromoteManager {
                 return { success: false, error: 'فشل في إضافة الرول - تحقق من صلاحيات البوت' };
             }
 
-            // إزالة الرول القديم إذا كانت الترقية نهائية ولديه رول إداري سابق
-            if (!duration || duration === 'نهائي') {
-                if (shouldRemoveOldRole && targetMember.roles.cache.has(previousHighestRole.id)) {
+            // إزالة الرولات الإدارية القديمة فقط للترقيات النهائية المفردة (ليس المتعددة)
+            let removedOldRoles = [];
+            if (shouldRemoveOldRoles) {
+                for (const [oldRoleId, oldRole] of currentAdminRoles) {
                     try {
-                        await targetMember.roles.remove(previousHighestRole.id, `إزالة الرول القديم بعد الترقية النهائية: ${reason}`);
-                        console.log(`تم إزالة الرول القديم ${previousHighestRole.name} من ${targetMember.displayName} بعد الترقية النهائية`);
+                        // تأكد من أن الرول ليس هو نفسه الرول الجديد
+                        if (oldRoleId !== roleId && targetMember.roles.cache.has(oldRoleId)) {
+                            await targetMember.roles.remove(oldRoleId, `إزالة الرول الإداري القديم بعد الترقية النهائية: ${reason}`);
+                            removedOldRoles.push(oldRole.name);
+                            console.log(`تم إزالة الرول القديم ${oldRole.name} من ${targetMember.displayName} بعد الترقية النهائية`);
+                        }
                     } catch (removeError) {
-                        console.error('خطأ في إزالة الرول القديم:', removeError);
+                        console.error(`خطأ في إزالة الرول القديم ${oldRole.name}:`, removeError);
                         // لا نوقف العملية، فقط نسجل الخطأ
                     }
                 }
@@ -481,8 +492,8 @@ class PromoteManager {
             activePromotes[promoteId] = promoteRecord;
             writeJson(activePromotesPath, activePromotes);
 
-            // Log the action only if not part of bulk operation
-            if (!isBulkOperation) {
+            // Log and send log message only for single promotions (not multi-role or bulk)
+            if (!isBulkOperation && !isMultiPromotion) {
                 this.logAction('PROMOTION_APPLIED', {
                     targetUserId,
                     roleId,
@@ -491,6 +502,7 @@ class PromoteManager {
                     reason,
                     byUserId,
                     userStats,
+                    transactionId,
                     timestamp: Date.now()
                 });
 
@@ -506,12 +518,13 @@ class PromoteManager {
                     reason,
                     byUser: await client.users.fetch(byUserId),
                     userStats,
-                    removedOldRole: (!duration || duration === 'نهائي') && shouldRemoveOldRole
+                    removedOldRoles: removedOldRoles,
+                    removedOldRole: shouldRemoveOldRoles
                 });
             }
 
-            // Send private message to promoted user only if sendDM is true
-            if (sendDM) {
+            // Send private message to promoted user only if sendDM is true (handled externally for multi-promotions)
+            if (sendDM && !isMultiPromotion) {
                 try {
                     const dmEmbed = colorManager.createEmbed()
                         .setTitle('**تهانينا! تم ترقيتك**')
@@ -529,10 +542,14 @@ class PromoteManager {
                         .setTimestamp()
                         .setFooter({ text: `خادم ${guild.name}`, iconURL: guild.iconURL({ dynamic: true }) });
 
-                    // إضافة معلومة عن إزالة الرول القديم للترقية النهائية
-                    if ((!duration || duration === 'نهائي') && shouldRemoveOldRole) {
+                    // إضافة معلومة عن إزالة الرولات القديمة للترقية النهائية فقط
+                    if (shouldRemoveOldRoles && removedOldRoles.length > 0) {
+                        const removedRolesText = removedOldRoles.length === 1 ? 
+                            `تم إزالة الرول السابق **${removedOldRoles[0]}**` :
+                            `تم إزالة الرولات السابقة: **${removedOldRoles.join('**, **')}**`;
+
                         dmEmbed.addFields([
-                            { name: '**ملاحظة مهمة**', value: `تم إزالة الرول السابق **${previousRoleName}** لأن الترقية نهائية`, inline: false }
+                            { name: '**ملاحظة مهمة**', value: `${removedRolesText} لأن الترقية نهائية`, inline: false }
                         ]);
                     }
 
@@ -546,7 +563,10 @@ class PromoteManager {
                 success: true,
                 promoteId: promoteId,
                 duration: duration,
-                endTime: endTime
+                endTime: endTime,
+                removedOldRoles: removedOldRoles,
+                roleName: role.name,
+                previousRoleName: previousRoleName
             };
 
         } catch (error) {
@@ -937,6 +957,36 @@ class PromoteManager {
         return readJson(activePromotesPath, {});
     }
 
+    // الحصول على السجلات المجمّعة بـ Transaction ID
+    getGroupedPromotionLogs() {
+        const logs = readJson(promoteLogsPath, []);
+        const grouped = {};
+        const standalone = [];
+
+        logs.forEach(log => {
+            if (log.data && log.data.transactionId) {
+                const txId = log.data.transactionId;
+                if (!grouped[txId]) {
+                    grouped[txId] = [];
+                }
+                grouped[txId].push(log);
+            } else {
+                standalone.push(log);
+            }
+        });
+
+        return { grouped, standalone };
+    }
+
+    // الحصول على سجلات ترقيات متعددة بـ Transaction ID
+    getMultiPromotionsByTransaction(transactionId) {
+        const logs = readJson(promoteLogsPath, []);
+        return logs.filter(log => 
+            log.data && 
+            log.data.transactionId === transactionId
+        ).sort((a, b) => a.timestamp - b.timestamp);
+    }
+
     getSystemStats() {
         const logs = readJson(promoteLogsPath, []);
         const activePromotes = this.getActivePromotes();
@@ -1041,8 +1091,22 @@ class PromoteManager {
                     client.bulkPromotionMembers = new Map();
                 }
 
+                // تحويل الأعضاء إلى معرفات مناسبة
+                const processedMembers = data.successfulMembers.map(member => {
+                    if (typeof member === 'object' && member.id) {
+                        return { id: member.id, displayName: member.displayName || 'Unknown' };
+                    } else if (typeof member === 'object' && member.user && member.user.id) {
+                        return { id: member.user.id, displayName: member.displayName || 'Unknown' };
+                    } else if (typeof member === 'string' && /^\d{17,19}$/.test(member)) {
+                        return { id: member, displayName: 'Unknown' };
+                    } else if (typeof member === 'number') {
+                        return { id: member.toString(), displayName: 'Unknown' };
+                    }
+                    return { id: member, displayName: 'Unknown' };
+                });
+
                 const membersData = {
-                    successfulMembers: data.successfulMembers,
+                    successfulMembers: processedMembers,
                     sourceRoleId: data.sourceRoleId,
                     targetRoleId: data.targetRoleId,
                     reason: data.reason,
@@ -1126,10 +1190,20 @@ class PromoteManager {
 
                 // إنشاء قائمة الأعضاء المتأثرين
                 let affectedMembersText = '';
-                
+
                 // إضافة الأعضاء الناجحين
                 if (data.successfulMembers && data.successfulMembers.length > 0) {
-                    const successfulMentions = data.successfulMembers.map(member => `<@${member.id}>`);
+                    const successfulMentions = data.successfulMembers.map(member => {
+                        if (typeof member === 'object' && member.id) {
+                            return `<@${member.id}>`;
+                        } else if (typeof member === 'string' && /^\d{17,19}$/.test(member)) {
+                            return `<@${member}>`;
+                        } else if (typeof member === 'number') {
+                            return `<@${member}>`;
+                        }
+                        return `<@${member}>`;
+                    });
+                    
                     if (successfulMentions.length <= 10) {
                         affectedMembersText += successfulMentions.join(' ');
                     } else {
@@ -1143,7 +1217,7 @@ class PromoteManager {
                     if (affectedMembersText) affectedMembersText += '\n\n';
                     affectedMembersText += '**الأعضاء الذين فشلت ترقيتهم:**\n';
                     data.failedMembers.slice(0, 5).forEach(failed => {
-                        affectedMembersText += `<@${failed.member.id}> خطأ (${failed.reason})\n`;
+                        affectedMembersText += `<@${failed.id}> خطأ (${failed.reason})\n`;
                     });
                     if (data.failedMembers.length > 5) {
                         affectedMembersText += `**و ${data.failedMembers.length - 5} آخرين فشلوا**`;
@@ -1155,7 +1229,7 @@ class PromoteManager {
                     if (affectedMembersText) affectedMembersText += '\n\n';
                     affectedMembersText += '**الأعضاء المحظورين:**\n';
                     data.bannedMembers.slice(0, 5).forEach(banned => {
-                        affectedMembersText += `<@${banned.member.id}> خطأ (${banned.reason})\n`;
+                        affectedMembersText += `<@${banned.id}> خطأ (${banned.reason})\n`;
                     });
                     if (data.bannedMembers.length > 5) {
                         affectedMembersText += `**و ${data.bannedMembers.length - 5} آخرين محظورين**`;
@@ -1170,7 +1244,7 @@ class PromoteManager {
                 if (affectedMembersText.length > 1024) {
                     affectedMembersText = affectedMembersText.substring(0, 1000) + '...\n**القائمة مقطوعة بسبب الطول**';
                 }
-                
+
                 embed.addFields([
                     { name: '**الادارة المتاثرين:**', value: affectedMembersText, inline: false }
                 ]);
@@ -1220,6 +1294,43 @@ class PromoteManager {
                     ]);
                 break;
 
+            case 'MULTI_PROMOTION_APPLIED':
+                embed.setTitle('**تم تطبيق ترقية متعددة**')
+                    .setDescription(`تم ترقية العضو <@${data.targetUser.id}> إلى عدة رولات إدارية`)
+                    .addFields([
+                        { name: '**العضو**', value: `<@${data.targetUser.id}>`, inline: true },
+                        { name: '**عدد الرولات**', value: `${data.successCount}`, inline: true },
+                        { name: '**المدة**', value: data.duration, inline: true },
+                        { name: '**السبب**', value: data.reason, inline: false },
+                        { name: '**بواسطة**', value: `<@${data.byUser.id}>`, inline: true },
+                        { name: '**التاريخ**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
+                    ]);
+
+                // إضافة قائمة الرولات الجديدة
+                if (data.roles && data.roles.length > 0) {
+                    const rolesText = data.roles.map(role => `• **${role.name}**`).join('\n');
+                    embed.addFields([
+                        { name: '**الرولات الجديدة**', value: rolesText, inline: false }
+                    ]);
+                }
+
+                // إضافة معلومات الرولات المُزالة إذا وجدت
+                if (data.removedOldRoles && data.removedOldRoles.length > 0) {
+                    const removedText = data.removedOldRoles.map(role => `• **${role}**`).join('\n');
+                    embed.addFields([
+                        { name: '**الرولات المُزالة**', value: removedText, inline: false },
+                        { name: '**سبب الإزالة**', value: 'ترقية نهائية - تم إزالة الرولات الإدارية السابقة', inline: false }
+                    ]);
+                }
+
+                // إضافة معلومات الفشل إن وجدت
+                if (data.failedCount > 0) {
+                    embed.addFields([
+                        { name: '**ملاحظة**', value: `${data.failedCount} رول فشل في الإضافة`, inline: true }
+                    ]);
+                }
+                break;
+
             case 'PROMOTION_BAN_REMOVED':
                 embed.setTitle('**تم إلغاء حظر عضو من الترقيات**')
                     .addFields([
@@ -1241,13 +1352,315 @@ class PromoteManager {
         setInterval(async () => {
             try {
                 const expiredPromotes = this.getExpiredPromotes();
-                for (const expiredPromote of expiredPromotes) {
-                    await this.processExpiredPromotion(expiredPromote);
+
+                // تجميع الترقيات المنتهية حسب المستخدم والسيرفر
+                const groupedExpired = this.groupExpiredPromotionsByUser(expiredPromotes);
+
+                for (const [userGuildKey, userPromotes] of Object.entries(groupedExpired)) {
+                    if (userPromotes.length === 1) {
+                        // ترقية واحدة فقط - استخدام النظام العادي
+                        await this.processExpiredPromotion(userPromotes[0]);
+                    } else {
+                        // ترقيات متعددة - استخدام النظام الموحد
+                        await this.processMultipleExpiredPromotions(userPromotes);
+                    }
                 }
             } catch (error) {
                 console.error('Error in promotion expiration checker:', error);
             }
         }, 60000); // Check every minute
+    }
+
+    // تجميع الترقيات المنتهية حسب المستخدم والسيرفر
+    groupExpiredPromotionsByUser(expiredPromotes) {
+        const grouped = {};
+
+        for (const expiredPromote of expiredPromotes) {
+            const key = `${expiredPromote.userId}_${expiredPromote.guildId}`;
+            if (!grouped[key]) {
+                grouped[key] = [];
+            }
+            grouped[key].push(expiredPromote);
+        }
+
+        return grouped;
+    }
+
+    // معالجة عدة ترقيات منتهية لنفس المستخدم
+    async processMultipleExpiredPromotions(expiredPromotes) {
+        try {
+            if (!this.client || expiredPromotes.length === 0) return;
+
+            const firstPromote = expiredPromotes[0];
+            const guild = await this.client.guilds.fetch(firstPromote.guildId).catch(() => null);
+            if (!guild) {
+                // إزالة جميع الترقيات من القائمة النشطة
+                expiredPromotes.forEach(promote => this.removeActivePromotion(promote.id));
+                return;
+            }
+
+            const member = await guild.members.fetch(firstPromote.userId).catch(() => null);
+
+            // التعامل مع العضو غير الموجود في السيرفر
+            if (!member) {
+                await this.handleMultipleExpiredPromotionsForLeftMember(expiredPromotes, guild);
+                expiredPromotes.forEach(promote => this.removeActivePromotion(promote.id));
+                return;
+            }
+
+            const expiredRoles = [];
+            const failedRoles = [];
+
+            // معالجة كل رول
+            for (const expiredPromote of expiredPromotes) {
+                const role = await guild.roles.fetch(expiredPromote.roleId).catch(() => null);
+
+                if (!role) {
+                    failedRoles.push({
+                        roleId: expiredPromote.roleId,
+                        reason: 'الرول غير موجود',
+                        originalReason: expiredPromote.reason
+                    });
+                    this.removeActivePromotion(expiredPromote.id);
+                    continue;
+                }
+
+                try {
+                    // إضافة الرول لقائمة التجاهل قبل سحبه تلقائياً
+                    this.addToAutoPromoteIgnore(member.id, role.id);
+
+                    // تسجيل أن البوت سيقوم بسحب الرول (لمنع تداخل نظام الحماية)
+                    const removalKey = `${member.guild.id}_${member.id}_${role.id}`;
+                    this.botPromotionTracking.add(removalKey);
+
+                    // إزالة المفتاح بعد 10 ثوانٍ
+                    setTimeout(() => {
+                        this.botPromotionTracking.delete(removalKey);
+                    }, 10000);
+
+                    // Remove the temporary role
+                    await member.roles.remove(role, 'انتهاء مدة الترقية المؤقتة');
+
+                    expiredRoles.push({
+                        id: role.id,
+                        name: role.name,
+                        originalReason: expiredPromote.reason,
+                        duration: expiredPromote.duration,
+                        byUserId: expiredPromote.byUserId
+                    });
+
+                    // Remove from active promotes
+                    this.removeActivePromotion(expiredPromote.id);
+
+                } catch (roleError) {
+                    console.error(`خطأ في إزالة الرول ${role.name}:`, roleError);
+                    failedRoles.push({
+                        roleId: expiredPromote.roleId,
+                        roleName: role.name,
+                        reason: 'فشل في إزالة الرول',
+                        originalReason: expiredPromote.reason
+                    });
+                }
+            }
+
+            // إرسال إشعار موحد للمستخدم
+            if (expiredRoles.length > 0) {
+                await this.sendUnifiedExpirationDM(member, expiredRoles, failedRoles);
+            }
+
+            // إرسال لوق موحد
+            await this.sendUnifiedExpirationLog(guild, member, expiredRoles, failedRoles);
+
+        } catch (error) {
+            console.error('Error processing multiple expired promotions:', error);
+        }
+    }
+
+    // إرسال رسالة خاصة موحدة لانتهاء عدة ترقيات
+    async sendUnifiedExpirationDM(member, expiredRoles, failedRoles = []) {
+        try {
+            const guild = member.guild;
+            const totalRoles = expiredRoles.length + failedRoles.length;
+
+            const dmEmbed = colorManager.createEmbed()
+                .setTitle('**انتهت مدة عدة ترقيات**')
+                .setDescription(`انتهت مدة ${totalRoles} ترقية في سيرفر **${guild.name}**`)
+                .setThumbnail(member.displayAvatarURL({ dynamic: true }))
+                .setTimestamp();
+
+            // إضافة الرولات المُزالة بنجاح
+            if (expiredRoles.length > 0) {
+                let rolesText = '';
+                expiredRoles.forEach((role, index) => {
+                    rolesText += `**${index + 1}.** ${role.name}\n`;
+                    rolesText += `├─ **السبب الأصلي:** ${role.originalReason}\n`;
+                    rolesText += `└─ **المدة الأصلية:** ${role.duration || 'نهائي'}\n\n`;
+                });
+
+                dmEmbed.addFields([
+                    { 
+                        name: `✅ **تم إزالة ${expiredRoles.length} رول بنجاح**`, 
+                        value: rolesText.trim(), 
+                        inline: false 
+                    }
+                ]);
+            }
+
+            // إضافة الرولات التي فشلت في الإزالة
+            if (failedRoles.length > 0) {
+                let failedText = '';
+                failedRoles.forEach((failed, index) => {
+                    failedText += `**${index + 1}.** ${failed.roleName || `ID: ${failed.roleId}`}\n`;
+                    failedText += `└─ **السبب:** ${failed.reason}\n\n`;
+                });
+
+                dmEmbed.addFields([
+                    { 
+                        name: `⚠️ **فشل في إزالة ${failedRoles.length} رول**`, 
+                        value: failedText.trim(), 
+                        inline: false 
+                    }
+                ]);
+            }
+
+            dmEmbed.addFields([
+                { name: '**وقت الانتهاء**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+                { name: '**الإجمالي**', value: `${totalRoles} ترقية`, inline: true }
+            ]);
+
+            await member.send({ embeds: [dmEmbed] });
+        } catch (dmError) {
+            console.log(`لا يمكن إرسال رسالة خاصة موحدة إلى ${member.displayName}`);
+        }
+    }
+
+    // إرسال لوق موحد لانتهاء عدة ترقيات
+    async sendUnifiedExpirationLog(guild, member, expiredRoles, failedRoles = []) {
+        try {
+            const settings = this.getSettings();
+            if (!settings.logChannel || !this.client) return;
+
+            const logChannel = await this.client.channels.fetch(settings.logChannel).catch(() => null);
+            if (!logChannel) return;
+
+            const totalRoles = expiredRoles.length + failedRoles.length;
+
+            const logEmbed = colorManager.createEmbed()
+                .setTitle('**انتهت مدة عدة ترقيات - إزالة تلقائية**')
+                .setDescription(`تم سحب عدة رولات تلقائياً بعد انتهاء المدة المحددة`)
+                .addFields([
+                    { name: '**العضو**', value: `<@${member.id}>`, inline: true },
+                    { name: '**وقت الإزالة**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+                    { name: '**الإجمالي**', value: `${totalRoles} ترقية`, inline: true }
+                ])
+                .setTimestamp();
+
+            // إضافة الرولات المُزالة بنجاح
+            if (expiredRoles.length > 0) {
+                let rolesText = '';
+                expiredRoles.forEach((role, index) => {
+                    rolesText += `**${index + 1}.** <@&${role.id}>\n`;
+                    rolesText += `├─ **السبب الأصلي:** ${role.originalReason}\n`;
+                    rolesText += `├─ **المدة الأصلية:** ${role.duration || 'نهائي'}\n`;
+                    rolesText += `└─ **تم تطبيقها بواسطة:** <@${role.byUserId}>\n\n`;
+                });
+
+                if (rolesText.length > 1024) {
+                    rolesText = rolesText.substring(0, 1000) + '...\n**القائمة مقطوعة بسبب الطول**';
+                }
+
+                logEmbed.addFields([
+                    { 
+                        name: `✅ **تم إزالة ${expiredRoles.length} رول بنجاح**`, 
+                        value: rolesText.trim(), 
+                        inline: false 
+                    }
+                ]);
+            }
+
+            // إضافة الرولات التي فشلت في الإزالة
+            if (failedRoles.length > 0) {
+                let failedText = '';
+                failedRoles.forEach((failed, index) => {
+                    failedText += `**${index + 1}.** ${failed.roleName || `<@&${failed.roleId}>`}\n`;
+                    failedText += `└─ **السبب:** ${failed.reason}\n\n`;
+                });
+
+                if (failedText.length > 1024) {
+                    failedText = failedText.substring(0, 1000) + '...\n**القائمة مقطوعة بسبب الطول**';
+                }
+
+                logEmbed.addFields([
+                    { 
+                        name: `⚠️ **فشل في إزالة ${failedRoles.length} رول**`, 
+                        value: failedText.trim(), 
+                        inline: false 
+                    }
+                ]);
+            }
+
+            logEmbed.addFields([
+                { name: '**نوع الإجراء**', value: 'إزالة تلقائية موحدة', inline: true },
+                { name: '**نجح**', value: `${expiredRoles.length}`, inline: true },
+                { name: '**فشل**', value: `${failedRoles.length}`, inline: true }
+            ]);
+
+            await logChannel.send({ embeds: [logEmbed] });
+
+        } catch (logError) {
+            console.error('خطأ في إرسال لوق انتهاء الترقيات الموحد:', logError);
+        }
+    }
+
+    // معالجة انتهاء عدة ترقيات لعضو خارج السيرفر
+    async handleMultipleExpiredPromotionsForLeftMember(expiredPromotes, guild) {
+        try {
+            const settings = this.getSettings();
+            if (!settings.logChannel) return;
+
+            const logChannel = await guild.channels.fetch(settings.logChannel).catch(() => null);
+            if (!logChannel) return;
+
+            const userId = expiredPromotes[0].userId;
+
+            const embed = colorManager.createEmbed()
+                .setTitle('**انتهت مدة عدة ترقيات - عضو خارج السيرفر**')
+                .setDescription(`انتهت مدة ${expiredPromotes.length} ترقية لعضو غير موجود في السيرفر`)
+                .addFields([
+                    { name: '**العضو**', value: `<@${userId}>`, inline: true },
+                    { name: '**الحالة**', value: 'خارج السيرفر', inline: true },
+                    { name: '**وقت الانتهاء**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+                    { name: '**عدد الترقيات**', value: `${expiredPromotes.length}`, inline: true }
+                ])
+                .setColor('#ffa500')
+                .setTimestamp();
+
+            // إضافة قائمة الرولات المنتهية
+            let rolesText = '';
+            for (let i = 0; i < Math.min(expiredPromotes.length, 10); i++) {
+                const promote = expiredPromotes[i];
+                const role = await guild.roles.fetch(promote.roleId).catch(() => null);
+                const roleName = role ? role.name : `Role ID: ${promote.roleId}`;
+                const endTime = promote.endTime ? `<t:${Math.floor(promote.endTime / 1000)}:R>` : 'نهائي';
+                rolesText += `• **${roleName}** - ينتهي: ${endTime}\n`;
+            }
+
+            if (expiredPromotes.length > 10) {
+                rolesText += `• **+${expiredPromotes.length - 10} ترقية إضافية**\n`;
+            }
+
+            embed.addFields([
+                { name: '**الرولات المنتهية**', value: rolesText.trim() || 'لا توجد تفاصيل', inline: false },
+                { name: '**ملاحظة هامة**', value: 'إذا عاد هذا العضو للسيرفر، لن تعود الترقيات تلقائياً', inline: false }
+            ]);
+
+            await logChannel.send({ embeds: [embed] });
+
+            console.log(`انتهت مدة ${expiredPromotes.length} ترقية لعضو خارج السيرفر: ${userId}`);
+
+        } catch (error) {
+            console.error('خطأ في معالجة انتهاء ترقيات متعددة لعضو خارج:', error);
+        }
     }
 
     // Process expired promotion with notification and role removal
