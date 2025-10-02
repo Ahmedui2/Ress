@@ -1780,6 +1780,44 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
+    // Handle promotion records navigation and deletion buttons
+    if (interaction.customId && (
+        interaction.customId.startsWith('role_record_prev_') ||
+        interaction.customId.startsWith('role_record_next_') ||
+        interaction.customId.startsWith('delete_record_') ||
+        interaction.customId.startsWith('delete_all_records_') ||
+        interaction.customId.startsWith('confirm_delete_all_') ||
+        interaction.customId === 'cancel_delete_all' ||
+        interaction.customId === 'promote_records_back'
+    )) {
+        console.log(`معالجة تفاعل سجلات الترقيات: ${interaction.customId}`);
+
+        try {
+            const promoteContext = { client, BOT_OWNERS };
+            const promoteCommand = client.commands.get('promote');
+
+            if (promoteCommand && promoteCommand.handleInteraction) {
+                await promoteCommand.handleInteraction(interaction, promoteContext);
+            } else {
+                // إذا لم يتم العثور على أمر promote، استخدم promoteManager مباشرة
+                await promoteManager.handleInteraction(interaction, promoteContext);
+            }
+        } catch (error) {
+            console.error('خطأ في معالجة سجلات الترقيات:', error);
+            try {
+                if (!interaction.replied && !interaction.deferred) {
+                    await interaction.reply({
+                        content: '❌ حدث خطأ في معالجة سجلات الترقيات.',
+                        ephemeral: true
+                    });
+                }
+            } catch (replyError) {
+                console.error('خطأ في الرد على خطأ سجلات الترقيات:', replyError);
+            }
+        }
+        return;
+    }
+
     // --- Promotion System Interaction Router ---
     if (interaction.customId && interaction.customId.startsWith('promote_')) {
         console.log(`معالجة تفاعل نظام الترقيات: ${interaction.customId}`);
@@ -3433,6 +3471,164 @@ async function showUserResponsibilities(message, targetUser, responsibilities, c
 }
 
 // دالة لعرض إحصائيات المترقين مع التنقل
+// Handle single record deletion
+async function handleDeleteSingleRecord(interaction, roleId, recordIndex) {
+    try {
+        const promoteLogsPath = path.join(__dirname, 'data', 'promoteLogs.json');
+        
+        // Check permissions
+        if (!BOT_OWNERS.includes(interaction.user.id)) {
+            await interaction.reply({
+                content: '❌ **ليس لديك صلاحية لحذف السجلات!**',
+                ephemeral: true
+            });
+            return;
+        }
+
+        // Read current logs
+        const logs = readJSONFile(promoteLogsPath, []);
+        
+        // Filter logs for this role
+        const roleRecords = logs.filter(log => {
+            if (!log.data) return false;
+            
+            if (log.type === 'BULK_PROMOTION') {
+                return log.data.targetRoleId === roleId || log.data.sourceRoleId === roleId;
+            } else if (log.type === 'PROMOTION_APPLIED' || log.type === 'PROMOTION_ENDED') {
+                return log.data.roleId === roleId || log.data.role?.id === roleId;
+            } else if (log.type === 'MULTI_PROMOTION_APPLIED') {
+                return log.data.roleIds && log.data.roleIds.includes(roleId);
+            }
+            
+            return log.data.roleId === roleId;
+        });
+
+        if (recordIndex >= roleRecords.length) {
+            await interaction.reply({
+                content: '❌ **السجل غير موجود!**',
+                ephemeral: true
+            });
+            return;
+        }
+
+        const recordToDelete = roleRecords[recordIndex];
+        
+        // Find and remove the record from all logs
+        const indexInAllLogs = logs.findIndex(log => 
+            log.timestamp === recordToDelete.timestamp && 
+            JSON.stringify(log.data) === JSON.stringify(recordToDelete.data)
+        );
+
+        if (indexInAllLogs === -1) {
+            await interaction.reply({
+                content: '❌ **لم يتم العثور على السجل في القائمة العامة!**',
+                ephemeral: true
+            });
+            return;
+        }
+
+        // Remove the record
+        logs.splice(indexInAllLogs, 1);
+        
+        // Save updated logs
+        writeJSONFile(promoteLogsPath, logs);
+
+        const successEmbed = colorManager.createEmbed()
+            .setTitle('✅ تم حذف السجل')
+            .setDescription(`تم حذف السجل رقم ${recordIndex + 1} بنجاح`)
+            .addFields([
+                { name: '**تم الحذف بواسطة**', value: `<@${interaction.user.id}>`, inline: true },
+                { name: '**التاريخ**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
+            ])
+            .setTimestamp();
+
+        await interaction.update({
+            embeds: [successEmbed],
+            components: []
+        });
+
+    } catch (error) {
+        console.error('خطأ في حذف السجل:', error);
+        await interaction.reply({
+            content: '❌ **حدث خطأ أثناء حذف السجل!**',
+            ephemeral: true
+        });
+    }
+}
+
+// Handle all records deletion for a role
+async function handleDeleteAllRecords(interaction, roleId) {
+    try {
+        const promoteLogsPath = path.join(__dirname, 'data', 'promoteLogs.json');
+        
+        // Check permissions
+        if (!BOT_OWNERS.includes(interaction.user.id)) {
+            await interaction.reply({
+                content: '❌ **ليس لديك صلاحية لحذف السجلات!**',
+                ephemeral: true
+            });
+            return;
+        }
+
+        // Read current logs
+        const logs = readJSONFile(promoteLogsPath, []);
+        const originalCount = logs.length;
+        
+        // Filter out logs for this role
+        const filteredLogs = logs.filter(log => {
+            if (!log.data) return true;
+            
+            if (log.type === 'BULK_PROMOTION') {
+                return !(log.data.targetRoleId === roleId || log.data.sourceRoleId === roleId);
+            } else if (log.type === 'PROMOTION_APPLIED' || log.type === 'PROMOTION_ENDED') {
+                return !(log.data.roleId === roleId || log.data.role?.id === roleId);
+            } else if (log.type === 'MULTI_PROMOTION_APPLIED') {
+                return !(log.data.roleIds && log.data.roleIds.includes(roleId));
+            }
+            
+            return log.data.roleId !== roleId;
+        });
+
+        const deletedCount = originalCount - filteredLogs.length;
+        
+        if (deletedCount === 0) {
+            await interaction.update({
+                content: '⚠️ **لا توجد سجلات لحذفها لهذا الرول!**',
+                embeds: [],
+                components: []
+            });
+            return;
+        }
+
+        // Save updated logs
+        writeJSONFile(promoteLogsPath, filteredLogs);
+
+        const successEmbed = colorManager.createEmbed()
+            .setTitle('✅ تم حذف جميع السجلات')
+            .setDescription(`تم حذف ${deletedCount} سجل بنجاح`)
+            .addFields([
+                { name: '**الرول**', value: `<@&${roleId}>`, inline: true },
+                { name: '**عدد السجلات المحذوفة**', value: `${deletedCount}`, inline: true },
+                { name: '**تم الحذف بواسطة**', value: `<@${interaction.user.id}>`, inline: true },
+                { name: '**التاريخ**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
+            ])
+            .setTimestamp();
+
+        await interaction.update({
+            embeds: [successEmbed],
+            components: []
+        });
+
+    } catch (error) {
+        console.error('خطأ في حذف جميع السجلات:', error);
+        await interaction.update({
+            content: '❌ **حدث خطأ أثناء حذف السجلات!**',
+            embeds: [],
+            components: []
+        });
+    }
+}
+
 async function handleBulkPromotionStats(interaction, client) {
     const { getRealUserStats } = require('./utils/userStatsCollector');
     const { ButtonBuilder, ActionRowBuilder, ButtonStyle } = require('discord.js');
