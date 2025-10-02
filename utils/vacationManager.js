@@ -680,6 +680,26 @@ async function isUserAuthorizedApprover(userId, guild, settings, botOwners) {
     }
 }
 
+// دالة للتعامل مع عودة العضو للسيرفر
+async function handleMemberJoin(member) {
+    try {
+        // يمكن إضافة منطق للتحقق من إجازات سابقة هنا
+        console.log(`📥 تم فحص إجازات العضو ${member.user.tag} عند العودة للسيرفر`);
+    } catch (error) {
+        console.error('❌ خطأ في handleMemberJoin للإجازات:', error);
+    }
+}
+
+// دالة للتعامل مع مغادرة العضو للسيرفر
+async function handleMemberLeave(member) {
+    try {
+        // يمكن إضافة منطق لحفظ حالة الإجازة هنا
+        console.log(`📤 تم فحص إجازات العضو ${member.user.tag} عند مغادرة السيرفر`);
+    } catch (error) {
+        console.error('❌ خطأ في handleMemberLeave للإجازات:', error);
+    }
+}
+
 module.exports = {
     getSettings,
     isUserOnVacation,
@@ -692,5 +712,7 @@ module.exports = {
     readJson,
     calculateVacationDuration,
     notifyAdminsVacationEnded,
-    roleProtection
+    roleProtection,
+    handleMemberJoin,
+    handleMemberLeave
 };

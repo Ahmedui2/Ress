@@ -1287,11 +1287,18 @@ class PromoteManager {
                     .addFields([
                         { name: '**معلومات الحظر**', value: 'تفاصيل الحظر', inline: false },
                         { name: '**العضو**', value: `<@${data.targetUser.id}>`, inline: true },
-                        { name: '**مدة الحظر**', value: data.duration, inline: true },
+                        { name: '**مدة الحظر**', value: data.duration || 'نهائي', inline: true },
                         { name: '**السبب**', value: data.reason, inline: false },
                         { name: '**بواسطة**', value: `<@${data.byUser.id}>`, inline: true },
                         { name: '**التاريخ**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
                     ]);
+                
+                // إضافة وقت انتهاء الحظر إذا كان محدداً ورقمياً
+                if (data.endTime && typeof data.endTime === 'number') {
+                    embed.addFields([
+                        { name: '**ينتهي الحظر**', value: `<t:${Math.floor(data.endTime / 1000)}:F>`, inline: true }
+                    ]);
+                }
                 break;
 
             case 'MULTI_PROMOTION_APPLIED':
@@ -2154,12 +2161,36 @@ class PromoteManager {
         try {
             const logs = readJson(promoteLogsPath, []);
             return logs.filter(log => {
-                if (log.type === 'PROMOTION_APPLIED' || log.type === 'PROMOTION_ENDED') {
-                    return log.data.targetUserId === userId &&
-                        (!guildId || !log.data.guildId || log.data.guildId === guildId);
+                if (!log.data) return false;
+                
+                // التحقق من guildId إذا تم تحديده
+                if (guildId && log.data.guildId && log.data.guildId !== guildId) {
+                    return false;
                 }
+                
+                // سجلات الترقية الفردية
+                if ((log.type === 'PROMOTION_APPLIED' || log.type === 'PROMOTION_ENDED') && 
+                    log.data.targetUserId === userId) {
+                    return true;
+                }
+                
+                // سجلات الترقية الجماعية
+                if (log.type === 'BULK_PROMOTION' && log.data.successfulMembers) {
+                    const members = log.data.successfulMembers;
+                    return members.some(member => {
+                        if (typeof member === 'string') return member === userId;
+                        if (typeof member === 'object' && member.id) return member.id === userId;
+                        return false;
+                    });
+                }
+                
+                // سجلات الترقية المتعددة
+                if (log.type === 'MULTI_PROMOTION_APPLIED' && log.data.targetUserId === userId) {
+                    return true;
+                }
+                
                 return false;
-            }).sort((a, b) => b.timestamp - a.timestamp); // Sort by newest first
+            }).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)); // Sort by newest first
         } catch (error) {
             console.error('Error getting user promotion records:', error);
             return [];
