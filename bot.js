@@ -8,8 +8,8 @@ const { startReminderSystem } = require('./commands/notifications.js');
 const downManager = require('./utils/downManager');
 const { checkCooldown, startCooldown } = require('./commands/cooldown.js');
 const colorManager = require('./utils/colorManager.js');
+const promoteManager = require('./utils/promoteManager.js');
 const vacationManager = require('./utils/vacationManager');
-const promoteManager = require('./utils/promoteManager');
 const { handleAdminApplicationInteraction } = require('./commands/admin-apply.js');
 
 
@@ -56,6 +56,79 @@ function writeJSONFile(filePath, data) {
         console.error(`خطأ في كتابة ${filePath}:`, error);
         return false;
     }
+}
+
+/**
+ * Enhanced permission checking system
+ */
+async function checkBotPermissions(guild, requiredPermissions = []) {
+  try {
+    const botMember = await guild.members.fetch(guild.client.user.id);
+    const permissions = botMember.permissions;
+    
+    const missingPermissions = requiredPermissions.filter(perm => !permissions.has(perm));
+    
+    if (missingPermissions.length > 0) {
+      console.warn(`⚠️ Bot missing permissions: ${missingPermissions.join(', ')}`);
+      return {
+        hasAll: false,
+        missing: missingPermissions,
+        message: `البوت يحتاج الصلاحيات التالية: ${missingPermissions.map(p => `\`${p}\``).join(', ')}`
+      };
+    }
+    
+    return { hasAll: true, missing: [], message: 'All permissions granted' };
+  } catch (error) {
+    console.error('Error checking bot permissions:', error);
+    return { hasAll: false, missing: requiredPermissions, message: 'Error checking permissions' };
+  }
+}
+
+/**
+ * Validate user input and prevent injection attacks
+ */
+function validatePromotionInput(userId, roleId, duration, reason) {
+  const errors = [];
+  
+  // Validate user ID
+  if (!userId || !/^\d{17,19}$/.test(userId)) {
+    errors.push('معرف المستخدم غير صالح');
+  }
+  
+  // Validate role ID
+  if (roleId && !/^\d{17,19}$/.test(roleId)) {
+    errors.push('معرف الدور غير صالح');
+  }
+  
+  // Validate duration
+  const validDurations = ['دائم', 'permanent', '1h', '1d', '7d', '30d', '1w', '1m'];
+  if (duration && !validDurations.includes(duration) && !/^\d+[smhdw]$/.test(duration)) {
+    errors.push('مدة الترقية غير صالحة');
+  }
+  
+  // Validate reason length
+  if (reason && reason.length > 500) {
+    errors.push('السبب طويل جداً (الحد الأقصى 500 حرف)');
+  }
+  
+  // Sanitize reason
+  if (reason) {
+    const sanitizedReason = reason.replace(/[;]/g, '').trim();
+    if (sanitizedReason.length === 0) {
+      errors.push('السبب غير صالح');
+    }
+  }
+  
+  return {
+    isValid: errors.length === 0,
+    errors: errors,
+    sanitized: {
+      userId: userId?.toString().trim(),
+      roleId: roleId?.toString().trim(),
+      duration: duration?.toString().trim(),
+      reason: reason?.toString().replace(/[;]/g, '').trim()
+    }
+  };
 }
 
 // تحميل البيانات مباشرة من الملفات

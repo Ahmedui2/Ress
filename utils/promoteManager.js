@@ -2227,6 +2227,110 @@ class PromoteManager {
             return { success: false, error: 'حدث خطأ أثناء إلغاء حظر العضو' };
         }
     }
+
+    /**
+     * Enhanced permission checking system
+     */
+    async checkBotPermissions(guild, requiredPermissions = []) {
+        try {
+            const botMember = await guild.members.fetch(this.client.user.id);
+            const permissions = botMember.permissions;
+            
+            const missingPermissions = requiredPermissions.filter(perm => !permissions.has(perm));
+            
+            if (missingPermissions.length > 0) {
+                console.warn(`⚠️ Bot missing permissions: ${missingPermissions.join(', ')}`);
+                return {
+                    hasAll: false,
+                    missing: missingPermissions,
+                    message: `البوت يحتاج الصلاحيات التالية: ${missingPermissions.map(p => `\`${p}\``).join(', ')}`
+                };
+            }
+            
+            return { hasAll: true, missing: [], message: 'All permissions granted' };
+        } catch (error) {
+            console.error('Error checking bot permissions:', error);
+            return { hasAll: false, missing: requiredPermissions, message: 'Error checking permissions' };
+        }
+    }
+
+    /**
+     * Setup comprehensive error handling
+     */
+    setupErrorHandling() {
+        process.on('unhandledRejection', (reason, promise) => {
+            console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+            // Log to file for debugging
+            this.logError('unhandled_rejection', { reason: reason.toString(), promise: promise.toString() });
+        });
+
+        process.on('uncaughtException', (error) => {
+            console.error('Uncaught Exception:', error);
+            this.logError('uncaught_exception', { error: error.toString(), stack: error.stack });
+        });
+    }
+
+    /**
+     * Enhanced error logging
+     */
+    logError(type, details) {
+        try {
+            const errorLogPath = path.join(__dirname, '..', 'data', 'errorLogs.json');
+            const errorLogs = readJson(errorLogPath, []);
+            
+            errorLogs.push({
+                type: type,
+                details: details,
+                timestamp: new Date().toISOString(),
+                guildId: details.guildId || null,
+                userId: details.userId || null
+            });
+
+            // Keep only last 100 errors to prevent file bloat
+            if (errorLogs.length > 100) {
+                errorLogs.splice(0, errorLogs.length - 100);
+            }
+
+            writeJson(errorLogPath, errorLogs);
+        } catch (error) {
+            console.error('Failed to log error:', error);
+        }
+    }
+
+    /**
+     * Validate and sanitize promotion data
+     */
+    validatePromotionData(data) {
+        const errors = [];
+        const sanitized = { ...data };
+
+        // Validate user ID
+        if (!data.userId || !/^\d{17,19}$/.test(data.userId)) {
+            errors.push('معرف المستخدم غير صالح');
+        }
+
+        // Validate role IDs
+        if (data.roleId && !/^\d{17,19}$/.test(data.roleId)) {
+            errors.push('معرف الدور غير صالح');
+        }
+
+        // Sanitize reason
+        if (data.reason) {
+            sanitized.reason = data.reason.replace(/[<>&]/g, '').trim();
+            if (sanitized.reason.length === 0) {
+                errors.push('السبب غير صالح');
+            }
+            if (sanitized.reason.length > 500) {
+                errors.push('السبب طويل جداً (الحد الأقصى 500 حرف)');
+            }
+        }
+
+        return {
+            isValid: errors.length === 0,
+            errors: errors,
+            sanitized: sanitized
+        };
+    }
 }
 
 module.exports = new PromoteManager();

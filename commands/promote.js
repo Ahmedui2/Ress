@@ -3,7 +3,85 @@ const fs = require('fs');
 const path = require('path');
 const ms = require('ms');
 const colorManager = require('../utils/colorManager');
+const { displayEnhancedUserRecords } = require('../enhanced_user_records.js');
 const promoteManager = require('../utils/promoteManager');
+
+/**
+ * Check if bot has required permissions for promotion operations
+ */
+async function checkPromotionPermissions(interaction) {
+    const requiredPermissions = [
+        'ManageRoles',
+        'ViewChannel',
+        'SendMessages',
+        'EmbedLinks'
+    ];
+    
+    const permissionCheck = await promoteManager.checkBotPermissions(interaction.guild, requiredPermissions);
+    
+    if (!permissionCheck.hasAll) {
+        const embed = colorManager.createEmbed()
+            .setTitle('❌ صلاحيات البوت غير كافية')
+            .setDescription(permissionCheck.message)
+            .setColor(0xff0000)
+            .setTimestamp();
+            
+        await interaction.reply({
+            embeds: [embed],
+            ephemeral: true
+        });
+        return false;
+    }
+    
+    return true;
+}
+
+/**
+ * Validate promotion input data
+ */
+function validatePromotionInput(userId, roleId, duration, reason) {
+    const errors = [];
+    
+    // Validate user ID
+    if (!userId || !/^\d{17,19}$/.test(userId)) {
+        errors.push('معرف المستخدم غير صالح');
+    }
+    
+    // Validate role ID
+    if (roleId && !/^\d{17,19}$/.test(roleId)) {
+        errors.push('معرف الدور غير صالح');
+    }
+    
+    // Validate duration
+    const validDurations = ['دائم', 'permanent', '1h', '1d', '7d', '30d', '1w', '1m'];
+    if (duration && !validDurations.includes(duration) && !/^\d+[smhdw]$/.test(duration)) {
+        errors.push('مدة الترقية غير صالحة');
+    }
+    
+    // Validate reason length
+    if (reason && reason.length > 500) {
+        errors.push('السبب طويل جداً (الحد الأقصى 500 حرف)');
+    }
+    
+    // Sanitize reason
+    if (reason) {
+        const sanitizedReason = reason.replace(/[<>&]/g, '').trim();
+        if (sanitizedReason.length === 0) {
+            errors.push('السبب غير صالح');
+        }
+    }
+    
+    return {
+        isValid: errors.length === 0,
+        errors: errors,
+        sanitized: {
+            userId: userId?.toString().trim(),
+            roleId: roleId?.toString().trim(),
+            duration: duration?.toString().trim(),
+            reason: reason?.toString().replace(/[<>&]/g, '').trim()
+        }
+    };
+}
 
 const name = 'promote';
 
@@ -896,6 +974,26 @@ async function handleMainMenu(interaction, context) {
 }
 
 async function handlePromoteUserOrRole(interaction, context) {
+    // Check bot permissions first
+    const hasPermissions = await checkPromotionPermissions(interaction);
+    if (!hasPermissions) return;
+    
+    // Validate user permissions
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    if (!member.permissions.has('ManageRoles')) {
+        const embed = colorManager.createEmbed()
+            .setTitle('❌ صلاحيات غير كافية')
+            .setDescription('تحتاج صلاحية ManageRoles للقيام بالترقيات')
+            .setColor(0xff0000)
+            .setTimestamp();
+            
+        await interaction.reply({
+            embeds: [embed],
+            ephemeral: true
+        });
+        return;
+    }
+    
     // إنشاء قائمة خيارات للترقية
     const optionSelect = new StringSelectMenuBuilder()
         .setCustomId('promote_user_or_role_option')
@@ -1554,6 +1652,23 @@ async function handlePromoteInteractions(interaction, context) {
     // Handle user selection for promotion
     if (interaction.isUserSelectMenu() && customId === 'promote_select_user') {
         const selectedUserId = interaction.values[0];
+        
+        // Validate user input first
+        const validation = validatePromotionInput(selectedUserId);
+        if (!validation.isValid) {
+            const embed = colorManager.createEmbed()
+                .setTitle('❌ بيانات غير صالحة')
+                .setDescription(validation.errors.join('\n'))
+                .setColor(0xff0000)
+                .setTimestamp();
+                
+            await interaction.reply({
+                embeds: [embed],
+                ephemeral: true
+            });
+            return;
+        }
+        
         const member = await interaction.guild.members.fetch(selectedUserId);
 
         // Check if user is banned from promotions
@@ -3785,18 +3900,9 @@ async function handlePromoteInteractions(interaction, context) {
     // معالجات سجلات المستخدم مع pagination
     if (interaction.isUserSelectMenu() && customId === 'promote_records_select_user') {
         const selectedUserId = interaction.values[0];
-        const records = await promoteManager.getUserPromotionRecords(selectedUserId, interaction.guild.id);
-
-        if (records.length === 0) {
-            await interaction.update({
-                content: 'العضو <@${selectedUserId}> ليس لديه سجلات ترقيات.',
-                embeds: [],
-                components: []
-            });
-            return;
-        }
-
-        await displayUserRecord(interaction, selectedUserId, 0, records);
+        
+        // Use enhanced display system instead of basic one
+        await displayEnhancedUserRecords(interaction, selectedUserId, 0);
         return;
     }
 
@@ -4609,6 +4715,294 @@ async function handleDeleteAllUserRecords(interaction, userId) {
         console.error('خطأ في حذف جميع سجلات المستخدم:', error);
         await interaction.reply({
             content: 'حدث خطأ أثناء حذف السجلات!',
+            ephemeral: true
+        });
+    }
+}
+
+// Enhanced user record navigation handlers
+if (interaction.isButton() && customId.startsWith('enhanced_user_prev_')) {
+    const parts = customId.split('_');
+    const userId = parts[3];
+    const currentPage = parseInt(parts[4]);
+    await displayEnhancedUserRecords(interaction, userId, currentPage - 1);
+    return;
+}
+
+if (interaction.isButton() && customId.startsWith('enhanced_user_next_')) {
+    const parts = customId.split('_');
+    const userId = parts[3];
+    const currentPage = parseInt(parts[4]);
+    await displayEnhancedUserRecords(interaction, userId, currentPage + 1);
+    return;
+}
+
+if (interaction.isButton() && customId.startsWith('enhanced_user_export_')) {
+    const userId = customId.split('_')[3];
+    await handleExportUserRecords(interaction, userId);
+    return;
+}
+
+if (interaction.isButton() && customId.startsWith('enhanced_user_delete_')) {
+    const userId = customId.split('_')[3];
+    await handleDeleteAllUserRecordsEnhanced(interaction, userId);
+    return;
+}
+
+async function handleExportUserRecords(interaction, userId) {
+    try {
+        const promoteLogsPath = path.join(__dirname, '..', 'data', 'promoteLogs.json');
+        const allLogs = readJson(promoteLogsPath, []);
+        
+        const userRecords = allLogs.filter(log => {
+            const targetUserId = log.data?.targetUserId || log.data?.userId;
+            return targetUserId === userId;
+        }).sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+
+        if (userRecords.length === 0) {
+            await interaction.reply({
+                content: 'لا توجد سجلات للتصدير.',
+                ephemeral: true
+            });
+            return;
+        }
+
+        // Create formatted text export
+        let exportContent = `سجلات ترقيات العضو: ${userId}\n`;
+        exportContent += `عدد السجلات: ${userRecords.length}\n`;
+        exportContent += `تاريخ الاستخراج: ${new Date().toLocaleString('ar-SA')}\n`;
+        exportContent += '='.repeat(50) + '\n\n';
+
+        userRecords.forEach((record, index) => {
+            const data = record.data || {};
+            const date = new Date(record.timestamp || Date.now());
+            
+            exportContent += `سجل #${index + 1}:\n`;
+            exportContent += `التاريخ: ${date.toLocaleString('ar-SA')}\n`;
+            exportContent += `النوع: ${record.type}\n`;
+            
+            if (record.type === 'PROMOTION_APPLIED') {
+                exportContent += `العضو: ${data.targetUserId || data.userId}\n`;
+                exportContent += `الدور: ${record.roleName || data.role?.name || 'غير محدد'}\n`;
+                exportContent += `المدة: ${data.duration || 'دائمة'}\n`;
+                exportContent += `السبب: ${data.reason || 'غير محدد'}\n`;
+                exportContent += `المدير: ${data.byUserId || data.moderatorId || 'غير محدد'}\n`;
+            } else if (record.type === 'BULK_PROMOTION') {
+                exportContent += `من الدور: ${data.sourceRoleName || data.sourceRole?.name || 'غير محدد'}\n`;
+                exportContent += `إلى الدور: ${data.targetRoleName || data.targetRole?.name || 'غير محدد'}\n`;
+                exportContent += `عدد الأعضاء: ${data.successCount || data.successfulMembers?.length || 0}\n`;
+                exportContent += `السبب: ${data.reason || 'غير محدد'}\n`;
+                exportContent += `المدير: ${data.byUserId || data.moderatorId || 'غير محدد'}\n`;
+            }
+            
+            exportContent += '-'.repeat(30) + '\n\n';
+        });
+
+        // Save to temporary file
+        const exportFileName = `user_${userId}_promotions_${Date.now()}.txt`;
+        const exportPath = path.join(__dirname, '..', 'exports', exportFileName);
+        
+        // Create exports directory if it doesn't exist
+        const exportsDir = path.dirname(exportPath);
+        if (!fs.existsSync(exportsDir)) {
+            fs.mkdirSync(exportsDir, { recursive: true });
+        }
+        
+        fs.writeFileSync(exportPath, exportContent, 'utf8');
+
+        await interaction.reply({
+            content: `✅ تم تصدير السجلات بنجاح! الملف: ${exportFileName}`,
+            files: [exportPath],
+            ephemeral: true
+        });
+
+        // Clean up file after sending
+        setTimeout(() => {
+            try {
+                fs.unlinkSync(exportPath);
+            } catch (error) {
+                console.error('Error cleaning up export file:', error);
+            }
+        }, 60000); // Delete after 1 minute
+
+    } catch (error) {
+        console.error('Error exporting user records:', error);
+        await interaction.reply({
+            content: '❌ حدث خطأ أثناء تصدير السجلات.',
+            ephemeral: true
+        });
+    }
+}
+
+async function handleDeleteAllUserRecordsEnhanced(interaction, userId) {
+    try {
+        // Confirmation first
+        const confirmButton = new ButtonBuilder()
+            .setCustomId(`confirm_delete_user_${userId}`)
+            .setLabel('تأكيد الحذف')
+            .setStyle(ButtonStyle.Danger);
+        
+        const cancelButton = new ButtonBuilder()
+            .setCustomId('cancel_delete_user')
+            .setLabel('إلغاء')
+            .setStyle(ButtonStyle.Secondary);
+
+        const row = new ActionRowBuilder().addComponents(confirmButton, cancelButton);
+
+        await interaction.reply({
+            content: `⚠️ هل أنت متأكد من حذف جميع سجلات ترقيات هذا العضو؟`,
+            components: [row],
+            ephemeral: true
+        });
+
+    } catch (error) {
+        console.error('Error in delete confirmation:', error);
+        await interaction.reply({
+            content: '❌ حدث خطأ أثناء معالجة طلب الحذف.',
+            ephemeral: true
+        });
+    }
+}
+
+// Enhanced user record navigation handlers
+if (interaction.isButton() && customId.startsWith('enhanced_user_prev_')) {
+    const parts = customId.split('_');
+    const userId = parts[3];
+    const currentPage = parseInt(parts[4]);
+    await displayEnhancedUserRecords(interaction, userId, currentPage - 1);
+    return;
+}
+
+if (interaction.isButton() && customId.startsWith('enhanced_user_next_')) {
+    const parts = customId.split('_');
+    const userId = parts[3];
+    const currentPage = parseInt(parts[4]);
+    await displayEnhancedUserRecords(interaction, userId, currentPage + 1);
+    return;
+}
+
+if (interaction.isButton() && customId.startsWith('enhanced_user_export_')) {
+    const userId = customId.split('_')[3];
+    await handleExportUserRecords(interaction, userId);
+    return;
+}
+
+if (interaction.isButton() && customId.startsWith('enhanced_user_delete_')) {
+    const userId = customId.split('_')[3];
+    await handleDeleteAllUserRecordsEnhanced(interaction, userId);
+    return;
+}
+
+async function handleExportUserRecords(interaction, userId) {
+    try {
+        const promoteLogsPath = path.join(__dirname, '..', 'data', 'promoteLogs.json');
+        const allLogs = readJson(promoteLogsPath, []);
+        
+        const userRecords = allLogs.filter(log => {
+            const targetUserId = log.data?.targetUserId || log.data?.userId;
+            return targetUserId === userId;
+        }).sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+
+        if (userRecords.length === 0) {
+            await interaction.reply({
+                content: 'لا توجد سجلات للتصدير.',
+                ephemeral: true
+            });
+            return;
+        }
+
+        // Create formatted text export
+        let exportContent = `سجلات ترقيات العضو: ${userId}\n`;
+        exportContent += `عدد السجلات: ${userRecords.length}\n`;
+        exportContent += `تاريخ الاستخراج: ${new Date().toLocaleString('ar-SA')}\n`;
+        exportContent += '='.repeat(50) + '\n\n';
+
+        userRecords.forEach((record, index) => {
+            const data = record.data || {};
+            const date = new Date(record.timestamp || Date.now());
+            
+            exportContent += `سجل #${index + 1}:\n`;
+            exportContent += `التاريخ: ${date.toLocaleString('ar-SA')}\n`;
+            exportContent += `النوع: ${record.type}\n`;
+            
+            if (record.type === 'PROMOTION_APPLIED') {
+                exportContent += `العضو: ${data.targetUserId || data.userId}\n`;
+                exportContent += `الدور: ${record.roleName || data.role?.name || 'غير محدد'}\n`;
+                exportContent += `المدة: ${data.duration || 'دائمة'}\n`;
+                exportContent += `السبب: ${data.reason || 'غير محدد'}\n`;
+                exportContent += `المدير: ${data.byUserId || data.moderatorId || 'غير محدد'}\n`;
+            } else if (record.type === 'BULK_PROMOTION') {
+                exportContent += `من الدور: ${data.sourceRoleName || data.sourceRole?.name || 'غير محدد'}\n`;
+                exportContent += `إلى الدور: ${data.targetRoleName || data.targetRole?.name || 'غير محدد'}\n`;
+                exportContent += `عدد الأعضاء: ${data.successCount || data.successfulMembers?.length || 0} عضو\n`;
+                exportContent += `السبب: ${data.reason || 'غير محدد'}\n`;
+                exportContent += `المدير: ${data.byUserId || data.moderatorId || 'غير محدد'}\n`;
+            }
+            
+            exportContent += '-'.repeat(30) + '\n\n';
+        });
+
+        // Save to temporary file
+        const exportFileName = `user_${userId}_promotions_${Date.now()}.txt`;
+        const exportPath = path.join(__dirname, '..', 'exports', exportFileName);
+        
+        // Create exports directory if it doesn't exist
+        const exportsDir = path.dirname(exportPath);
+        if (!fs.existsSync(exportsDir)) {
+            fs.mkdirSync(exportsDir, { recursive: true });
+        }
+        
+        fs.writeFileSync(exportPath, exportContent, 'utf8');
+
+        await interaction.reply({
+            content: `✅ تم تصدير السجلات بنجاح! الملف: ${exportFileName}`,
+            files: [exportPath],
+            ephemeral: true
+        });
+
+        // Clean up file after sending
+        setTimeout(() => {
+            try {
+                fs.unlinkSync(exportPath);
+            } catch (error) {
+                console.error('Error cleaning up export file:', error);
+            }
+        }, 60000); // Delete after 1 minute
+
+    } catch (error) {
+        console.error('Error exporting user records:', error);
+        await interaction.reply({
+            content: '❌ حدث خطأ أثناء تصدير السجلات.',
+            ephemeral: true
+        });
+    }
+}
+
+async function handleDeleteAllUserRecordsEnhanced(interaction, userId) {
+    try {
+        // Confirmation first
+        const confirmButton = new ButtonBuilder()
+            .setCustomId(`confirm_delete_user_${userId}`)
+            .setLabel('تأكيد الحذف')
+            .setStyle(ButtonStyle.Danger);
+        
+        const cancelButton = new ButtonBuilder()
+            .setCustomId('cancel_delete_user')
+            .setLabel('إلغاء')
+            .setStyle(ButtonStyle.Secondary);
+
+        const row = new ActionRowBuilder().addComponents(confirmButton, cancelButton);
+
+        await interaction.reply({
+            content: `⚠️ هل أنت متأكد من حذف جميع سجلات ترقيات هذا العضو؟`,
+            components: [row],
+            ephemeral: true
+        });
+
+    } catch (error) {
+        console.error('Error in delete confirmation:', error);
+        await interaction.reply({
+            content: '❌ حدث خطأ أثناء معالجة طلب الحذف.',
             ephemeral: true
         });
     }
