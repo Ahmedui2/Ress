@@ -4,6 +4,7 @@ const path = require('path');
 const ms = require('ms');
 const colorManager = require('../utils/colorManager');
 const promoteManager = require('../utils/promoteManager');
+const { collectUserStats, formatDuration } = require('../utils/userStatsCollector');
 
 const name = 'promote';
 
@@ -1628,6 +1629,16 @@ async function handlePromoteInteractions(interaction, context) {
 
         const roleRow = new ActionRowBuilder().addComponents(roleSelect);
 
+        // جمع إحصائيات المستخدم
+        const userStats = await collectUserStats(member);
+
+        // حساب الوقت في الفويس بالأيام والساعات
+        const voiceTimeInMs = userStats.realVoiceTime || 0;
+        const days = Math.floor(voiceTimeInMs / (1000 * 60 * 60 * 24));
+        const hours = Math.floor((voiceTimeInMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+        const minutes = Math.floor((voiceTimeInMs % (1000 * 60 * 60)) / (1000 * 60));
+        const voiceTimeFormatted = days > 0 ? `${days} يوم، ${hours} ساعة` : hours > 0 ? `${hours} ساعة، ${minutes} دقيقة` : `${minutes} دقيقة`;
+
         const embedContent = colorManager.createEmbed()
             .setTitle('🎯 اختيار رولات الترقية')
             .setDescription(`**العضو المختار:** <@${selectedUserId}>\n\n` +
@@ -1638,6 +1649,14 @@ async function handlePromoteInteractions(interaction, context) {
                               '**يوجد رول واحد فقط متاح للترقية.**'}`)
             .addFields([
                 {
+                    name: '📊 **إحصائيات العضو**',
+                    value: `🎤 **الوقت في الفويس:** ${voiceTimeFormatted}\n` +
+                           `💬 **الرسائل:** ${userStats.realMessages || 0}\n` +
+                           `⭐ **التفاعلات:** ${userStats.reactionsGiven || 0}\n` +
+                           `🔊 **الانضمام للفويس:** ${userStats.joinedChannels || 0} مرة`,
+                    inline: false
+                },
+                {
                     name: '📋 **الرولات المتاحة**',
                     value: availableRoles.map((role, index) => 
                         `${index + 1}. **${role.label}**`
@@ -1645,6 +1664,7 @@ async function handlePromoteInteractions(interaction, context) {
                     inline: false
                 }
             ])
+            .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
             .setTimestamp();
 
         await interaction.reply({
@@ -2841,7 +2861,7 @@ async function handlePromoteInteractions(interaction, context) {
 
             await interaction.editReply({ embeds: [summaryEmbed] });
 
-            // Log bulk promotion with unified logging
+            // Log bulk promotion with unified logging - حفظ سجل جماعي واحد فقط
             promoteManager.logAction('BULK_PROMOTION', {
                 sourceRoleId,
                 sourceRoleName: bulkSourceRole.name,
@@ -2855,6 +2875,7 @@ async function handlePromoteInteractions(interaction, context) {
                 bannedCount,
                 totalMembers: membersWithRole.size,
                 guildId: interaction.guild.id,
+                successfulMembers: successfulMembers.map(m => m.id), // حفظ معرفات الأعضاء الناجحين
                 timestamp: Date.now()
             });
 
@@ -3044,6 +3065,7 @@ async function handlePromoteInteractions(interaction, context) {
                     successCount,
                     failedCount: failedPromotions.length,
                     transactionId,
+                    removedRoles: [...new Set(allRemovedOldRoles)],
                     timestamp: Date.now()
                 });
 
