@@ -1,4 +1,4 @@
-const { ButtonBuilder, ActionRowBuilder, ButtonStyle, StringSelectMenuBuilder, UserSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, RoleSelectMenuBuilder, ChannelSelectMenuBuilder, ChannelType } = require('discord.js');
+const { ButtonBuilder, ActionRowBuilder, ButtonStyle, StringSelectMenuBuilder, UserSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, RoleSelectMenuBuilder, ChannelSelectMenuBuilder, ChannelType, MessageFlags } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const ms = require('ms');
@@ -377,7 +377,7 @@ async function handleInteraction(interaction, context) {
         if (!hasPermission) {
             return interaction.reply({
                 content: ' **ليس لديك صلاحية لاستخدام هذا النظام!**',
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         }
 
@@ -402,7 +402,7 @@ async function handleInteraction(interaction, context) {
         if (!interaction.replied && !interaction.deferred) {
             await interaction.reply({
                 content: ' **حدث خطأ أثناء المعالجة! يرجى المحاولة مرة أخرى.**',
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             }).catch(console.error);
         }
     }
@@ -617,7 +617,7 @@ async function handleSetupStep(interaction, context) {
                 console.error('❌ فشل في حفظ الإعدادات');
                 return interaction.reply({
                     content: '❌ **فشل في حفظ الإعدادات! يرجى المحاولة مرة أخرى.**',
-                    ephemeral: true
+                    flags: MessageFlags.Ephemeral
                 });
             }
 
@@ -625,7 +625,7 @@ async function handleSetupStep(interaction, context) {
             console.log('📋 إرسال رسالة التأكيد...');
             await interaction.reply({
                 content: '⏳ **جاري إكمال الإعداد وإنشاء المنيو التفاعلي...**',
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
 
             // تأخير قصير للتأكد من معالجة الرد
@@ -676,7 +676,7 @@ async function handleSetupStep(interaction, context) {
                 } else {
                     await interaction.reply({
                         content: '❌ **حدث خطأ أثناء إكمال الإعداد! يرجى المحاولة مرة أخرى.**',
-                        ephemeral: true
+                        flags: MessageFlags.Ephemeral
                     });
                 }
             } catch (replyError) {
@@ -715,7 +715,7 @@ async function handleResendMenu(interaction, context) {
             console.log('⚠️ قناة المنيو غير محددة');
             await interaction.reply({
                 content: '⚠️ **لم يتم تحديد روم المنيو! يرجى تعديل الإعدادات أولاً.**',
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
             return;
         }
@@ -731,7 +731,7 @@ async function handleResendMenu(interaction, context) {
             console.error('❌ خطأ في العثور على القناة:', channelError);
             await interaction.reply({
                 content: '❌ **الروم المحددة للمنيو غير موجودة أو لا يمكن الوصول إليها!**',
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
             return;
         }
@@ -740,7 +740,7 @@ async function handleResendMenu(interaction, context) {
         console.log('🔄 إرسال رسالة التأكيد...');
         await interaction.reply({
             content: '⏳ **جاري إعادة إرسال المنيو التفاعلي...**',
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
 
         // تأخير قصير للتأكد من معالجة الرد
@@ -805,7 +805,7 @@ async function handleResendMenu(interaction, context) {
             } else {
                 await interaction.reply({
                     content: '❌ **حدث خطأ أثناء إعادة إرسال المنيو! يرجى المحاولة مرة أخرى.**',
-                    ephemeral: true
+                    flags: MessageFlags.Ephemeral
                 });
             }
         } catch (replyError) {
@@ -842,7 +842,7 @@ async function handleSystemStats(interaction, context) {
     await interaction.reply({
         content: ' **اختر نوع الإحصائيات المطلوبة:**',
         components: [statsRow],
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
     });
 }
 
@@ -918,7 +918,7 @@ async function handlePromoteUserOrRole(interaction, context) {
     await interaction.reply({
         content: ' **اختر طريقة الترقية المطلوبة:**',
         components: [optionRow],
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
     });
 }
 
@@ -945,7 +945,7 @@ async function handlePromotionRecords(interaction, context) {
     await interaction.reply({
         content: ' **اختر نوع السجلات المطلوب عرضها:**',
         components: [optionRow],
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
     });
 }
 
@@ -960,7 +960,7 @@ async function handleBanFromPromotion(interaction, context) {
     await interaction.reply({
         content: ' **اختر العضو لحظره من الترقيات:**',
         components: [userRow],
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
     });
 }
 
@@ -1000,7 +1000,7 @@ async function handleUnbanPromotion(interaction, context) {
 
         await interaction.reply({
             embeds: [noEligibleEmbed],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
         return;
     }
@@ -1046,7 +1046,7 @@ async function handleUnbanPromotion(interaction, context) {
     await interaction.reply({
         embeds: [eligibleEmbed],
         components: [userRow],
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
     });
 }
 
@@ -1073,7 +1073,7 @@ async function handleCheckAdminActivity(interaction, context) {
     await interaction.reply({
         content: ' **اختر نوع فحص التفاعل المطلوب:**',
         components: [optionRow],
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
     });
 }
 
@@ -1128,7 +1128,7 @@ async function handleSettingsButton(interaction, context) {
     await interaction.reply({
         embeds: [settingsEmbed],
         components: [settingsRow],
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
     });
 }
 
@@ -1490,7 +1490,7 @@ async function handlePromoteInteractions(interaction, context) {
         if (!sourceRole || !targetRole) {
             await interaction.reply({
                 content: '❌ **لم يتم العثور على أحد الرولات!**',
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
             return;
         }
@@ -1499,7 +1499,7 @@ async function handlePromoteInteractions(interaction, context) {
         if (targetRole.position <= sourceRole.position) {
             await interaction.reply({
                 content: `❌ **الرول المستهدف (${targetRole.name}) يجب أن يكون أعلى من الرول المصدر (${sourceRole.name})**`,
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
             return;
         }
@@ -1517,7 +1517,7 @@ async function handlePromoteInteractions(interaction, context) {
             if (targetRole.position >= promoterHighestRole.position) {
                 await interaction.reply({
                     content: `❌ **لا يمكنك ترقية أعضاء إلى رول (${targetRole.name}) أعلى من أو مساوي لرولك الأعلى (${promoterHighestRole.name})**`,
-                    ephemeral: true
+                    flags: MessageFlags.Ephemeral
                 });
                 return;
             }
@@ -1571,7 +1571,7 @@ async function handlePromoteInteractions(interaction, context) {
                     'نهائي';
                 await interaction.reply({
                     content: ` **العضو** <@${selectedUserId}> **محظور من الترقيات.**\n**ينتهي الحظر:** ${banEndText}`,
-                    ephemeral: true
+                    flags: MessageFlags.Ephemeral
                 });
                 return;
             }
@@ -1583,7 +1583,7 @@ async function handlePromoteInteractions(interaction, context) {
         if (adminRoles.length === 0) {
             await interaction.reply({
                 content: '⚠️ **لا توجد رولات إدارية محددة! يرجى إضافة رولات إدارية أولاً.**',
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
             return;
         }
@@ -1610,7 +1610,7 @@ async function handlePromoteInteractions(interaction, context) {
         if (availableRoles.length === 0) {
             await interaction.reply({
                 content: ` **العضو** <@${selectedUserId}> **يملك جميع الرولات الإدارية المتاحة!**`,
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
             return;
         }
@@ -1650,7 +1650,7 @@ async function handlePromoteInteractions(interaction, context) {
         await interaction.reply({
             embeds: [embedContent],
             components: [roleRow],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
         return;
     }
@@ -1722,7 +1722,7 @@ async function handlePromoteInteractions(interaction, context) {
             try {
                 await interaction.followUp({
                     embeds: [confirmationEmbed],
-                    ephemeral: true
+                    flags: MessageFlags.Ephemeral
                 });
             } catch (error) {
                 console.log('تم إغلاق التفاعل أو انتهت صلاحيته');
@@ -2073,139 +2073,18 @@ async function handlePromoteInteractions(interaction, context) {
     // Handle user selection for records
     if (interaction.isUserSelectMenu() && customId === 'promote_records_select_user') {
         const selectedUserId = interaction.values[0];
-
-        // البحث في جميع أنواع السجلات
-        const promoteLogsPath = path.join(__dirname, '..', 'data', 'promoteLogs.json');
-        const allLogs = readJson(promoteLogsPath, []);
-
-        // فلترة السجلات لتشمل جميع الأنواع المتعلقة بالمستخدم
-        const records = allLogs.filter(log => {
-            if (!log.data) return false;
-
-            // سجلات الترقية الفردية
-            if ((log.type === 'PROMOTION_APPLIED' || log.type === 'PROMOTION_ENDED') && 
-                log.data.targetUserId === selectedUserId) {
-                return true;
-            }
-
-            // سجلات الترقية الجماعية
-            if (log.type === 'BULK_PROMOTION' && log.data.successfulMembers) {
-                const members = log.data.successfulMembers;
-                return members.some(member => {
-                    if (typeof member === 'string') return member === selectedUserId;
-                    if (typeof member === 'object' && member.id) return member.id === selectedUserId;
-                    return false;
-                });
-            }
-
-            // سجلات الترقية المتعددة
-            if (log.type === 'MULTI_PROMOTION_APPLIED' && log.data.targetUserId === selectedUserId) {
-                return true;
-            }
-
-            return false;
-        }).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        const records = await promoteManager.getUserPromotionRecords(selectedUserId, interaction.guild.id);
 
         if (records.length === 0) {
-            await interaction.reply({
+            await interaction.update({
                 content: ` **العضو** <@${selectedUserId}> **ليس لديه أي سجلات ترقيات.**`,
-                ephemeral: true
+                embeds: [],
+                components: []
             });
             return;
         }
 
-        // تحسين عرض السجلات الخاصة بالمستخدم
-        const member = await interaction.guild.members.fetch(selectedUserId).catch(() => null);
-        const memberName = member ? member.displayName : `العضو ID: ${selectedUserId}`;
-
-        const recordsEmbed = colorManager.createEmbed()
-            .setTitle('👤 سجلات الترقيات - العضو')
-            .setDescription(`**العضو المحدد:** <@${selectedUserId}> (${memberName})\n` +
-                          `**إجمالي السجلات:** ${records.length}\n` +
-                          `**آخر تحديث:** <t:${Math.floor(Date.now() / 1000)}:R>`)
-            .setThumbnail(member?.displayAvatarURL({ dynamic: true }) || interaction.guild.iconURL({ dynamic: true }))
-            .addFields(records.slice(0, 20).map((record, index) => {
-                const recordDate = new Date(record.timestamp || Date.now());
-                const timestamp = Math.floor(recordDate.getTime() / 1000);
-
-                // تحسين تحديد نوع الترقية والنص المناسب
-                let actionDescription = '';
-                let actionIcon = '';
-                let statusColor = '';
-
-                switch (record.type) {
-                    case 'BULK_PROMOTION':
-                        const sourceRoleName = record.data?.sourceRoleName || 'غير محدد';
-                        const targetRoleName = record.data?.targetRoleName || 'غير محدد';
-                        actionDescription = `ترقية جماعية من "${sourceRoleName}" إلى "${targetRoleName}"`;
-                        actionIcon = '👥';
-                        statusColor = '🟢';
-                        break;
-
-                    case 'PROMOTION_APPLIED':
-                        const previousRoleName = record.data?.previousRole?.name || 'بدون رول سابق';
-                        const roleId = record.data?.roleId;
-                        const roleObj = roleId ? interaction.guild.roles.cache.get(roleId) : null;
-                        const currentRoleName = roleObj ? roleObj.name : 'رول محذوف';
-                        actionDescription = `ترقية فردية من "${previousRoleName}" إلى "${currentRoleName}"`;
-                        actionIcon = '⬆️';
-                        statusColor = '🟢';
-                        break;
-
-                    case 'MULTI_PROMOTION_APPLIED':
-                        const rolesCount = record.data?.roleIds?.length || 0;
-                        actionDescription = `ترقية متعددة لـ ${rolesCount} رول`;
-                        actionIcon = '🎯';
-                        statusColor = '🟢';
-                        break;
-
-                    case 'PROMOTION_ENDED':
-                        const endedRoleId = record.data?.roleId;
-                        const endedRoleObj = endedRoleId ? interaction.guild.roles.cache.get(endedRoleId) : null;
-                        const endedRoleName = endedRoleObj ? endedRoleObj.name : 'رول محذوف';
-                        actionDescription = `انتهاء ترقية الرول "${endedRoleName}"`;
-                        actionIcon = '⏰';
-                        statusColor = '🔴';
-                        break;
-
-                    default:
-                        actionDescription = `إجراء غير معروف`;
-                        actionIcon = '❓';
-                        statusColor = '🟡';
-                        break;
-                }
-
-                // تحديد حالة الترقية
-                const duration = record.data?.duration || 'نهائي';
-                const reason = record.data?.reason || 'لم يتم تحديد سبب';
-                const moderatorId = record.data?.byUserId || record.data?.moderatorId || 'غير معروف';
-
-                let statusInfo = '';
-                if (record.type === 'PROMOTION_APPLIED' && duration !== 'نهائي') {
-                    const endTime = record.data?.endTime;
-                    if (endTime) {
-                        const isExpired = Date.now() > endTime;
-                        statusInfo = isExpired ? '\n🔴 **حالة الترقية:** منتهية' : '\n🟢 **حالة الترقية:** نشطة';
-                    }
-                }
-
-                return {
-                    name: `${statusColor} ${actionIcon} سجل رقم ${index + 1}`,
-                    value: `**النوع:** ${actionDescription}\n` +
-                           `**المدة المحددة:** ${duration}\n` +
-                           `**السبب:** ${reason}\n` +
-                           `**تم بواسطة:** <@${moderatorId}>\n` +
-                           `**تاريخ الإجراء:** <t:${timestamp}:F> (<t:${timestamp}:R>)` +
-                           statusInfo,
-                    inline: false
-                };
-            }))
-            .setTimestamp();
-
-        await interaction.reply({
-            embeds: [recordsEmbed],
-            ephemeral: true
-        });
+        await displayUserRecord(interaction, selectedUserId, 0, records);
         return;
     }
 
@@ -2222,7 +2101,7 @@ async function handlePromoteInteractions(interaction, context) {
             if (!interaction.replied && !interaction.deferred) {
                 await interaction.reply({
                     content: '❌ حدث خطأ أثناء حذف السجل.',
-                    ephemeral: true
+                    flags: MessageFlags.Ephemeral
                 });
             }
         }
@@ -2294,7 +2173,7 @@ async function handlePromoteInteractions(interaction, context) {
 
                 await interaction.reply({
                     content: ` **العضو** <@${selectedUserId}> **محظور بالفعل من الترقيات.**\n**ينتهي الحظر:** ${banEndText}`,
-                    ephemeral: true
+                    flags: MessageFlags.Ephemeral
                 });
                 return;
             }
@@ -2327,7 +2206,7 @@ async function handlePromoteInteractions(interaction, context) {
             console.error('خطأ في معالجة اختيار المستخدم للحظر:', error);
             await interaction.reply({
                 content: '❌ **حدث خطأ أثناء معالجة الطلب.**',
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         }
         return;
@@ -2751,12 +2630,12 @@ async function handlePromoteInteractions(interaction, context) {
         if (result.success) {
             await interaction.reply({
                 content: ` **تم فك حظر الترقية بنجاح عن العضو** <@${selectedUserId}>`,
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         } else {
             await interaction.reply({
                 content: ` **فشل في فك الحظر:** ${result.error}`,
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         }
         return;
@@ -2783,7 +2662,7 @@ async function handlePromoteInteractions(interaction, context) {
 
         await interaction.reply({
             embeds: [activityEmbed],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
         return;
     }
@@ -3008,7 +2887,7 @@ async function handlePromoteInteractions(interaction, context) {
                 } else {
                     await interaction.reply({
                         content: ' **حدث خطأ أثناء معالجة الترقية الجماعية!**',
-                        ephemeral: true
+                        flags: MessageFlags.Ephemeral
                     });
                 }
             } catch (replyError) {
@@ -3044,7 +2923,7 @@ async function handlePromoteInteractions(interaction, context) {
             if (!member) {
                 await interaction.reply({
                     content: '❌ **لم يتم العثور على العضو!**',
-                    ephemeral: true
+                    flags: MessageFlags.Ephemeral
                 });
                 return;
             }
@@ -3056,7 +2935,7 @@ async function handlePromoteInteractions(interaction, context) {
                     if (!durationMs || durationMs <= 0) {
                         await interaction.reply({
                             content: '❌ **صيغة المدة غير صحيحة!**\n\n**أمثلة صحيحة:**\n• `7d` أو `7 ايام` - لسبعة أيام\n• `12h` أو `12 ساعات` - لاثني عشر ساعة\n• `30m` أو `30 دقائق` - لثلاثين دقيقة\n• `نهائي` أو `دائم` - للترقية الدائمة',
-                            ephemeral: true
+                            flags: MessageFlags.Ephemeral
                         });
                         return;
                     }
@@ -3064,7 +2943,7 @@ async function handlePromoteInteractions(interaction, context) {
                     console.error('خطأ في تحليل المدة:', durationError);
                     await interaction.reply({
                         content: '❌ **خطأ في تحليل المدة المدخلة!**\n\nيرجى التأكد من الصيغة الصحيحة.',
-                        ephemeral: true
+                        flags: MessageFlags.Ephemeral
                     });
                     return;
                 }
@@ -3270,7 +3149,7 @@ async function handlePromoteInteractions(interaction, context) {
             await interaction.reply({
                 content: '❌ **حدث خطأ أثناء معالجة الترقية!**\n\n' +
                         `**تفاصيل الخطأ:** ${error.message || 'خطأ غير معروف'}`,
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         }
         return;
@@ -3529,7 +3408,7 @@ async function handlePromoteInteractions(interaction, context) {
             const isTemporary = duration !== 'نهائي';
 
             const embed = colorManager.createEmbed()
-                .setTitle(`📋 سجل ترقية - الرول ${role.name}`)
+                .setTitle(`📋 سجل ترقية - الرول ${roleObj.name}`)
                 .setDescription(
                     `**رقم السجل:** ${currentPage + 1} من ${totalRecords}\n\n` +
                     `✅ **تم ترقية العضو** <@${targetUserId}> **لعدة رولات**\n\n` +
@@ -3621,7 +3500,7 @@ async function handlePromoteInteractions(interaction, context) {
         const isTemporary = duration !== 'نهائي';
 
         const embed = colorManager.createEmbed()
-            .setTitle(`📋 سجل ترقية - الرول ${role.name}`)
+            .setTitle(`📋 سجل ترقية - الرول ${roleObj.name}`)
             .setDescription(
                 `**رقم السجل:** ${currentPage + 1} من ${totalRecords}\n\n` +
                 `${descriptionText}\n\n` +
@@ -3743,7 +3622,7 @@ async function handlePromoteInteractions(interaction, context) {
             if (!parsedDuration) {
                 await interaction.reply({
                     content: '❌ صيغة المدة غير صحيحة! استخدم: 30d, 7d, أو نهائي',
-                    ephemeral: true
+                    flags: MessageFlags.Ephemeral
                 });
                 return;
             }
@@ -3771,12 +3650,12 @@ async function handlePromoteInteractions(interaction, context) {
 
             await interaction.reply({
                 embeds: [successEmbed],
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         } else {
             await interaction.reply({
                 content: `❌ ${result.error}`,
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         }
         return;
@@ -4344,12 +4223,12 @@ async function handleDeleteSingleRecord(interaction, roleId, recordIndex) {
             if (!interaction.replied && !interaction.deferred) {
                 await interaction.reply({
                     content: '❌ حدث خطأ أثناء حذف السجل.',
-                    ephemeral: true
+                    flags: MessageFlags.Ephemeral
                 });
             } else {
                 await interaction.followUp({
                     content: '❌ حدث خطأ أثناء حذف السجل.',
-                    ephemeral: true
+                    flags: MessageFlags.Ephemeral
                 });
             }
         } catch (replyError) {
@@ -4389,7 +4268,7 @@ async function handleDeleteAllRecords(interaction, roleId) {
 
         await interaction.reply({
             embeds: [successEmbed],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
 
         // تحديث الرسالة الأصلية
@@ -4403,7 +4282,7 @@ async function handleDeleteAllRecords(interaction, roleId) {
         console.error('خطأ في حذف جميع السجلات:', error);
         await interaction.reply({
             content: 'حدث خطأ أثناء حذف السجلات!',
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 }
@@ -4418,8 +4297,8 @@ async function displayUserRecord(interaction, userId, currentPage, records) {
 
     const recordDate = new Date(record.timestamp || Date.now());
     const timestamp = Math.floor(recordDate.getTime() / 1000);
-    const duration = record.duration || 'نهائي';
-    const reason = record.reason || 'لم يتم تحديد سبب';
+    const duration = record.data?.duration || record.duration || 'نهائي';
+    const reason = record.data?.reason || record.reason || 'لم يتم تحديد سبب';
     const moderatorId = record.data?.byUserId || record.data?.moderatorId || 'غير معروف';
 
     let actionType = '';
@@ -4427,29 +4306,128 @@ async function displayUserRecord(interaction, userId, currentPage, records) {
 
     if (record.type === 'BULK_PROMOTION') {
         actionType = '👥 ترقية جماعية';
-        const sourceRole = record.data?.sourceRoleName || 'غير محدد';
-        const targetRole = record.roleName || 'غير محدد';
-        rolesInfo = `من الرول: **${sourceRole}**\nإلى الرول: **${targetRole}**`;
+        const sourceRoleId = record.data?.sourceRoleId;
+        const targetRoleId = record.data?.targetRoleId;
+        const sourceRoleObj = sourceRoleId ? interaction.guild.roles.cache.get(sourceRoleId) : null;
+        const targetRoleObj = targetRoleId ? interaction.guild.roles.cache.get(targetRoleId) : null;
+        
+        const sourceRole = sourceRoleObj ? sourceRoleObj.name : (record.data?.sourceRoleName || 'رول محذوف');
+        const targetRole = targetRoleObj ? targetRoleObj.name : (record.data?.targetRoleName || record.roleName || 'رول محذوف');
+        
+        rolesInfo = `🔽 **الرول المزال:**\n▫️ ${sourceRole}\n\n🔼 **الرول المضاف:**\n▫️ ${targetRole}`;
     } else if (record.type === 'PROMOTION_APPLIED') {
         actionType = '⬆️ ترقية فردية';
 
+        let addedRolesList = [];
+        let removedRolesList = [];
+
+        // جمع الرولات المضافة
         if (record.data?.addedRoles && record.data.addedRoles.length > 0) {
-            const addedRoleNames = record.data.addedRoles.map(r => r.name || r).join('**, **');
-            rolesInfo = `تمت إضافة: **${addedRoleNames}**`;
-        } else {
-            const currentRole = record.roleName || 'غير محدد';
-            const previousRole = record.data?.previousRole?.name || 'بدون رول سابق';
-            rolesInfo = `من: **${previousRole}**\nإلى: **${currentRole}**`;
+            addedRolesList = record.data.addedRoles.map(r => {
+                if (typeof r === 'object' && r.name) return r.name;
+                if (typeof r === 'string') {
+                    const roleObj = interaction.guild.roles.cache.get(r);
+                    return roleObj ? roleObj.name : r;
+                }
+                return 'رول غير معروف';
+            });
+        } else if (record.data?.roleId) {
+            // ترقية فردية عادية
+            const roleObj = interaction.guild.roles.cache.get(record.data.roleId);
+            const roleName = roleObj ? roleObj.name : (record.roleName || 'رول محذوف');
+            addedRolesList = [roleName];
         }
 
+        // جمع الرولات المزالة
         if (record.data?.removedRoles && record.data.removedRoles.length > 0) {
-            const removedRoleNames = record.data.removedRoles.map(r => r.name || r).join('**, **');
-            rolesInfo += `\n\nتمت إزالة: **${removedRoleNames}**`;
+            removedRolesList = record.data.removedRoles.map(r => {
+                if (typeof r === 'object' && r.name) return r.name;
+                if (typeof r === 'string') {
+                    const roleObj = interaction.guild.roles.cache.get(r);
+                    return roleObj ? roleObj.name : r;
+                }
+                return 'رول غير معروف';
+            });
+        } else if (record.data?.previousRole) {
+            // الرول السابق الذي تم إزالته
+            const previousRoleName = record.data.previousRole.name || 'رول غير معروف';
+            if (previousRoleName !== 'بدون رول سابق') {
+                removedRolesList = [previousRoleName];
+            }
+        }
+
+        // بناء النص
+        if (removedRolesList.length > 0) {
+            rolesInfo = `🔽 **الرولات المزالة:**\n${removedRolesList.map(r => `▫️ ${r}`).join('\n')}`;
+        }
+        
+        if (addedRolesList.length > 0) {
+            if (rolesInfo) rolesInfo += '\n\n';
+            rolesInfo += `🔼 **الرولات المضافة:**\n${addedRolesList.map(r => `▫️ ${r}`).join('\n')}`;
+        }
+
+        if (!rolesInfo) {
+            rolesInfo = '⚠️ **لا توجد تفاصيل متاحة عن الرولات**';
+        }
+    } else if (record.type === 'MULTI_PROMOTION_APPLIED') {
+        actionType = '🎯 ترقية متعددة';
+        
+        let addedRolesList = [];
+        let removedRolesList = [];
+        
+        // جمع الرولات المضافة
+        if (record.data?.roleIds && record.data.roleIds.length > 0) {
+            addedRolesList = record.data.roleIds.map(roleId => {
+                const roleObj = interaction.guild.roles.cache.get(roleId);
+                return roleObj ? roleObj.name : 'رول محذوف';
+            });
+        } else if (record.data?.roles && record.data.roles.length > 0) {
+            addedRolesList = record.data.roles.map(r => r.name || 'رول غير معروف');
+        } else if (record.data?.addedRoles && record.data.addedRoles.length > 0) {
+            addedRolesList = record.data.addedRoles.map(r => {
+                if (typeof r === 'object' && r.name) return r.name;
+                if (typeof r === 'string') {
+                    const roleObj = interaction.guild.roles.cache.get(r);
+                    return roleObj ? roleObj.name : r;
+                }
+                return 'رول غير معروف';
+            });
+        }
+
+        // جمع الرولات المزالة
+        if (record.data?.removedRoles && record.data.removedRoles.length > 0) {
+            removedRolesList = record.data.removedRoles.map(r => {
+                if (typeof r === 'object' && r.name) return r.name;
+                if (typeof r === 'string') {
+                    const roleObj = interaction.guild.roles.cache.get(r);
+                    return roleObj ? roleObj.name : r;
+                }
+                return 'رول غير معروف';
+            });
+        }
+
+        // بناء النص
+        if (removedRolesList.length > 0) {
+            rolesInfo = `🔽 **الرولات المزالة:**\n${removedRolesList.map((r, i) => `${i + 1}. ${r}`).join('\n')}`;
+        }
+
+        if (addedRolesList.length > 0) {
+            if (rolesInfo) rolesInfo += '\n\n';
+            rolesInfo += `🔼 **الرولات المضافة:**\n${addedRolesList.map((r, i) => `${i + 1}. ${r}`).join('\n')}`;
+        }
+
+        if (!rolesInfo) {
+            rolesInfo = '⚠️ **لا توجد معلومات عن الرولات**';
         }
     } else if (record.type === 'PROMOTION_ENDED') {
         actionType = '⏰ انتهاء ترقية';
-        const endedRole = record.roleName || 'غير محدد';
-        rolesInfo = `انتهت مدة الرول: **${endedRole}**`;
+        const endedRoleId = record.data?.roleId;
+        const endedRoleObj = endedRoleId ? interaction.guild.roles.cache.get(endedRoleId) : null;
+        const endedRole = endedRoleObj ? endedRoleObj.name : (record.roleName || 'رول محذوف');
+        rolesInfo = `🔽 **الرول الذي انتهت مدته:**\n▫️ ${endedRole}`;
+    } else {
+        actionType = '❓ نوع غير معروف';
+        rolesInfo = '⚠️ **لا توجد معلومات متاحة**';
     }
 
     let statusInfo = '';
@@ -4573,7 +4551,7 @@ async function handleDeleteUserRecord(interaction, userId, recordIndex) {
         console.error('خطأ في حذف سجل المستخدم:', error);
         await interaction.reply({
             content: '❌ حدث خطأ أثناء حذف السجل.',
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 }
@@ -4609,7 +4587,7 @@ async function handleDeleteAllUserRecords(interaction, userId) {
         console.error('خطأ في حذف جميع سجلات المستخدم:', error);
         await interaction.reply({
             content: 'حدث خطأ أثناء حذف السجلات!',
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 }
