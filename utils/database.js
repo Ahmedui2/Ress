@@ -632,5 +632,9 @@ module.exports = {
     getDatabase: getDatabase,
     initializeDatabase: initializeDatabase,
     trackUserActivity: trackUserActivity,
-    getRealUserStats: getRealUserStats
+    getRealUserStats: getRealUserStats,
+    saveVoiceSession: async (userId, channelId, channelName, duration, startTime, endTime) => {
+        const db = getDatabase();
+        return await db.saveVoiceSession(userId, channelId, channelName, duration, startTime, endTime);
+    }
 };

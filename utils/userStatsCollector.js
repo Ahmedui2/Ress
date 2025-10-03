@@ -104,9 +104,19 @@ async function trackUserActivity(userId, activityType, data = {}) {
                     const sessionId = await saveVoiceSession(userId, channelId, channelName, duration, startTime, endTime);
                     if (sessionId) {
                         console.log(`⏱️ تم حفظ جلسة صوتية: ${Math.round(duration / 1000)} ثانية للمستخدم ${userId} في ${channelName}`);
+                    } else {
+                        console.log(`⚠️ لم يتم حفظ الجلسة الصوتية للمستخدم ${userId}`);
                     }
                 } catch (error) {
-                    console.error('❌ خطأ في حفظ الجلسة الصوتية:', error);
+                    console.error('❌ خطأ في حفظ الجلسة الصوتية:', error.message);
+                    // حفظ بيانات مبسطة على الأقل
+                    try {
+                        await dbManager.updateUserTotals(userId, { voiceTime: duration });
+                        await dbManager.updateDailyActivity(today, userId, { voiceTime: duration });
+                        console.log(`✅ تم حفظ الوقت الصوتي بشكل مبسط: ${Math.round(duration / 1000)} ثانية`);
+                    } catch (fallbackError) {
+                        console.error('❌ فشل الحفظ البديل:', fallbackError.message);
+                    }
                 }
                 break;
 

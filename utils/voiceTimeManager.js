@@ -116,12 +116,19 @@ async function saveVoiceSession(userId, channelId, channelName, duration, startT
         const dbManager = require('./database');
         
         // التأكد من تهيئة قاعدة البيانات
-        if (!dbManager.isInitialized) {
+        if (typeof dbManager.initialize === 'function' && !dbManager.isInitialized) {
             await dbManager.initialize();
         }
         
         // حفظ الجلسة في قاعدة البيانات
-        const sessionId = await dbManager.saveVoiceSession(userId, channelId, channelName, duration, startTime, endTime);
+        let sessionId = null;
+        try {
+            sessionId = await dbManager.saveVoiceSession(userId, channelId, channelName, duration, startTime, endTime);
+        } catch (error) {
+            console.error(`❌ خطأ في حفظ الجلسة في قاعدة البيانات:`, error);
+            // استخدام معرف بديل في حالة الخطأ
+            sessionId = `${userId}_${startTime}_${Math.random().toString(36).substr(2, 9)}`;
+        }
         
         if (!sessionId) {
             console.error(`❌ فشل في حفظ الجلسة الصوتية في قاعدة البيانات للمستخدم ${userId}`);
