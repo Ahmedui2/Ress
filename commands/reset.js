@@ -188,6 +188,9 @@ async function handleMainInteraction(interaction, points, responsibilities, save
             case 'responsibilities':
                 await handleResponsibilitiesReset(interaction, currentPoints, currentResponsibilities, client);
                 break;
+            case 'reset_all_stats':
+                await handleResetAllStats(interaction, currentPoints, currentResponsibilities, client);
+                break;
         }
     }
 }
@@ -253,7 +256,7 @@ async function handleTimeBasedReset(interaction, resetType, points, responsibili
 
                 const resultEmbed = colorManager.createEmbed()
                     .setTitle('**✅ تم التصفير بنجاح**')
-                    .setColor('#00ff00')
+                
                     .addFields([
                         { name: '**Type**', value: getResetTypeName(resetType), inline: true },
                         { name: '**Points**', value: `${result.deletedPoints}`, inline: true },
@@ -319,7 +322,7 @@ async function handleResponsibilityReset(interaction, points, responsibilities, 
     const respEmbed = colorManager.createEmbed()
         .setTitle('**اختيار المسؤولية**')
         .setDescription('**اختر المسؤولية التي تريد تصفير نقاطها:**')
-        .setColor('#4ecdc4')
+    
         .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400670548463456306/9908185.png?ex=688d7b99&is=688c2a19&hm=92e3397be8a05852507afb7133dccd47a7c4c2ebca8dbdc26911e65414545ae9&');
 
     const respSelect = new StringSelectMenuBuilder()
@@ -378,7 +381,7 @@ async function handleResponsibilityConfirmation(interaction, respName, points, r
     const confirmEmbed = colorManager.createEmbed()
         .setTitle('**Reset points**')
         .setDescription(`**هل أنت متأكد من تصفير نقاط مسؤولية "${respName}"؟**`)
-        .setColor('#ff9500')
+        
         .addFields([
             { name: '** Deleting**', value: `${respPoints} نقطة`, inline: true }
         ])
@@ -422,7 +425,7 @@ async function executeResponsibilityReset(interaction, respName, points, respons
         const resultEmbed = colorManager.createEmbed()
             .setTitle('**✅ Reseted**')
             .setDescription(`**تم تصفير مسؤولية "${respName}" بنجاح**`)
-            .setColor('#00ff00')
+        
             .addFields([
                 { name: '**Deleted**', value: `${deletedPoints}`, inline: true }
             ])
@@ -480,7 +483,6 @@ async function handleUserReset(interaction, points, responsibilities, client) {
     const respEmbed = colorManager.createEmbed()
         .setTitle('**Choose Responsibility**')
         .setDescription('**اختر المسؤولية التي تريد تصفير نقاط مسؤوليها:**')
-        .setColor('#4ecdc4')
         .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400670548463456306/9908185.png?ex=688d7b99&is=688c2a19&hm=92e3397be8a05852507afb7133dccd47a7c4c2ebca8dbdc26911e65414545ae9&');
 
     const respSelect = new StringSelectMenuBuilder()
@@ -571,7 +573,7 @@ async function showUsersForReset(interaction, selectedResp, points, responsibili
     const userEmbed = colorManager.createEmbed()
         .setTitle('**Choose Member**')
         .setDescription('**اختر المسؤول الذي تريد تصفير نقاطه:**')
-        .setColor('#ff6b9d')
+        
         .setThumbnail('https://cdn.discordapp.com/emojis/1320524607467425924.png?v=1');
 
     const userSelect = new StringSelectMenuBuilder()
@@ -638,7 +640,7 @@ async function handleUserResetConfirmation(interaction, userId, selectedResp, al
     const confirmEmbed = colorManager.createEmbed()
         .setTitle('**Reset**')
         .setDescription(`**هل أنت متأكد من تصفير نقاط "${displayName}"؟**`)
-        .setColor('#ff9500')
+        
         .addFields([
             { name: '**will dl**', value: `${userData.totalPoints} نقطة`, inline: true },
             { name: '**Res**', value: `${userData.responsibilities}`, inline: true },
@@ -711,7 +713,7 @@ async function executeUserReset(interaction, userId, respType, points, responsib
         const resultEmbed = colorManager.createEmbed()
             .setTitle('**✅rseted**')
             .setDescription(`**تم تصفير نقاط "${displayName}" بنجاح**`)
-            .setColor('#00ff00')
+            
             .addFields([
                 { name: '**Deleted**', value: `${deletedPoints}`, inline: true },
                 { name: '**From**', value: respType === 'all_responsibilities' ? 'جميع المسؤوليات' : respType, inline: true }
@@ -782,7 +784,7 @@ async function handleManagePoints(interaction, points, responsibilities, client)
     const manageEmbed = colorManager.createEmbed()
         .setTitle('**Manage Points**')
         .setDescription(description)
-        .setColor('#9b59b6')
+
         .setFooter({ text: 'استخدم زر التعديل واختر الرقم للمسؤول' })
         .setThumbnail('https://cdn.discordapp.com/emojis/1320524607467425924.png?v=1');
     const manageButtons = new ActionRowBuilder().addComponents([
@@ -912,7 +914,7 @@ async function handleUserResponsibilityChoice(interaction, userData, points, res
     const choiceEmbed = colorManager.createEmbed()
         .setTitle('**Choose Responsibility**')
         .setDescription(`**اختر المسؤولية للمسؤول "${userData.displayName}":**`)
-        .setColor('#3498db')
+    
         .setThumbnail('https://cdn.discordapp.com/emojis/1320524607467425924.png?v=1');
 
     const respSelect = new StringSelectMenuBuilder()
@@ -984,7 +986,7 @@ async function handlePointsModification(interaction, userData, responsibilityNam
                 const resultEmbed = colorManager.createEmbed()
                     .setTitle('**✅ Edit completed**')
                     .setDescription(`**تم تعديل نقاط "${userData.displayName}" بنجاح**`)
-                    .setColor('#00ff00')
+                 
                     .addFields([
                         { name: '**Operation**', value: result.operation, inline: true },
                         { name: '**Value**', value: result.value, inline: true },
@@ -1162,7 +1164,7 @@ async function handleClearBlockedUsers(interaction, points, responsibilities, cl
     const confirmEmbed = colorManager.createEmbed()
         .setTitle('**⚠️ حذف جميع المحظورين**')
         .setDescription(`**هل أنت متأكد من حذف جميع المستخدمين المحظورين؟**\n\n**عدد المحظورين:** \`${blockedUsers.length}\`\n\n${blockedList}\n\n**⚠️ هذا الإجراء لا يمكن التراجع عنه!**`)
-        .setColor('#ff9500')
+        
         .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400670784019628163/download__11_-removebg-preview.png?ex=688d7bd2&is=688c2a52&hm=40d42fba69b5b3423b7821140751dbff0e640e95f1ffc9f65b44a038fe0c5764&');
 
     const confirmButtons = new ActionRowBuilder().addComponents([
@@ -1264,6 +1266,113 @@ async function handleClearBlockedUsers(interaction, points, responsibilities, cl
     });
 }
 
+async function handleResetAllStats(interaction, points, responsibilities, client) {
+    const confirmEmbed = colorManager.createEmbed()
+        .setTitle('**⚠️ تصفير جميع إحصائيات التفاعل**')
+        .setDescription(`**هل أنت متأكد من تصفير جميع الإحصائيات؟**\n\n**سيتم تصفير:**\n• جميع جلسات الفويس\n• جميع الرسائل\n• جميع التفاعلات\n• النشاط اليومي\n• الإحصائيات الإجمالية\n\n**⚠️ هذا الإجراء لا يمكن التراجع عنه!**`)
+        
+        .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400670784019628163/download__11_-removebg-preview.png?ex=688d7bd2&is=688c2a52&hm=40d42fba69b5b3423b7821140751dbff0e640e95f1ffc9f65b44a038fe0c5764&');
+
+    const confirmButtons = new ActionRowBuilder().addComponents([
+        new ButtonBuilder()
+            .setCustomId('confirm_reset_all_stats')
+            .setLabel('✅ تأكيد التصفير')
+            .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+            .setCustomId('back_to_main_reset')
+            .setLabel('❌ إلغاء')
+            .setStyle(ButtonStyle.Secondary)
+    ]);
+
+    await interaction.update({ embeds: [confirmEmbed], components: [confirmButtons] });
+
+    const confirmFilter = i => i.user.id === interaction.user.id;
+    const confirmCollector = interaction.message.createMessageComponentCollector({
+        filter: confirmFilter,
+        time: 90000
+    });
+
+    confirmCollector.on('collect', async confirmInt => {
+        try {
+            if (confirmInt.customId === 'back_to_main_reset') {
+                const currentPoints = readJSONFile(pointsPath, {});
+                const currentResponsibilities = readJSONFile(responsibilitiesPath, {});
+                const embed = createMainEmbed(currentPoints, currentResponsibilities);
+                const components = createMainComponents();
+                await confirmInt.update({ embeds: [embed], components: components });
+                return;
+            }
+
+            if (confirmInt.customId === 'confirm_reset_all_stats') {
+                await confirmInt.deferUpdate();
+
+                const { getDatabase } = require('../utils/database.js');
+                const db = getDatabase();
+                const result = await db.resetAllStats();
+
+                if (result.success) {
+                    const resultEmbed = colorManager.createEmbed()
+                        .setTitle('**✅ تم تصفير جميع الإحصائيات بنجاح**')
+                        .setDescription(`**تم تصفير جميع إحصائيات التفاعل من قاعدة البيانات**`)
+                        .
+                        
+                        .addFields([
+                            { name: '**السجلات المحذوفة**', value: `${result.deletedRecords}`, inline: true },
+                            { name: '**السجلات المحدثة**', value: `${result.updatedRecords}`, inline: true },
+                            { name: '**التفاصيل**', value: `جلسات فويس: ${result.details.voiceSessions}\nنشاط يومي: ${result.details.dailyActivity}`, inline: false }
+                        ])
+                        .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400672460558303252/images__10_-removebg-preview.png?ex=688d7d61&is=688c2be1&hm=d98e0873eeb313e329ff2c665c3e7a29e117a16f85e77e5815b78369615850aa&')
+                        .setTimestamp();
+
+                    const backButton = new ActionRowBuilder().addComponents([
+                        new ButtonBuilder()
+                            .setCustomId('back_to_main_reset')
+                            .setLabel('العودة للقائمة الرئيسية')
+                            .setStyle(ButtonStyle.Primary)
+                    ]);
+
+                    await confirmInt.editReply({ embeds: [resultEmbed], components: [backButton] });
+
+                    logEvent(client, interaction.guild, {
+                        type: 'ADMIN_ACTIONS',
+                        title: 'تصفير جميع الإحصائيات',
+                        description: `تم تصفير جميع إحصائيات التفاعل من قاعدة البيانات`,
+                        user: interaction.user,
+                        fields: [
+                            { name: 'السجلات المحذوفة', value: `${result.deletedRecords}`, inline: true },
+                            { name: 'السجلات المحدثة', value: `${result.updatedRecords}`, inline: true }
+                        ]
+                    });
+
+                } else {
+                    const errorEmbed = colorManager.createEmbed()
+                        .setDescription(`**❌ فشل في تصفير الإحصائيات**\n**${result.error || 'خطأ غير معروف'}**`)
+                        .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400390888416608286/download__3_-removebg-preview.png?ex=688d1fe5&is=688bce65&hm=55055a587668561ce27baf0665663f801e14662d4bf849351564a563b1e53b41&');
+
+                    await confirmInt.editReply({ embeds: [errorEmbed], components: [] });
+                }
+            }
+        } catch (error) {
+            console.error('خطأ في تصفير الإحصائيات:', error);
+            await handleInteractionError(confirmInt, error);
+        }
+    });
+
+    confirmCollector.on('end', async (collected, reason) => {
+        if (reason === 'time') {
+            try {
+                const timeoutEmbed = colorManager.createEmbed()
+                    .setDescription('**⏰ انتهت مهلة الانتظار**')
+                    .setThumbnail(client.user.displayAvatarURL({ format: 'png', size: 128 }));
+
+                await interaction.editReply({ embeds: [timeoutEmbed], components: [] });
+            } catch (error) {
+                console.error('خطأ في timeout:', error);
+            }
+        }
+    });
+}
+
 async function handleResponsibilitiesReset(interaction, points, responsibilities, client) {
     const totalResp = Object.keys(responsibilities).length;
     const totalPoints = calculateTotalPoints(points);
@@ -1271,7 +1380,7 @@ async function handleResponsibilitiesReset(interaction, points, responsibilities
     const confirmEmbed = colorManager.createEmbed()
         .setTitle('** Reset all**')
         .setDescription('** هل أنت متأكد من تصفير جميع المسؤوليات والنقاط؟**')
-        .setColor('#ff0000')
+        
         .addFields([
             { name: '**Total res **', value: `${totalResp}`, inline: true },
             { name: '**All points**', value: `${totalPoints}`, inline: true }
@@ -1336,7 +1445,7 @@ async function handleResponsibilitiesReset(interaction, points, responsibilities
                 const resultEmbed = colorManager.createEmbed()
                     .setTitle('**✅ Completily reset all**')
                     .setDescription(`**تم تصفير ${respCount} مسؤولية و ${pointsCount} نقطة بنجاح**`)
-                    .setColor('#00ff00')
+                
                     .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400672460558303252/images__10_-removebg-preview.png?ex=688d7d61&is=688c2be1&hm=d98e0873eeb313e329ff2c665c3e7a29e117a16f85e77e5815b78369615850aa&')
                     .setTimestamp();
 
@@ -1434,6 +1543,11 @@ function createMainComponents() {
                 label: 'Clear Blocked Users',
                 value: 'clear_blocked',
                 description: 'حذف جميع المستخدمين المحظورين'
+            },
+            {
+                label: 'Reset All Stats',
+                value: 'reset_all_stats',
+                description: 'تصفير جميع إحصائيات التفاعل (فويس، رسائل، ريأكشن)'
             }
         ]);
 
@@ -1702,7 +1816,7 @@ async function handleDirectReset(message, args, points, responsibilities, saveDa
                 const pointsResetEmbed = colorManager.createEmbed()
                     .setTitle('**✅ Reseted**')
                     .setDescription(`**تم تصفير ${pointsCount} نقطة بنجاح**`)
-                    .setColor('#00ff00')
+                    
                     .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400672460558303252/images__10_-removebg-preview.png?ex=688d7d61&is=688c2be1&hm=d98e0873eeb313e329ff2c665c3e7a29e117a16f85e77e5815b78369615850aa&');
 
                 await message.channel.send({ embeds: [pointsResetEmbed] });
@@ -1735,7 +1849,7 @@ async function handleDirectReset(message, args, points, responsibilities, saveDa
                 const bothResetEmbed = colorManager.createEmbed()
                     .setTitle('** Reseted  **')
                     .setDescription(`**تم تصفير ${bothRespCount} مسؤولية و ${bothPointsCount} نقطة بنجاح**`)
-                    .setColor('#00ff00')
+                
                     .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/140067672460558303252/images__10_-removebg-preview.png?ex=688d7d61&is=688c2be1&hm=d98e0873eeb313e329ff2c665c3e7a29e117a16f85e77e5815b78369615850aa&');
 
                 await message.channel.send({ embeds: [bothResetEmbed] });
