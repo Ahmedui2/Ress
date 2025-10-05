@@ -1116,7 +1116,7 @@ client.on('messageCreate', async message => {
   }
 });
 
-// نظام الحماية ضد إعادة الرولات المسحوبة (للداون والإجازات)
+// نظام الحماية ضد إعادة الرولات المسحوبة (للداون والإجازات والمحظورين من الترقيات)
 client.on('guildMemberUpdate', async (oldMember, newMember) => {
     try {
         const userId = newMember.id;
@@ -1256,6 +1256,132 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
                     } catch (removeError) {
                         console.error(`خطأ في إزالة الرول المُعاد إضافته أثناء الإجازة:`, removeError);
                     }
+                }
+            }
+        }
+
+        // 3. حماية نظام الحظر من الترقيات
+        const promoteBans = promoteManager.getPromotionBans();
+        const banKey = `${userId}_${newMember.guild.id}`;
+        const banData = promoteBans[banKey];
+
+        if (banData && banData.savedHighestRole) {
+            console.log(`🔍 فحص حماية الحظر من الترقيات للمستخدم ${newMember.displayName}`);
+
+            const adminRoles = promoteManager.getAdminRoles();
+            const savedRolePosition = banData.savedHighestRole.position;
+
+            // التحقق من الرولات الإدارية المضافة حديثاً
+            for (const [roleId, role] of addedRoles) {
+                // تحقق إذا كان الرول إداري
+                if (!adminRoles.includes(roleId)) continue;
+
+                // فحص إذا كان البوت في عملية ترقية شرعية
+                if (promoteManager.isBotPromoting(newMember.guild.id, userId, roleId)) {
+                    console.log(`✅ تجاهل إضافة الرول ${role.name} - عملية ترقية شرعية من البوت`);
+                    continue;
+                }
+
+                // فحص موقع الرول بالنسبة للرول المحفوظ
+                if (role.position > savedRolePosition) {
+                    // رول أعلى من المحفوظ - يجب إزالته
+                    console.log(`🚨 محاولة إضافة رول أعلى من المحفوظ: ${role.name} (${role.position}) > ${banData.savedHighestRole.name} (${savedRolePosition})`);
+
+                    try {
+                        // الحصول على معلومات من قام بالإضافة
+                        const auditLogs = await newMember.guild.fetchAuditLogs({
+                            type: 25, // MEMBER_ROLE_UPDATE
+                            limit: 1
+                        });
+
+                        const roleAddLog = auditLogs.entries.first();
+                        let addedByUser = null;
+                        
+                        if (roleAddLog && roleAddLog.target.id === userId && 
+                            (Date.now() - roleAddLog.createdTimestamp) < 5000) {
+                            addedByUser = roleAddLog.executor;
+                        }
+
+                        // إزالة الرول
+                        await newMember.roles.remove(role, 'منع إضافة رول أعلى من المحفوظ - محظور من الترقيات');
+
+                        console.log(`🔒 تم إزالة الرول ${role.name} من ${newMember.displayName}`);
+
+                        // فحص ثانوي بعد 10 ثوانٍ للتأكد من الإزالة
+                        setTimeout(async () => {
+                            try {
+                                const updatedMember = await newMember.guild.members.fetch(userId);
+                                if (updatedMember.roles.cache.has(roleId)) {
+                                    await updatedMember.roles.remove(role, 'فحص ثانوي - منع إضافة رول أعلى من المحفوظ');
+                                    console.log(`🔒 تم إزالة الرول مرة أخرى في الفحص الثانوي (حظر ترقيات): ${role.name}`);
+                                    
+                                    // إرسال تحذير إضافي في اللوق
+                                    logEvent(client, newMember.guild, {
+                                        type: 'SECURITY_ACTIONS',
+                                        title: 'فحص ثانوي - محاولة تجاوز حظر الترقية',
+                                        description: 'تم اكتشاف محاولة ثانية لإضافة رول محظور',
+                                        details: 'الفحص الثانوي تدخل لإزالة الرول مرة أخرى',
+                                        user: newMember.user,
+                                        fields: [
+                                            { name: '👤 العضو المحظور', value: `<@${userId}>`, inline: true },
+                                            { name: '🏷️ الرول', value: `${role.name}`, inline: true },
+                                            { name: '⚠️ التحذير', value: 'محاولة متكررة لتجاوز الحظر', inline: false }
+                                        ]
+                                    });
+                                } else {
+                                    console.log(`✅ الفحص الثانوي: الرول ${role.name} مُزال بنجاح`);
+                                }
+                            } catch (secondCheckError) {
+                                console.error('خطأ في الفحص الثانوي للرول (حظر ترقيات):', secondCheckError);
+                            }
+                        }, 10000); // 10 ثوانٍ
+
+                        // إرسال رسالة للشخص الذي حاول الإضافة
+                        if (addedByUser) {
+                            try {
+                                const warningEmbed = colorManager.createEmbed()
+                                    .setTitle('⚠️ محاولة ترقية محظور')
+                                    .setDescription(`تم منع إضافة رول لعضو محظور من الترقيات`)
+                                    .addFields([
+                                        { name: '👤 العضو المستهدف', value: `${newMember}`, inline: true },
+                                        { name: '🏷️ الرول المحاول إضافته', value: `${role}`, inline: true },
+                                        { name: '🔒 الرول المحفوظ', value: `${banData.savedHighestRole.name}`, inline: true },
+                                        { name: '⚠️ ملاحظة', value: `يُسمح فقط بإضافة رولات أقل من أو مساوية لـ **${banData.savedHighestRole.name}**`, inline: false },
+                                        { name: '📋 سبب الحظر', value: banData.reason || 'غير محدد', inline: false },
+                                        { name: '📅 ينتهي الحظر', value: banData.endTime ? `<t:${Math.floor(banData.endTime / 1000)}:R>` : 'نهائي', inline: true }
+                                    ])
+                                    .setTimestamp();
+
+                                await addedByUser.send({ embeds: [warningEmbed] });
+                                console.log(`📧 تم إرسال تحذير لـ ${addedByUser.tag} حول محاولة الترقية`);
+                            } catch (dmError) {
+                                console.log(`⚠️ لا يمكن إرسال رسالة لـ ${addedByUser.tag}`);
+                            }
+                        }
+
+                        // تسجيل في اللوقات
+                        logEvent(client, newMember.guild, {
+                            type: 'SECURITY_ACTIONS',
+                            title: 'منع ترقية محظور',
+                            description: 'تم منع إضافة رول أعلى من الرول المحفوظ لعضو محظور',
+                            details: 'نظام الحماية منع محاولة تجاوز حظر الترقية',
+                            user: newMember.user,
+                            fields: [
+                                { name: '👤 العضو المحظور', value: `<@${userId}>`, inline: true },
+                                { name: '🏷️ الرول المحاول', value: `${role.name} (موقع: ${role.position})`, inline: true },
+                                { name: '🔒 الرول المحفوظ', value: `${banData.savedHighestRole.name} (موقع: ${savedRolePosition})`, inline: true },
+                                { name: '👮 محاولة من', value: addedByUser ? `<@${addedByUser.id}>` : 'غير معروف', inline: true },
+                                { name: '📋 سبب الحظر', value: banData.reason || 'غير محدد', inline: false },
+                                { name: '📅 ينتهي الحظر', value: banData.endTime ? `<t:${Math.floor(banData.endTime / 1000)}:R>` : 'نهائي', inline: true }
+                            ]
+                        });
+
+                    } catch (removeError) {
+                        console.error(`خطأ في إزالة الرول الأعلى:`, removeError);
+                    }
+                } else {
+                    // رول أقل من أو مساوي للمحفوظ - مسموح
+                    console.log(`✅ السماح بإضافة الرول ${role.name} (${role.position}) <= ${banData.savedHighestRole.name} (${savedRolePosition})`);
                 }
             }
         }
