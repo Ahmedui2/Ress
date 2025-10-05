@@ -166,7 +166,7 @@ class DatabaseManager {
     async saveVoiceSession(userId, channelId, channelName, duration, startTime, endTime) {
         try {
             const sessionId = `${userId}_${startTime}_${Math.random().toString(36).substr(2, 9)}`;
-            const date = new Date(startTime).toDateString();
+            const date = new Date(startTime).toISOString().split('T')[0];
 
             // حفظ الجلسة
             await this.run(`
@@ -424,17 +424,17 @@ class DatabaseManager {
     // جلب النشاط الأسبوعي مع الرسائل والتفاعلات
     async getWeeklyStats(userId) {
         try {
-            const weekStart = new Date();
-            weekStart.setDate(weekStart.getDate() - weekStart.getDay());
-            weekStart.setHours(0, 0, 0, 0);
-            const weekStartString = weekStart.toDateString();
+            const oneWeekAgo = new Date();
+            oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+            oneWeekAgo.setHours(0, 0, 0, 0);
+            const weekStartString = oneWeekAgo.toISOString().split('T')[0];
 
             // جلب جلسات الفويس الأسبوعية
             const sessions = await this.all(`
                 SELECT * FROM voice_sessions 
                 WHERE user_id = ? AND start_time >= ?
                 ORDER BY start_time DESC
-            `, [userId, weekStart.getTime()]);
+            `, [userId, oneWeekAgo.getTime()]);
 
             let weeklyTime = 0;
             const weeklyChannels = {};
@@ -492,10 +492,10 @@ class DatabaseManager {
     // جلب الرسائل الأسبوعية فقط
     async getWeeklyMessages(userId) {
         try {
-            const weekStart = new Date();
-            weekStart.setDate(weekStart.getDate() - weekStart.getDay());
-            weekStart.setHours(0, 0, 0, 0);
-            const weekStartString = weekStart.toDateString();
+            const oneWeekAgo = new Date();
+            oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+            oneWeekAgo.setHours(0, 0, 0, 0);
+            const weekStartString = oneWeekAgo.toISOString().split('T')[0];
 
             const result = await this.get(`
                 SELECT SUM(messages) as weeklyMessages
@@ -513,10 +513,10 @@ class DatabaseManager {
     // جلب التفاعلات الأسبوعية فقط
     async getWeeklyReactions(userId) {
         try {
-            const weekStart = new Date();
-            weekStart.setDate(weekStart.getDate() - weekStart.getDay());
-            weekStart.setHours(0, 0, 0, 0);
-            const weekStartString = weekStart.toDateString();
+            const oneWeekAgo = new Date();
+            oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+            oneWeekAgo.setHours(0, 0, 0, 0);
+            const weekStartString = oneWeekAgo.toISOString().split('T')[0];
 
             const result = await this.get(`
                 SELECT SUM(reactions) as weeklyReactions
@@ -546,6 +546,71 @@ class DatabaseManager {
         } catch (error) {
             console.error('❌ خطأ في تنظيف البيانات القديمة:', error);
             return 0;
+        }
+    }
+
+    // تصفير جميع إحصائيات التفاعل (إجمالي وأسبوعي)
+    async resetAllStats() {
+        try {
+            console.log('🔄 بدء تصفير جميع الإحصائيات...');
+            
+            // حذف جميع الجلسات الصوتية
+            const sessionsResult = await this.run(`DELETE FROM voice_sessions`);
+            
+            // حذف جميع النشاطات اليومية
+            const dailyResult = await this.run(`DELETE FROM daily_activity`);
+            
+            // إعادة تعيين إجماليات المستخدمين
+            const totalsResult = await this.run(`
+                UPDATE user_totals SET 
+                    total_voice_time = 0,
+                    total_sessions = 0,
+                    total_messages = 0,
+                    total_reactions = 0,
+                    total_voice_joins = 0,
+                    active_days = 0
+            `);
+            
+            // إعادة تعيين إجماليات القنوات
+            const channelResult = await this.run(`
+                UPDATE channel_totals SET 
+                    total_time = 0,
+                    total_sessions = 0,
+                    unique_users = 0
+            `);
+            
+            // حذف مستخدمي القنوات
+            const channelUsersResult = await this.run(`DELETE FROM channel_users`);
+
+            const totalDeleted = (sessionsResult.changes || 0) + 
+                                (dailyResult.changes || 0) + 
+                                (channelUsersResult.changes || 0);
+            const totalUpdated = (totalsResult.changes || 0) + 
+                                (channelResult.changes || 0);
+
+            console.log(`✅ تم تصفير الإحصائيات: حذف ${totalDeleted} سجل، تحديث ${totalUpdated} سجل`);
+            
+            return {
+                success: true,
+                deletedRecords: totalDeleted,
+                updatedRecords: totalUpdated,
+                details: {
+                    voiceSessions: sessionsResult.changes || 0,
+                    dailyActivity: dailyResult.changes || 0,
+                    userTotals: totalsResult.changes || 0,
+                    channelTotals: channelResult.changes || 0,
+                    channelUsers: channelUsersResult.changes || 0
+                }
+            };
+
+        } catch (error) {
+            console.error('❌ خطأ في تصفير الإحصائيات:', error);
+            return {
+                success: false,
+                error: error.message,
+                deletedRecords: 0,
+                updatedRecords: 0
+            };
         }
     }
 
@@ -636,5 +701,9 @@ module.exports = {
     saveVoiceSession: async (userId, channelId, channelName, duration, startTime, endTime) => {
         const db = getDatabase();
         return await db.saveVoiceSession(userId, channelId, channelName, duration, startTime, endTime);
+    },
+    resetAllStats: async () => {
+        const db = getDatabase();
+        return await db.resetAllStats();
     }
 };
