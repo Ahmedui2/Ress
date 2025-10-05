@@ -1051,29 +1051,171 @@ async function handleUnbanPromotion(interaction, context) {
     });
 }
 
-async function handleCheckAdminActivity(interaction, context) {
-    // إنشاء قائمة خيارات لفحص التفاعل
-    const optionSelect = new StringSelectMenuBuilder()
-        .setCustomId('promote_activity_option')
-        .setPlaceholder('اختر نوع الفحص...')
-        .addOptions([
-            {
-                label: 'فحص شخص محدد',
-                value: 'activity_specific_user',
-                description: 'فحص إحصائيات تفاعل عضو معين'
-            },
-            {
-                label: 'فحص رول محدد',
-                value: 'activity_specific_role',
-                description: 'فحص إحصائيات تفاعل جميع أعضاء رول معين'
-            }
-        ]);
+// دالة لإنشاء embed إحصائيات الرول
+async function createRoleStatsEmbed(role, membersArray, period = 'weekly') {
+    const { getDatabase } = require('../utils/database');
+    const dbManager = getDatabase();
 
-    const optionRow = new ActionRowBuilder().addComponents(optionSelect);
+    // جمع الإحصائيات لجميع الأعضاء
+    const stats = [];
+    
+    for (const member of membersArray) {
+        if (member.user.bot) continue;
+
+        try {
+            const userStats = await dbManager.getUserStats(member.id);
+            const weeklyStats = await dbManager.getWeeklyStats(member.id);
+
+            const messages = period === 'weekly' ? (weeklyStats.weeklyMessages || 0) : (userStats.totalMessages || 0);
+            const voiceTime = period === 'weekly' ? (weeklyStats.weeklyTime || 0) : (userStats.totalVoiceTime || 0);
+            const voiceJoins = period === 'weekly' ? (weeklyStats.weeklyVoiceJoins || 0) : (userStats.totalVoiceJoins || 0);
+            const reactions = period === 'weekly' ? (weeklyStats.weeklyReactions || 0) : (userStats.totalReactions || 0);
+
+            // حساب النشاط الإجمالي (مجموع كل الأنشطة)
+            const totalActivity = messages + Math.floor(voiceTime / 60000) + voiceJoins + reactions;
+
+            stats.push({
+                member,
+                messages,
+                voiceTime,
+                voiceJoins,
+                reactions,
+                totalActivity
+            });
+        } catch (error) {
+            console.error(`خطأ في جلب إحصائيات ${member.displayName}:`, error);
+        }
+    }
+
+    // ترتيب حسب كل فئة
+    const topMessages = [...stats].sort((a, b) => b.messages - a.messages).slice(0, 1);
+    const topVoiceTime = [...stats].sort((a, b) => b.voiceTime - a.voiceTime).slice(0, 1);
+    const topVoiceJoins = [...stats].sort((a, b) => b.voiceJoins - a.voiceJoins).slice(0, 1);
+    const topReactions = [...stats].sort((a, b) => b.reactions - a.reactions).slice(0, 1);
+    const topActivity = [...stats].sort((a, b) => b.totalActivity - a.totalActivity).slice(0, 1);
+
+    // تنسيق وقت الفويس
+    function formatVoiceTime(ms) {
+        const totalSeconds = Math.floor(ms / 1000);
+        const days = Math.floor(totalSeconds / 86400);
+        const hours = Math.floor((totalSeconds % 86400) / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+        const parts = [];
+        if (days > 0) parts.push(`${days} يوم`);
+        if (hours > 0) parts.push(`${hours} ساعة`);
+        if (minutes > 0) parts.push(`${minutes} دقيقة`);
+
+        return parts.length > 0 ? parts.join(' و ') : 'لا يوجد';
+    }
+
+    const embed = colorManager.createEmbed()
+        .setTitle(`📊 إحصائيات: ${role.name}`)
+        .setDescription(`**الفترة:** ${period === 'weekly' ? 'الأسبوع الحالي' : 'الإجمالي'}\n**عدد الأعضاء:** ${stats.length}`)
+        .setThumbnail(role.iconURL() || 'https://cdn.discordapp.com/emojis/1365249109149089813.png?v=1')
+        .setFooter({ text: 'By Ahmed' })
+        .setTimestamp();
+
+    // إضافة الحقول
+    if (topMessages[0]) {
+        embed.addFields({
+            name: '📬 أعلى من أرسل رسائل',
+            value: `<@${topMessages[0].member.id}>\n**${topMessages[0].messages.toLocaleString()}** رسالة`,
+            inline: true
+        });
+    }
+
+    if (topVoiceTime[0]) {
+        embed.addFields({
+            name: '🎤 أعلى من جلس بالفويسات',
+            value: `<@${topVoiceTime[0].member.id}>\n${formatVoiceTime(topVoiceTime[0].voiceTime)}`,
+            inline: true
+        });
+    }
+
+    if (topVoiceJoins[0]) {
+        embed.addFields({
+            name: '🔗 أكثر من انضم لفويسات',
+            value: `<@${topVoiceJoins[0].member.id}>\n**${topVoiceJoins[0].voiceJoins.toLocaleString()}** انضمام`,
+            inline: true
+        });
+    }
+
+    if (topReactions[0]) {
+        embed.addFields({
+            name: '⭐ أكثر من وضع تفاعل',
+            value: `<@${topReactions[0].member.id}>\n**${topReactions[0].reactions.toLocaleString()}** تفاعل`,
+            inline: true
+        });
+    }
+
+    if (topActivity[0]) {
+        embed.addFields({
+            name: '🏆 أكثر نشاط من كل النواحي',
+            value: `<@${topActivity[0].member.id}>\n**نقاط النشاط:** ${topActivity[0].totalActivity.toLocaleString()}`,
+            inline: true
+        });
+    }
+
+    if (stats.length === 0) {
+        embed.setDescription('**لا توجد بيانات متاحة للأعضاء في هذا الرول**');
+    }
+
+    return embed;
+}
+
+async function handleCheckAdminActivity(interaction, context) {
+    // جلب الرولات الإدارية
+    const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
+    const adminRoles = readJson(adminRolesPath, []);
+
+    if (adminRoles.length === 0) {
+        return interaction.reply({
+            content: '⚠️ **لا توجد رولات إدارية محددة! يرجى إضافة رولات إدارية أولاً.**',
+            flags: MessageFlags.Ephemeral
+        });
+    }
+
+    // إنشاء قائمة الرولات
+    const roleOptions = adminRoles.map(roleId => {
+        const role = interaction.guild.roles.cache.get(roleId);
+        return role ? {
+            label: role.name,
+            value: roleId,
+            description: `أعضاء: ${role.members.size}`
+        } : null;
+    }).filter(Boolean).slice(0, 25);
+
+    if (roleOptions.length === 0) {
+        return interaction.reply({
+            content: '⚠️ **لا توجد رولات صالحة!**',
+            flags: MessageFlags.Ephemeral
+        });
+    }
+
+    const roleSelect = new StringSelectMenuBuilder()
+        .setCustomId('promote_check_select_role')
+        .setPlaceholder('اختر الرول لعرض إحصائيات أعضائه...')
+        .addOptions(roleOptions);
+
+    const roleRow = new ActionRowBuilder().addComponents(roleSelect);
+
+    const checkEmbed = colorManager.createEmbed()
+        .setTitle('📊 إحصائيات الأدوار الإدارية')
+        .setDescription(`**اختر رول لعرض إحصائيات أعضائه**\n\n**الإحصائيات المتاحة:**\n• أعلى من أرسل رسائل\n• أعلى من جلس بالفويسات\n• أكثر من انضم لفويسات\n• أكثر من وضع تفاعل\n• أكثر نشاط من كل النواحي`)
+        .setThumbnail(context.client.user.displayAvatarURL())
+        .setFooter({ text: 'By Ahmed' });
+
+    const backButton = new ButtonBuilder()
+        .setCustomId('promote_check_back_to_menu')
+        .setLabel('🔙 العودة للمنيو الرئيسي')
+        .setStyle(ButtonStyle.Secondary);
+
+    const backRow = new ActionRowBuilder().addComponents(backButton);
 
     await interaction.reply({
-        content: ' **اختر نوع فحص التفاعل المطلوب:**',
-        components: [optionRow],
+        embeds: [checkEmbed],
+        components: [roleRow, backRow],
         flags: MessageFlags.Ephemeral
     });
 }
@@ -2288,6 +2430,382 @@ async function handlePromoteInteractions(interaction, context) {
                 content: ` **فشل في فك الحظر:** ${result.error}`,
                 components: []
             });
+        }
+        return;
+    }
+
+    // Handle role selection for check admin stats
+    if (interaction.isStringSelectMenu() && customId === 'promote_check_select_role') {
+        const roleId = interaction.values[0];
+        const role = interaction.guild.roles.cache.get(roleId);
+
+        if (!role) {
+            return interaction.update({
+                content: '⚠️ **لم يتم العثور على الرول!**',
+                components: []
+            });
+        }
+
+        await interaction.deferUpdate();
+
+        const membersArray = Array.from(role.members.values());
+
+        if (membersArray.length === 0) {
+            const noMembersEmbed = colorManager.createEmbed()
+                .setTitle(`📊 إحصائيات: ${role.name}`)
+                .setDescription('**لا يوجد أعضاء في هذا الرول**');
+
+            const backButton = new ButtonBuilder()
+                .setCustomId('promote_check_back_to_roles')
+                .setLabel('🔙 العودة لقائمة الرولات')
+                .setStyle(ButtonStyle.Secondary);
+
+            const backRow = new ActionRowBuilder().addComponents(backButton);
+
+            return await interaction.editReply({
+                embeds: [noMembersEmbed],
+                components: [backRow]
+            });
+        }
+
+        const weeklyButton = new ButtonBuilder()
+            .setCustomId(`promote_check_weekly_${roleId}`)
+            .setLabel('الأسبوع')
+            .setStyle(ButtonStyle.Success)
+            .setEmoji('📅');
+
+        const totalButton = new ButtonBuilder()
+            .setCustomId(`promote_check_total_${roleId}`)
+            .setLabel('الإجمالي')
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji('📊');
+
+        const membersButton = new ButtonBuilder()
+            .setCustomId(`promote_check_members_${roleId}`)
+            .setLabel('بحث عن عضو')
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('🔍');
+
+        const periodRow = new ActionRowBuilder().addComponents(weeklyButton, totalButton, membersButton);
+
+        const backButton = new ButtonBuilder()
+            .setCustomId('promote_check_back_to_roles')
+            .setLabel('🔙 العودة')
+            .setStyle(ButtonStyle.Secondary);
+
+        const backRow = new ActionRowBuilder().addComponents(backButton);
+
+        const statsEmbed = await createRoleStatsEmbed(role, membersArray, 'weekly');
+
+        await interaction.editReply({
+            embeds: [statsEmbed],
+            components: [periodRow, backRow]
+        });
+        return;
+    }
+
+    // Handle period change for check admin
+    if (interaction.isButton() && (customId.startsWith('promote_check_weekly_') || customId.startsWith('promote_check_total_'))) {
+        const roleId = customId.split('_')[3];
+        const period = customId.startsWith('promote_check_weekly_') ? 'weekly' : 'total';
+        const role = interaction.guild.roles.cache.get(roleId);
+
+        if (!role) {
+            return interaction.update({
+                content: '⚠️ **لم يتم العثور على الرول!**',
+                components: []
+            });
+        }
+
+        await interaction.deferUpdate();
+
+        const membersArray = Array.from(role.members.values());
+        const statsEmbed = await createRoleStatsEmbed(role, membersArray, period);
+
+        const weeklyButton = new ButtonBuilder()
+            .setCustomId(`promote_check_weekly_${roleId}`)
+            .setLabel('الأسبوع')
+            .setStyle(period === 'weekly' ? ButtonStyle.Success : ButtonStyle.Secondary)
+            .setEmoji('📅');
+
+        const totalButton = new ButtonBuilder()
+            .setCustomId(`promote_check_total_${roleId}`)
+            .setLabel('الإجمالي')
+            .setStyle(period === 'total' ? ButtonStyle.Success : ButtonStyle.Secondary)
+            .setEmoji('📊');
+
+        const membersButton = new ButtonBuilder()
+            .setCustomId(`promote_check_members_${roleId}`)
+            .setLabel('بحث عن عضو')
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('🔍');
+
+        const periodRow = new ActionRowBuilder().addComponents(weeklyButton, totalButton, membersButton);
+
+        const backButton = new ButtonBuilder()
+            .setCustomId('promote_check_back_to_roles')
+            .setLabel('🔙 العودة')
+            .setStyle(ButtonStyle.Secondary);
+
+        const backRow = new ActionRowBuilder().addComponents(backButton);
+
+        await interaction.editReply({
+            embeds: [statsEmbed],
+            components: [periodRow, backRow]
+        });
+        return;
+    }
+
+    // Handle member search for check admin
+    if (interaction.isButton() && customId.startsWith('promote_check_members_')) {
+        const roleId = customId.split('_')[3];
+        const role = interaction.guild.roles.cache.get(roleId);
+
+        if (!role) {
+            return interaction.reply({
+                content: '⚠️ **لم يتم العثور على الرول!**',
+                flags: MessageFlags.Ephemeral
+            });
+        }
+
+        const membersArray = Array.from(role.members.values()).filter(m => !m.user.bot);
+
+        if (membersArray.length === 0) {
+            return interaction.reply({
+                content: '**لا يوجد أعضاء في هذا الرول**',
+                flags: MessageFlags.Ephemeral
+            });
+        }
+
+        const membersPerPage = 25;
+        const currentPage = 0;
+        const start = currentPage * membersPerPage;
+        const end = Math.min(start + membersPerPage, membersArray.length);
+        const pageMembers = membersArray.slice(start, end);
+
+        const memberOptions = pageMembers.map((member, index) => ({
+            label: `${start + index + 1}. ${member.displayName}`,
+            value: member.id,
+            description: `@${member.user.username}`
+        }));
+
+        const memberSelectMenu = new StringSelectMenuBuilder()
+            .setCustomId(`promote_check_select_member_${roleId}`)
+            .setPlaceholder('اختر عضو لعرض إحصائياته...')
+            .setMinValues(1)
+            .setMaxValues(Math.min(5, memberOptions.length))
+            .addOptions(memberOptions);
+
+        const selectRow = new ActionRowBuilder().addComponents(memberSelectMenu);
+
+        const memberEmbed = colorManager.createEmbed()
+            .setTitle(`🔍 بحث الأعضاء: ${role.name}`)
+            .setDescription(`**اختر عضو أو أكثر (حتى 5) لعرض إحصائياتهم**\n\n**إجمالي الأعضاء:** ${membersArray.length}`)
+            .setThumbnail(role.iconURL() || 'https://cdn.discordapp.com/emojis/1365249109149089813.png?v=1');
+
+        const backButton = new ButtonBuilder()
+            .setCustomId(`promote_check_members_back_${roleId}`)
+            .setLabel('🔙 العودة لإحصائيات الرول')
+            .setStyle(ButtonStyle.Secondary);
+
+        const backRow = new ActionRowBuilder().addComponents(backButton);
+
+        await interaction.reply({
+            embeds: [memberEmbed],
+            components: [selectRow, backRow],
+            flags: MessageFlags.Ephemeral
+        });
+        return;
+    }
+
+    // Handle back button to menu from check admin
+    if (interaction.isButton() && customId === 'promote_check_back_to_menu') {
+        return interaction.update({
+            content: '**تم العودة. يمكنك استخدام المنيو من القناة الرئيسية.**',
+            embeds: [],
+            components: []
+        });
+    }
+
+    // Handle back button to roles list from check admin
+    if (interaction.isButton() && customId === 'promote_check_back_to_roles') {
+        const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
+        const adminRoles = readJson(adminRolesPath, []);
+
+        if (adminRoles.length === 0) {
+            return interaction.update({
+                content: '⚠️ **لا توجد رولات إدارية محددة! يرجى إضافة رولات إدارية أولاً.**',
+                embeds: [],
+                components: []
+            });
+        }
+
+        const roleOptions = adminRoles.map(roleId => {
+            const role = interaction.guild.roles.cache.get(roleId);
+            return role ? {
+                label: role.name,
+                value: roleId,
+                description: `أعضاء: ${role.members.size}`
+            } : null;
+        }).filter(Boolean).slice(0, 25);
+
+        if (roleOptions.length === 0) {
+            return interaction.update({
+                content: '⚠️ **لا توجد رولات صالحة!**',
+                embeds: [],
+                components: []
+            });
+        }
+
+        const roleSelect = new StringSelectMenuBuilder()
+            .setCustomId('promote_check_select_role')
+            .setPlaceholder('اختر الرول لعرض إحصائيات أعضائه...')
+            .addOptions(roleOptions);
+
+        const roleRow = new ActionRowBuilder().addComponents(roleSelect);
+
+        const checkEmbed = colorManager.createEmbed()
+            .setTitle('📊 إحصائيات الأدوار الإدارية')
+            .setDescription(`**اختر رول لعرض إحصائيات أعضائه**\n\n**الإحصائيات المتاحة:**\n• أعلى من أرسل رسائل\n• أعلى من جلس بالفويسات\n• أكثر من انضم لفويسات\n• أكثر من وضع تفاعل\n• أكثر نشاط من كل النواحي`)
+            .setThumbnail(context.client.user.displayAvatarURL())
+            .setFooter({ text: 'By Ahmed' });
+
+        const backButton = new ButtonBuilder()
+            .setCustomId('promote_check_back_to_menu')
+            .setLabel('🔙 العودة للمنيو الرئيسي')
+            .setStyle(ButtonStyle.Secondary);
+
+        const backRow = new ActionRowBuilder().addComponents(backButton);
+
+        return interaction.update({
+            embeds: [checkEmbed],
+            components: [roleRow, backRow]
+        });
+    }
+
+    // Handle back button from member search to role stats
+    if (interaction.isButton() && customId.startsWith('promote_check_members_back_')) {
+        const roleId = customId.split('_')[4];
+        const role = interaction.guild.roles.cache.get(roleId);
+
+        if (!role) {
+            return interaction.update({
+                content: '⚠️ **لم يتم العثور على الرول!**',
+                components: []
+            });
+        }
+
+        const membersArray = Array.from(role.members.values());
+        const statsEmbed = await createRoleStatsEmbed(role, membersArray, 'weekly');
+
+        const weeklyButton = new ButtonBuilder()
+            .setCustomId(`promote_check_weekly_${roleId}`)
+            .setLabel('الأسبوع')
+            .setStyle(ButtonStyle.Success)
+            .setEmoji('📅');
+
+        const totalButton = new ButtonBuilder()
+            .setCustomId(`promote_check_total_${roleId}`)
+            .setLabel('الإجمالي')
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji('📊');
+
+        const membersButton = new ButtonBuilder()
+            .setCustomId(`promote_check_members_${roleId}`)
+            .setLabel('بحث عن عضو')
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('🔍');
+
+        const periodRow = new ActionRowBuilder().addComponents(weeklyButton, totalButton, membersButton);
+
+        const backButton = new ButtonBuilder()
+            .setCustomId('promote_check_back_to_roles')
+            .setLabel('🔙 العودة')
+            .setStyle(ButtonStyle.Secondary);
+
+        const backRow = new ActionRowBuilder().addComponents(backButton);
+
+        return interaction.update({
+            embeds: [statsEmbed],
+            components: [periodRow, backRow]
+        });
+    }
+
+    // Handle member selection
+    if (interaction.isStringSelectMenu() && customId.startsWith('promote_check_select_member_')) {
+        const selectedMemberIds = interaction.values;
+
+        try {
+            await interaction.deferReply({ ephemeral: true });
+
+            const { getDatabase } = require('../utils/database');
+            const dbManager = getDatabase();
+
+            for (const memberId of selectedMemberIds) {
+                const member = await interaction.guild.members.fetch(memberId);
+                if (!member) continue;
+
+                const userStats = await dbManager.getUserStats(memberId);
+                const weeklyStats = await dbManager.getWeeklyStats(memberId);
+
+                function formatVoiceTime(ms) {
+                    const totalSeconds = Math.floor(ms / 1000);
+                    const days = Math.floor(totalSeconds / 86400);
+                    const hours = Math.floor((totalSeconds % 86400) / 3600);
+                    const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+                    const parts = [];
+                    if (days > 0) parts.push(`${days} يوم`);
+                    if (hours > 0) parts.push(`${hours} ساعة`);
+                    if (minutes > 0) parts.push(`${minutes} دقيقة`);
+
+                    return parts.length > 0 ? parts.join(' و ') : 'لا يوجد';
+                }
+
+                const memberEmbed = colorManager.createEmbed()
+                    .setTitle(`📊 إحصائيات: ${member.displayName}`)
+                    .setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 128 }))
+                    .addFields(
+                        {
+                            name: '📬 **الرسائل**',
+                            value: `**الأسبوع:** ${weeklyStats.weeklyMessages || 0}\n**الإجمالي:** ${userStats.totalMessages || 0}`,
+                            inline: true
+                        },
+                        {
+                            name: '🎤 **وقت الفويس**',
+                            value: `**الأسبوع:** ${formatVoiceTime(weeklyStats.weeklyTime || 0)}\n**الإجمالي:** ${formatVoiceTime(userStats.totalVoiceTime || 0)}`,
+                            inline: true
+                        },
+                        {
+                            name: '🔗 **انضمامات الفويس**',
+                            value: `**الأسبوع:** ${weeklyStats.weeklyVoiceJoins || 0}\n**الإجمالي:** ${userStats.totalVoiceJoins || 0}`,
+                            inline: true
+                        },
+                        {
+                            name: '⭐ **التفاعلات**',
+                            value: `**الأسبوع:** ${weeklyStats.weeklyReactions || 0}\n**الإجمالي:** ${userStats.totalReactions || 0}`,
+                            inline: true
+                        },
+                        {
+                            name: '🎯 **إجمالي الجلسات الصوتية**',
+                            value: `${userStats.totalSessions || 0}`,
+                            inline: true
+                        },
+                        {
+                            name: '📅 **آخر نشاط**',
+                            value: userStats.lastActivity ? new Date(userStats.lastActivity).toLocaleString('ar-EG') : 'غير معروف',
+                            inline: true
+                        }
+                    )
+                    .setFooter({ text: `معرف العضو: ${memberId}` })
+                    .setTimestamp();
+
+                await interaction.followUp({ embeds: [memberEmbed], ephemeral: true });
+            }
+
+        } catch (error) {
+            console.error('خطأ في عرض إحصائيات الأعضاء:', error);
+            await interaction.followUp({ content: '**حدث خطأ أثناء عرض الإحصائيات.**', ephemeral: true });
         }
         return;
     }
