@@ -1314,8 +1314,6 @@ async function handleResetAllStats(interaction, points, responsibilities, client
                     const resultEmbed = colorManager.createEmbed()
                         .setTitle('**✅ تم تصفير جميع الإحصائيات بنجاح**')
                         .setDescription(`**تم تصفير جميع إحصائيات التفاعل من قاعدة البيانات**`)
-                        .
-                        
                         .addFields([
                             { name: '**السجلات المحذوفة**', value: `${result.deletedRecords}`, inline: true },
                             { name: '**السجلات المحدثة**', value: `${result.updatedRecords}`, inline: true },
