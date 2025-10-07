@@ -951,6 +951,7 @@ client.on('messageCreate', async message => {
         const { trackUserActivity } = require('./utils/userStatsCollector');
         await trackUserActivity(message.author.id, 'message', {
           channelId: message.channel.id,
+          channelName: message.channel.name,
           messageId: message.id,
           timestamp: Date.now()
         });
