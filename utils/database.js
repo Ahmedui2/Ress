@@ -1,5 +1,14 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const moment = require('moment-timezone');
+
+// ضبط بداية الأسبوع على السبت (حسب التقويم العربي)
+moment.updateLocale('en', {
+    week: {
+        dow: 6, // السبت هو بداية الأسبوع (0=الأحد, 6=السبت)
+        doy: 12 // أول أسبوع في السنة
+    }
+});
 
 // إنشاء مجلد قاعدة البيانات
 const dbPath = path.join(__dirname, '..', 'database', 'discord_bot.db');
@@ -94,6 +103,16 @@ class DatabaseManager {
                 user_id TEXT NOT NULL,
                 first_joined INTEGER DEFAULT (strftime('%s', 'now')),
                 PRIMARY KEY (channel_id, user_id)
+            )`,
+
+            // جدول رسائل القنوات لتتبع أكثر قناة يكتب فيها المستخدم
+            `CREATE TABLE IF NOT EXISTS message_channels (
+                user_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                channel_name TEXT NOT NULL,
+                message_count INTEGER DEFAULT 0,
+                last_message INTEGER,
+                PRIMARY KEY (user_id, channel_id)
             )`
         ];
 
@@ -112,7 +131,8 @@ class DatabaseManager {
             'CREATE INDEX IF NOT EXISTS idx_daily_activity_date ON daily_activity(date)',
             'CREATE INDEX IF NOT EXISTS idx_daily_activity_user_id ON daily_activity(user_id)',
             'CREATE INDEX IF NOT EXISTS idx_channel_users_channel_id ON channel_users(channel_id)',
-            'CREATE INDEX IF NOT EXISTS idx_user_totals_last_activity ON user_totals(last_activity)'
+            'CREATE INDEX IF NOT EXISTS idx_user_totals_last_activity ON user_totals(last_activity)',
+            'CREATE INDEX IF NOT EXISTS idx_message_channels_user_id ON message_channels(user_id)'
         ];
 
         for (const sql of indexes) {
@@ -166,7 +186,7 @@ class DatabaseManager {
     async saveVoiceSession(userId, channelId, channelName, duration, startTime, endTime) {
         try {
             const sessionId = `${userId}_${startTime}_${Math.random().toString(36).substr(2, 9)}`;
-            const date = new Date(startTime).toISOString().split('T')[0];
+            const date = moment(startTime).tz('Asia/Riyadh').format('YYYY-MM-DD');
 
             // حفظ الجلسة
             await this.run(`
@@ -353,9 +373,10 @@ class DatabaseManager {
     // حساب أيام النشاط الأسبوعية
     async getWeeklyActiveDays(userId) {
         try {
-            const oneWeekAgo = new Date();
-            oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-            const weekStartString = oneWeekAgo.toISOString().split('T')[0];
+            // حساب بداية الأسبوع (السبت) بتوقيت الرياض
+            const now = moment().tz('Asia/Riyadh');
+            const weekStart = now.clone().startOf('week');
+            const weekStartString = weekStart.format('YYYY-MM-DD');
 
             const result = await this.get(`
                 SELECT COUNT(DISTINCT date) as weeklyActiveDays
@@ -424,17 +445,17 @@ class DatabaseManager {
     // جلب النشاط الأسبوعي مع الرسائل والتفاعلات
     async getWeeklyStats(userId) {
         try {
-            const oneWeekAgo = new Date();
-            oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-            oneWeekAgo.setHours(0, 0, 0, 0);
-            const weekStartString = oneWeekAgo.toISOString().split('T')[0];
+            // حساب بداية الأسبوع (السبت) بتوقيت الرياض
+            const now = moment().tz('Asia/Riyadh');
+            const weekStart = now.clone().startOf('week'); // السبت في moment هو بداية الأسبوع
+            const weekStartString = weekStart.format('YYYY-MM-DD');
 
             // جلب جلسات الفويس الأسبوعية
             const sessions = await this.all(`
                 SELECT * FROM voice_sessions 
                 WHERE user_id = ? AND start_time >= ?
                 ORDER BY start_time DESC
-            `, [userId, oneWeekAgo.getTime()]);
+            `, [userId, weekStart.valueOf()]);
 
             let weeklyTime = 0;
             const weeklyChannels = {};
@@ -492,10 +513,10 @@ class DatabaseManager {
     // جلب الرسائل الأسبوعية فقط
     async getWeeklyMessages(userId) {
         try {
-            const oneWeekAgo = new Date();
-            oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-            oneWeekAgo.setHours(0, 0, 0, 0);
-            const weekStartString = oneWeekAgo.toISOString().split('T')[0];
+            // حساب بداية الأسبوع (السبت) بتوقيت الرياض
+            const now = moment().tz('Asia/Riyadh');
+            const weekStart = now.clone().startOf('week');
+            const weekStartString = weekStart.format('YYYY-MM-DD');
 
             const result = await this.get(`
                 SELECT SUM(messages) as weeklyMessages
@@ -513,10 +534,10 @@ class DatabaseManager {
     // جلب التفاعلات الأسبوعية فقط
     async getWeeklyReactions(userId) {
         try {
-            const oneWeekAgo = new Date();
-            oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-            oneWeekAgo.setHours(0, 0, 0, 0);
-            const weekStartString = oneWeekAgo.toISOString().split('T')[0];
+            // حساب بداية الأسبوع (السبت) بتوقيت الرياض
+            const now = moment().tz('Asia/Riyadh');
+            const weekStart = now.clone().startOf('week');
+            const weekStartString = weekStart.format('YYYY-MM-DD');
 
             const result = await this.get(`
                 SELECT SUM(reactions) as weeklyReactions
@@ -528,6 +549,147 @@ class DatabaseManager {
         } catch (error) {
             console.error('❌ خطأ في جلب التفاعلات الأسبوعية:', error);
             return 0;
+        }
+    }
+
+    // تحديث رسائل القناة
+    async updateMessageChannel(userId, channelId, channelName) {
+        try {
+            await this.run(`
+                INSERT INTO message_channels (user_id, channel_id, channel_name, message_count, last_message)
+                VALUES (?, ?, ?, 1, ?)
+                ON CONFLICT(user_id, channel_id) DO UPDATE SET
+                    channel_name = excluded.channel_name,
+                    message_count = message_count + 1,
+                    last_message = excluded.last_message
+            `, [userId, channelId, channelName, Date.now()]);
+        } catch (error) {
+            console.error('❌ خطأ في تحديث رسائل القناة:', error);
+        }
+    }
+
+    // الحصول على أكثر قناة صوتية للمستخدم
+    async getMostActiveVoiceChannel(userId, period = 'total') {
+        try {
+            let dateFilter = '';
+            let params = [userId];
+
+            if (period === 'daily') {
+                const today = moment().tz('Asia/Riyadh').format('YYYY-MM-DD');
+                dateFilter = 'AND date = ?';
+                params.push(today);
+            } else if (period === 'weekly') {
+                // بداية الأسبوع (السبت) بتوقيت الرياض
+                const now = moment().tz('Asia/Riyadh');
+                const weekStart = now.clone().startOf('week').format('YYYY-MM-DD');
+                dateFilter = 'AND date >= ?';
+                params.push(weekStart);
+            } else if (period === 'monthly') {
+                // بداية الشهر الحالي بتوقيت الرياض
+                const now = moment().tz('Asia/Riyadh');
+                const monthStart = now.clone().startOf('month').format('YYYY-MM-DD');
+                dateFilter = 'AND date >= ?';
+                params.push(monthStart);
+            }
+
+            const result = await this.get(`
+                SELECT channel_id, channel_name, SUM(duration) as total_time, COUNT(*) as session_count
+                FROM voice_sessions
+                WHERE user_id = ? ${dateFilter}
+                GROUP BY channel_id
+                ORDER BY total_time DESC
+                LIMIT 1
+            `, params);
+
+            return result || { channel_id: null, channel_name: 'لا يوجد', total_time: 0, session_count: 0 };
+        } catch (error) {
+            console.error('❌ خطأ في جلب أكثر قناة صوتية:', error);
+            return { channel_name: 'لا يوجد', total_time: 0, session_count: 0 };
+        }
+    }
+
+    // الحصول على أكثر قناة رسائل للمستخدم
+    async getMostActiveMessageChannel(userId) {
+        try {
+            const result = await this.get(`
+                SELECT channel_id, channel_name, message_count
+                FROM message_channels
+                WHERE user_id = ?
+                ORDER BY message_count DESC
+                LIMIT 1
+            `, [userId]);
+
+            return result || { channel_id: null, channel_name: 'لا يوجد', message_count: 0 };
+        } catch (error) {
+            console.error('❌ خطأ في جلب أكثر قناة رسائل:', error);
+            return { channel_id: null, channel_name: 'لا يوجد', message_count: 0 };
+        }
+    }
+
+    // جلب الإحصائيات اليومية
+    async getDailyStats(userId) {
+        try {
+            const today = moment().tz('Asia/Riyadh').format('YYYY-MM-DD');
+
+            const dailyActivity = await this.get(`
+                SELECT voice_time, messages, reactions, voice_joins
+                FROM daily_activity
+                WHERE user_id = ? AND date = ?
+            `, [userId, today]);
+
+            const activeDays = await this.get(`
+                SELECT COUNT(DISTINCT date) as count
+                FROM daily_activity
+                WHERE user_id = ? AND date = ?
+                AND (voice_time > 0 OR messages > 0 OR reactions > 0 OR voice_joins > 0)
+            `, [userId, today]);
+
+            return {
+                voiceTime: dailyActivity?.voice_time || 0,
+                messages: dailyActivity?.messages || 0,
+                reactions: dailyActivity?.reactions || 0,
+                voiceJoins: dailyActivity?.voice_joins || 0,
+                activeDays: activeDays?.count || 0
+            };
+        } catch (error) {
+            console.error('❌ خطأ في جلب الإحصائيات اليومية:', error);
+            return { voiceTime: 0, messages: 0, reactions: 0, voiceJoins: 0, activeDays: 0 };
+        }
+    }
+
+    // جلب الإحصائيات الشهرية
+    async getMonthlyStats(userId) {
+        try {
+            // حساب بداية الشهر الحالي بتوقيت الرياض
+            const now = moment().tz('Asia/Riyadh');
+            const monthStart = now.clone().startOf('month').format('YYYY-MM-DD');
+
+            const monthlyActivity = await this.all(`
+                SELECT SUM(voice_time) as voiceTime,
+                       SUM(messages) as messages,
+                       SUM(reactions) as reactions,
+                       SUM(voice_joins) as voiceJoins
+                FROM daily_activity
+                WHERE user_id = ? AND date >= ?
+            `, [userId, monthStart]);
+
+            const activeDays = await this.get(`
+                SELECT COUNT(DISTINCT date) as count
+                FROM daily_activity
+                WHERE user_id = ? AND date >= ?
+                AND (voice_time > 0 OR messages > 0 OR reactions > 0 OR voice_joins > 0)
+            `, [userId, monthStart]);
+
+            return {
+                voiceTime: monthlyActivity[0]?.voiceTime || 0,
+                messages: monthlyActivity[0]?.messages || 0,
+                reactions: monthlyActivity[0]?.reactions || 0,
+                voiceJoins: monthlyActivity[0]?.voiceJoins || 0,
+                activeDays: activeDays?.count || 0
+            };
+        } catch (error) {
+            console.error('❌ خطأ في جلب الإحصائيات الشهرية:', error);
+            return { voiceTime: 0, messages: 0, reactions: 0, voiceJoins: 0, activeDays: 0 };
         }
     }
 

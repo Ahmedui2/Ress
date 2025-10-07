@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const moment = require('moment-timezone');
 
 // مسارات ملفات البيانات
 const vacationsPath = path.join(__dirname, '..', 'data', 'vacations.json');
@@ -74,15 +75,19 @@ async function trackUserActivity(userId, activityType, data = {}) {
         const { getDatabase } = require('./database');
         const dbManager = getDatabase();
 
-        // تحديث آخر نشاط
-        const today = new Date().toDateString();
+        // تحديث آخر نشاط (استخدام توقيت الرياض)
+        const today = moment().tz('Asia/Riyadh').format('YYYY-MM-DD');
 
         // معالجة نوع النشاط
         switch (activityType) {
             case 'message':
                 await dbManager.updateUserTotals(userId, { messages: 1 });
                 await dbManager.updateDailyActivity(today, userId, { messages: 1 });
-                // تتبع الرسائل بصمت لتجنب إزعاج الكونسول
+                
+                // تتبع القناة التي كتبت فيها الرسالة
+                if (data.channelId && data.channelName) {
+                    await dbManager.updateMessageChannel(userId, data.channelId, data.channelName);
+                }
                 break;
 
             case 'voice_join':
