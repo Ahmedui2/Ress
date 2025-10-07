@@ -2,6 +2,7 @@ const { ButtonBuilder, ActionRowBuilder, ButtonStyle, StringSelectMenuBuilder, U
 const fs = require('fs');
 const path = require('path');
 const ms = require('ms');
+const moment = require('moment-timezone');
 const colorManager = require('../utils/colorManager');
 const promoteManager = require('../utils/promoteManager');
 const { collectUserStats, formatDuration } = require('../utils/userStatsCollector');
@@ -2932,7 +2933,8 @@ async function handlePromoteInteractions(interaction, context) {
         let totalVoiceJoins = 0;
         const memberStats = [];
 
-        const weekAgo = period === 'weekly' ? Date.now() - (7 * 24 * 60 * 60 * 1000) : 0;
+        // حساب بداية الأسبوع (السبت) أو 0 للإجمالي
+        const weekStart = period === 'weekly' ? moment().tz('Asia/Riyadh').startOf('week') : null;
 
         for (const [userId, member] of membersWithRole) {
             if (database) {
@@ -2941,7 +2943,7 @@ async function handlePromoteInteractions(interaction, context) {
                     // Get weekly stats
                     const weeklyData = await database.all(
                         `SELECT SUM(voice_time) as voice_time, SUM(messages) as messages, SUM(voice_joins) as voice_joins, SUM(reactions) as reactions FROM daily_activity WHERE user_id = ? AND date >= ?`,
-                        [userId, new Date(weekAgo).toDateString()]
+                        [userId, weekStart.format('YYYY-MM-DD')]
                     );
                     userStats = weeklyData[0] || { voice_time: 0, messages: 0, voice_joins: 0, reactions: 0 };
                 } else {
@@ -3097,11 +3099,11 @@ async function handlePromoteInteractions(interaction, context) {
 
         if (database) {
             if (period === 'weekly') {
-                // Get weekly stats
-                const weekAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+                // Get weekly stats - بداية الأسبوع (السبت)
+                const weekStart = moment().tz('Asia/Riyadh').startOf('week');
                 const weeklyData = await database.all(
                     `SELECT SUM(voice_time) as voice_time, SUM(messages) as messages, SUM(voice_joins) as voice_joins, SUM(reactions) as reactions FROM daily_activity WHERE user_id = ? AND date >= ?`,
-                    [userId, new Date(weekAgo).toDateString()]
+                    [userId, weekStart.format('YYYY-MM-DD')]
                 );
                 const weeklyStats = weeklyData[0] || {};
                 userStats = {
