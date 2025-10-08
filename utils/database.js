@@ -776,6 +776,144 @@ class DatabaseManager {
         }
     }
 
+    // تصفير وقت الفويس لمستخدم معين
+    async resetUserVoiceTime(userId) {
+        try {
+            await this.run(`
+                UPDATE user_totals 
+                SET total_voice_time = 0, total_sessions = 0, total_voice_joins = 0
+                WHERE user_id = ?
+            `, [userId]);
+
+            await this.run(`UPDATE daily_activity SET voice_time = 0, voice_joins = 0 WHERE user_id = ?`, [userId]);
+            await this.run(`DELETE FROM voice_sessions WHERE user_id = ?`, [userId]);
+            
+            console.log(`✅ تم تصفير وقت الفويس للمستخدم ${userId}`);
+            return { success: true };
+        } catch (error) {
+            console.error('Error resetting user voice time:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    // تصفير الرسائل لمستخدم معين
+    async resetUserMessages(userId) {
+        try {
+            await this.run(`
+                UPDATE user_totals 
+                SET total_messages = 0
+                WHERE user_id = ?
+            `, [userId]);
+
+            await this.run(`UPDATE daily_activity SET messages = 0 WHERE user_id = ?`, [userId]);
+            await this.run(`DELETE FROM message_channels WHERE user_id = ?`, [userId]);
+            
+            console.log(`✅ تم تصفير الرسائل للمستخدم ${userId}`);
+            return { success: true };
+        } catch (error) {
+            console.error('Error resetting user messages:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    // تصفير التفاعلات لمستخدم معين
+    async resetUserReactions(userId) {
+        try {
+            await this.run(`
+                UPDATE user_totals 
+                SET total_reactions = 0
+                WHERE user_id = ?
+            `, [userId]);
+
+            await this.run(`UPDATE daily_activity SET reactions = 0 WHERE user_id = ?`, [userId]);
+            
+            console.log(`✅ تم تصفير التفاعلات للمستخدم ${userId}`);
+            return { success: true };
+        } catch (error) {
+            console.error('Error resetting user reactions:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    // تصفير جميع إحصائيات مستخدم معين
+    async resetUserAllStats(userId) {
+        try {
+            await this.run(`DELETE FROM voice_sessions WHERE user_id = ?`, [userId]);
+            await this.run(`DELETE FROM message_channels WHERE user_id = ?`, [userId]);
+            await this.run(`DELETE FROM channel_users WHERE user_id = ?`, [userId]);
+            await this.run(`DELETE FROM daily_activity WHERE user_id = ?`, [userId]);
+            await this.run(`
+                UPDATE user_totals 
+                SET total_voice_time = 0, total_sessions = 0, total_messages = 0, 
+                    total_reactions = 0, total_voice_joins = 0, active_days = 0
+                WHERE user_id = ?
+            `, [userId]);
+            
+            return { success: true };
+        } catch (error) {
+            console.error('Error resetting all user stats:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    // تصفير وقت الفويس لجميع المستخدمين
+    async resetAllVoiceTime() {
+        try {
+            await this.run(`UPDATE user_totals SET total_voice_time = 0, total_sessions = 0, total_voice_joins = 0`);
+            await this.run(`UPDATE daily_activity SET voice_time = 0, voice_joins = 0`);
+            await this.run(`DELETE FROM voice_sessions`);
+            
+            console.log('✅ تم تصفير وقت الفويس لجميع الأعضاء');
+            return { success: true };
+        } catch (error) {
+            console.error('Error resetting all voice time:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    // تصفير الرسائل لجميع المستخدمين
+    async resetAllMessages() {
+        try {
+            await this.run(`UPDATE user_totals SET total_messages = 0`);
+            await this.run(`UPDATE daily_activity SET messages = 0`);
+            await this.run(`DELETE FROM message_channels`);
+            
+            console.log('✅ تم تصفير الرسائل لجميع الأعضاء');
+            return { success: true };
+        } catch (error) {
+            console.error('Error resetting all messages:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    // تصفير التفاعلات لجميع المستخدمين
+    async resetAllReactions() {
+        try {
+            await this.run(`UPDATE user_totals SET total_reactions = 0`);
+            await this.run(`UPDATE daily_activity SET reactions = 0`);
+            
+            console.log('✅ تم تصفير التفاعلات لجميع الأعضاء');
+            return { success: true };
+        } catch (error) {
+            console.error('Error resetting all reactions:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    // تصفير النشاط اليومي لجميع المستخدمين
+    async resetAllActivity() {
+        try {
+            await this.run(`DELETE FROM daily_activity`);
+            await this.run(`UPDATE user_totals SET active_days = 0`);
+            
+            console.log('✅ تم تصفير النشاط اليومي لجميع الأعضاء');
+            return { success: true };
+        } catch (error) {
+            console.error('Error resetting all activity:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
     // إغلاق الاتصال
     close() {
         if (this.db) {
