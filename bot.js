@@ -3487,6 +3487,27 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
+    // معالجة أزرار طلبات الغرف
+    if (interaction.customId && (interaction.customId === 'room_request_condolence' || interaction.customId === 'room_request_birthday')) {
+        const { handleRoomRequestButton } = require('./utils/roomRequestHandler.js');
+        await handleRoomRequestButton(interaction, client);
+        return;
+    }
+
+    // معالجة مودالات طلبات الغرف
+    if (interaction.customId && interaction.customId.startsWith('room_modal_')) {
+        const { handleRoomModalSubmit } = require('./utils/roomRequestHandler.js');
+        await handleRoomModalSubmit(interaction, client);
+        return;
+    }
+
+    // معالجة قبول/رفض طلبات الغرف
+    if (interaction.customId && (interaction.customId.startsWith('room_accept_') || interaction.customId.startsWith('room_reject_'))) {
+        const { handleRoomRequestAction } = require('./utils/roomRequestHandler.js');
+        await handleRoomRequestAction(interaction, client);
+        return;
+    }
+
   } catch (error) {
     // قائمة الأخطاء المتجاهلة الموسعة
     const ignoredErrorCodes = [
