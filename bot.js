@@ -257,6 +257,24 @@ for (const file of commandFiles) {
   }
 }
 
+// تسجيل معالجات setroom المستقلة
+try {
+  const setroomCommand = require('./commands/setroom.js');
+  if (setroomCommand.registerHandlers) {
+    setroomCommand.registerHandlers(client);
+  }
+  
+  // استعادة الجدولات المحفوظة عند بدء البوت
+  if (setroomCommand.restoreSchedules) {
+    setTimeout(() => {
+      setroomCommand.restoreSchedules(client);
+      console.log('✅ تم فحص واستعادة جدولات الغرف');
+    }, 3000); // انتظار 3 ثواني لضمان جاهزية البوت
+  }
+} catch (error) {
+  console.error('❌ خطأ في تسجيل معالجات setroom:', error);
+}
+
 let isDataDirty = false;
 let saveTimeout = null;
 
@@ -3485,27 +3503,6 @@ client.on('interactionCreate', async (interaction) => {
             ]
         });
       return;
-    }
-
-    // معالجة أزرار طلبات الغرف
-    if (interaction.customId && (interaction.customId === 'room_request_condolence' || interaction.customId === 'room_request_birthday')) {
-        const { handleRoomRequestButton } = require('./utils/roomRequestHandler.js');
-        await handleRoomRequestButton(interaction, client);
-        return;
-    }
-
-    // معالجة مودالات طلبات الغرف
-    if (interaction.customId && interaction.customId.startsWith('room_modal_')) {
-        const { handleRoomModalSubmit } = require('./utils/roomRequestHandler.js');
-        await handleRoomModalSubmit(interaction, client);
-        return;
-    }
-
-    // معالجة قبول/رفض طلبات الغرف
-    if (interaction.customId && (interaction.customId.startsWith('room_accept_') || interaction.customId.startsWith('room_reject_'))) {
-        const { handleRoomRequestAction } = require('./utils/roomRequestHandler.js');
-        await handleRoomRequestAction(interaction, client);
-        return;
     }
 
   } catch (error) {
