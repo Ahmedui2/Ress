@@ -68,6 +68,12 @@ function restoreSchedules(client) {
 // تخزين انتظار الإيموجي
 const awaitingEmojis = new Map();
 
+// تخزين رسائل الإمبد في الغرف للحماية من الحذف
+const roomEmbedMessages = new Map();
+
+// تخزين رسائل إيمبد السيتب للحماية من الحذف
+const setupEmbedMessages = new Map();
+
 // قراءة وحفظ الإعدادات
 function loadRoomConfig() {
     try {
@@ -164,7 +170,7 @@ async function handleRoomRequestMenu(interaction, client) {
 
     const forWhoInput = new TextInputBuilder()
         .setCustomId('for_who')
-        .setLabel('موعد الطلب لمن؟')
+        .setLabel('الطلب لمن؟')
         .setPlaceholder('يمكنك كتابة منشن أو اسم أو آيدي')
         .setStyle(TextInputStyle.Short)
         .setRequired(true);
@@ -172,24 +178,71 @@ async function handleRoomRequestMenu(interaction, client) {
     const whenInput = new TextInputBuilder()
         .setCustomId('when')
         .setLabel('موعد إنشاء الروم')
-        .setPlaceholder('مثال: 12 صباحاً، بعد 3 ساعات، غداً الساعة 5')
+        .setPlaceholder('، مثال: 12 صباحاً، بعد 3 ساعات، غداً الساعة 5، الحين')
         .setStyle(TextInputStyle.Short)
         .setRequired(true);
 
     const messageInput = new TextInputBuilder()
         .setCustomId('message')
-        .setLabel('اكتب رسالتك')
+        .setLabel(' اكتب رسالتك')
         .setPlaceholder('الرسالة التي سيتم إرسالها في الروم')
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(true);
 
+    const imageInput = new TextInputBuilder()
+        .setCustomId('image_url')
+        .setLabel('رابط الصورة (اختياري)')
+        .setPlaceholder('ضع رابط الصورة هنا إن أردت (اختياري)')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false);
+
     const row1 = new ActionRowBuilder().addComponents(forWhoInput);
     const row2 = new ActionRowBuilder().addComponents(whenInput);
     const row3 = new ActionRowBuilder().addComponents(messageInput);
+    const row4 = new ActionRowBuilder().addComponents(imageInput);
 
-    modal.addComponents(row1, row2, row3);
+    modal.addComponents(row1, row2, row3, row4);
 
     await interaction.showModal(modal);
+
+    // إعادة تعيين المنيو فورًا بعد فتح المودال
+    try {
+        const config = loadRoomConfig();
+        const guildConfig = config[interaction.guild.id];
+        
+        if (guildConfig) {
+            const setupData = setupEmbedMessages.get(interaction.guild.id);
+            
+            if (setupData && setupData.messageId && setupData.channelId === guildConfig.embedChannelId) {
+                const embedChannel = await client.channels.fetch(guildConfig.embedChannelId);
+                const setupMessage = await embedChannel.messages.fetch(setupData.messageId);
+                
+                // إعادة بناء المنيو بدون اختيار افتراضي
+                const freshMenu = new ActionRowBuilder().addComponents(
+                    new StringSelectMenuBuilder()
+                        .setCustomId('room_type_menu')
+                        .setPlaceholder('اختر نوع الروم')
+                        .addOptions([
+                            {
+                                label: 'روم تعزيه',
+                                description: 'طلب روم عزاء',
+                                value: 'condolence',
+                            },
+                            {
+                                label: 'روم ميلاد',
+                                description: 'طلب روم hbd',
+                                value: 'birthday',
+                            }
+                        ])
+                );
+                
+                await setupMessage.edit({ components: [freshMenu] });
+                console.log('✅ تم إعادة تعيين المنيو فورًا بعد فتح المودال');
+            }
+        }
+    } catch (updateError) {
+        console.error('❌ خطأ في إعادة تعيين المنيو:', updateError);
+    }
 }
 
 // معالجة إرسال المودال
@@ -199,9 +252,56 @@ async function handleRoomModalSubmit(interaction, client) {
     const roomType = roomTypeEn === 'condolence' ? 'عزاء' : 'ميلاد';
     const roomEmoji = roomTypeEn === 'condolence' ? '🖤' : '🎂';
 
-    let forWho = interaction.fields.getTextInputValue('for_who');
-    const when = interaction.fields.getTextInputValue('when');
-    const message = interaction.fields.getTextInputValue('message');
+    let forWho = interaction.fields.getTextInputValue('for_who').trim();
+    const when = interaction.fields.getTextInputValue('when').trim();
+    const message = interaction.fields.getTextInputValue('message').trim();
+    let imageUrl = interaction.fields.getTextInputValue('image_url')?.trim() || null;
+
+    // التحقق من الإدخالات
+    const validationErrors = [];
+
+    // فحص "لمن"
+    if (!forWho || forWho.length < 2) {
+        validationErrors.push('❌ اسم الشخص يجب أن يكون حرفين على الأقل');
+    }
+    if (forWho.length > 50) {
+        validationErrors.push('❌ اسم الشخص طويل جداً (الحد الأقصى 50 حرف)');
+    }
+
+    // فحص "متى"
+    if (!when || when.length < 2) {
+        validationErrors.push('❌ موعد الإنشاء مطلوب');
+    }
+    if (when.length > 100) {
+        validationErrors.push('❌ موعد الإنشاء طويل جداً');
+    }
+
+    // فحص الرسالة
+    if (!message || message.length < 5) {
+        validationErrors.push('❌ الرسالة يجب أن تكون 5 أحرف على الأقل');
+    }
+    if (message.length > 1000) {
+        validationErrors.push('❌ الرسالة طويلة جداً (الحد الأقصى 1000 حرف)');
+    }
+
+    // فحص رابط الصورة (إذا تم إدخاله)
+    if (imageUrl && imageUrl.length > 0) {
+        const imageUrlPattern = /^https?:\/\/.+\.(jpg|jpeg|png|gif|webp|bmp)/i;
+        if (!imageUrlPattern.test(imageUrl)) {
+            validationErrors.push('❌ رابط الصورة غير صالح. يجب أن يكون رابط صورة صحيح (jpg, png, gif, webp)');
+        }
+    }
+
+    // إذا كان هناك أخطاء، أرسلها
+    if (validationErrors.length > 0) {
+        const errorEmbed = colorManager.createEmbed()
+            .setTitle('**أخطاء في الإدخال**')
+            .setDescription(validationErrors.join('\n'))
+            .setColor('#ff0000');
+        
+        await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+        return;
+    }
 
     // تحويل الآيدي أو اليوزر إلى منشن
     forWho = await formatUserMention(forWho, interaction.guild);
@@ -216,8 +316,8 @@ async function handleRoomModalSubmit(interaction, client) {
 
     // طلب الإيموجي من المستخدم
     const emojiPrompt = colorManager.createEmbed()
-        .setTitle('📝 **خطوة أخيرة**')
-        .setDescription('**الرجاء إرسال الإيموجيات التي تريد إضافتها للروم**\n\nأرسل الإيموجيات (افصلها بمسافات)')
+        .setTitle('**خطوة أخيرة**')
+        .setDescription('**الرجاء إرسال الإيموجيات التي تريد إضافتها للروم**\n\nأرسل الإيموجيات (لازم من السيرفر)')
         .setFooter({ text: 'لديك 60 ثانية للرد' });
 
     await interaction.reply({ embeds: [emojiPrompt], ephemeral: true });
@@ -230,6 +330,7 @@ async function handleRoomModalSubmit(interaction, client) {
         forWho,
         when,
         message,
+        imageUrl,
         guildId: interaction.guild.id,
         channelId: interaction.channel.id,
         timestamp: Date.now()
@@ -253,27 +354,41 @@ async function handleEmojiMessage(message, client) {
     const requestData = awaitingEmojis.get(userId);
     awaitingEmojis.delete(userId);
 
-    // استخراج الإيموجيات (Unicode, مخصصة, خارجية)
-    const emojiRegex = /(?:<a?:\w+:\d+>)|(?:\p{Emoji_Presentation}|\p{Emoji}\uFE0F)/gu;
-    const extractedEmojis = message.content.match(emojiRegex) || [];
+    // استخراج الإيموجيات المخصصة (عادية ومتحركة)
+    const customEmojiRegex = /<a?:\w+:\d+>/g;
+    const customEmojis = message.content.match(customEmojiRegex) || [];
     
-    // معالجة الإيموجيات المخصصة الخارجية
-    const customEmojiRegex = /<a?:(\w+):(\d+)>/g;
-    const emojis = [];
+    // استخراج الإيموجيات Unicode
+    const unicodeEmojiRegex = /(\p{Emoji_Presentation}|\p{Emoji}\uFE0F|\p{Emoji})/gu;
+    const unicodeEmojis = [];
     
-    for (const emoji of extractedEmojis) {
-        const customMatch = emoji.match(customEmojiRegex);
-        if (customMatch) {
-            // إيموجي مخصص - استخدام الآيدي مباشرة
-            emojis.push(emoji);
-        } else {
-            // إيموجي Unicode عادي
-            emojis.push(emoji);
+    // إزالة الإيموجيات المخصصة من النص للحصول على Unicode فقط
+    let cleanContent = message.content;
+    for (const customEmoji of customEmojis) {
+        cleanContent = cleanContent.replace(customEmoji, '');
+    }
+    
+    // استخراج Unicode
+    const unicodeMatches = cleanContent.match(unicodeEmojiRegex) || [];
+    for (const emoji of unicodeMatches) {
+        if (emoji.trim()) {
+            unicodeEmojis.push(emoji);
         }
     }
-
+    
+    // دمج جميع الإيموجيات
+    const emojis = [...customEmojis, ...unicodeEmojis];
+    
     if (emojis.length === 0) {
         await message.reply('❌ **لم يتم العثور على إيموجيات. تم إلغاء الطلب**').then(msg => {
+            setTimeout(() => msg.delete().catch(() => {}), 5000);
+        });
+        return;
+    }
+
+    // فحص عدد الإيموجيات
+    if (emojis.length > 20) {
+        await message.reply('❌ **الحد الأقصى للإيموجيات هو 20. تم إلغاء الطلب**').then(msg => {
             setTimeout(() => msg.delete().catch(() => {}), 5000);
         });
         return;
@@ -292,6 +407,7 @@ async function handleEmojiMessage(message, client) {
         forWho: requestData.forWho,
         when: requestData.when,
         message: requestData.message,
+        imageUrl: requestData.imageUrl,
         emojis: emojis,
         status: 'pending',
         createdAt: Date.now()
@@ -309,15 +425,20 @@ async function handleEmojiMessage(message, client) {
         .setTitle(`${requestData.roomEmoji} **طلب روم ${requestData.roomType} جديد**`)
         .setDescription(`**تم استلام طلب جديد:**`)
         .addFields([
-            { name: '👤 صاحب الطلب', value: `<@${userId}>`, inline: true },
-            { name: '🎯 لمن؟', value: requestData.forWho, inline: true },
-            { name: '⏰ موعد الإنشاء', value: requestData.when, inline: true },
-            { name: '💬 الرسالة', value: requestData.message, inline: false },
-            { name: '🎭 الإيموجيات', value: emojis.join(' '), inline: false },
-            { name: '🆔 معرف الطلب', value: `\`${request.id}\``, inline: false }
+            { name: 'صاحب الطلب', value: `<@${userId}>`, inline: true },
+            { name: 'لمن؟', value: requestData.forWho, inline: true },
+            { name: 'موعد الإنشاء', value: requestData.when, inline: true },
+            { name: 'الرسالة', value: requestData.message, inline: false },
+            { name: 'الإيموجيات', value: emojis.join(' '), inline: false },
+            { name: 'معرف الطلب', value: `\`${request.id}\``, inline: false }
         ])
         .setTimestamp()
         .setFooter({ text: `طلب من ${message.author.tag}`, iconURL: message.author.displayAvatarURL() });
+
+    // إضافة الصورة إذا كانت موجودة
+    if (requestData.imageUrl) {
+        requestEmbed.setImage(requestData.imageUrl);
+    }
 
     const buttons = new ActionRowBuilder().addComponents([
         new ButtonBuilder()
@@ -334,15 +455,61 @@ async function handleEmojiMessage(message, client) {
 
     await requestsChannel.send({ embeds: [requestEmbed], components: [buttons] });
 
+    // تحديث رسالة السيتب لإعادة تعيين المنيو
+    try {
+        const embedChannel = await client.channels.fetch(guildConfig.embedChannelId);
+        const setupData = setupEmbedMessages.get(requestData.guildId);
+        
+        if (setupData && setupData.messageId && setupData.channelId === guildConfig.embedChannelId) {
+            const setupMessage = await embedChannel.messages.fetch(setupData.messageId);
+            
+            // إعادة بناء المنيو بدون اختيار افتراضي
+            const freshMenu = new ActionRowBuilder().addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId('room_type_menu')
+                    .setPlaceholder('اختر نوع الروم')
+                    .addOptions([
+                        {
+                            label: 'روم تعزيه',
+                            description: 'طلب روم عزاء',
+                            value: 'condolence',
+                        },
+                        {
+                            label: 'روم ميلاد',
+                            description: 'طلب روم hbd',
+                            value: 'birthday',
+                        }
+                    ])
+            );
+            
+            await setupMessage.edit({ components: [freshMenu] });
+            console.log('✅ تم تحديث منيو السيتب لإعادة تعيينه');
+        }
+    } catch (updateError) {
+        console.error('❌ خطأ في تحديث منيو السيتب:', updateError);
+    }
+
     // حذف رسالة الإيموجيات من المستخدم
     await message.delete().catch(() => {});
     
     // إرسال رد مخفي للمستخدم في الخاص
     try {
+        let description = `**تم إرسال طلبك بنجاح!**\n\n${requestData.roomEmoji} نوع الروم : ${requestData.roomType}\n🎯 لـ: ${requestData.forWho}\n الموعد : ${requestData.when}\n لإيموجيات : ${emojis.join(' ')}`;
+        
+        if (requestData.imageUrl) {
+            description += `\n🖼️ الصورة: مضافة`;
+        }
+        
+        description += `\n\nسيتم مراجعة طلبك وإبلاغك بالنتيجة قريباً`;
+
         const replyEmbed = colorManager.createEmbed()
-            .setTitle('✅ **تم إرسال الطلب**')
-            .setDescription(`**تم إرسال طلبك بنجاح!**\n\n${requestData.roomEmoji} نوع الروم: ${requestData.roomType}\n🎯 لـ: ${requestData.forWho}\n⏰ الموعد: ${requestData.when}\n🎭 الإيموجيات: ${emojis.join(' ')}\n\nسيتم مراجعة طلبك وإبلاغك بالنتيجة قريباً`)
+            .setTitle('**تم إرسال الطلب**')
+            .setDescription(description)
             .setTimestamp();
+        
+        if (requestData.imageUrl) {
+            replyEmbed.setImage(requestData.imageUrl);
+        }
         
         await message.author.send({ embeds: [replyEmbed] });
     } catch (error) {
@@ -381,7 +548,7 @@ async function handleRoomRequestAction(interaction, client) {
     const request = requests[requestIndex];
 
     if (request.status !== 'pending') {
-        await interaction.reply({ content: `⚠️ **هذا الطلب تم ${request.status === 'accepted' ? 'قبوله' : 'رفضه'} مسبقاً**`, ephemeral: true });
+        await interaction.reply({ content: `**هذا الطلب تم ${request.status === 'accepted' ? 'قبوله' : 'رفضه'} مسبقاً**`, ephemeral: true });
         return;
     }
 
@@ -395,8 +562,8 @@ async function handleRoomRequestAction(interaction, client) {
     const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
         .setColor(action === 'accept' ? '#00ff00' : '#ff0000')
         .addFields([
-            { name: '✅ الحالة', value: action === 'accept' ? 'تم القبول' : 'تم الرفض', inline: true },
-            { name: '👤 بواسطة', value: `<@${interaction.user.id}>`, inline: true }
+            { name: ' الحالة', value: action === 'accept' ? 'تم القبول' : 'تم الرفض', inline: true },
+            { name: 'بواسطة', value: `<@${interaction.user.id}>`, inline: true }
         ]);
 
     await interaction.update({ embeds: [updatedEmbed], components: [] });
@@ -408,7 +575,7 @@ async function handleRoomRequestAction(interaction, client) {
 
         const notificationEmbed = colorManager.createEmbed()
             .setTitle(`${action === 'accept' ? '✅' : '❌'} **${action === 'accept' ? 'تم قبول' : 'تم رفض'} طلبك**`)
-            .setDescription(`**طلب روم ${request.roomType}**\n\n${roomEmoji} لـ: ${request.forWho}\n⏰ الموعد: ${request.when}\n\n${action === 'accept' ? 'سيتم إنشاء الروم في الوقت المحدد' : 'تم رفض طلبك'}`)
+            .setDescription(`**طلب روم ${request.roomType}**\n\n${roomEmoji} لـ: ${request.forWho}\n الموعد: ${request.when}\n\n${action === 'accept' ? 'سيتم إنشاء الروم في الوقت المحدد' : 'تم رفض طلبك'}`)
             .setTimestamp();
 
         await requester.send({ embeds: [notificationEmbed] });
@@ -471,7 +638,24 @@ async function createRoom(request, client, guildConfig) {
             return;
         }
 
-        const roomName = `${request.roomTypeEn === 'condolence' ? '🖤' : '🎂'}-${request.forWho.replace(/[^a-zA-Z0-9\u0600-\u06FF]/g, '-')}`;
+        // استخراج اسم العرض (nickname) من forWho
+        let displayName = request.forWho;
+        
+        // إذا كان منشن، جلب المعلومات من السيرفر
+        const mentionMatch = request.forWho.match(/<@!?(\d+)>/);
+        if (mentionMatch) {
+            const userId = mentionMatch[1];
+            try {
+                const member = await guild.members.fetch(userId);
+                // استخدام nickname إذا كان موجوداً، وإلا استخدام displayName
+                displayName = member.nickname || member.user.displayName || member.user.username;
+            } catch (err) {
+                console.error('فشل في جلب معلومات المستخدم، استخدام النص الأصلي:', err);
+                displayName = request.forWho.replace(/<@!?\d+>/g, '').trim() || 'مجهول';
+            }
+        }
+
+        const roomName = `${request.roomTypeEn === 'condolence' ? 'تعزية' : 'hbd'}-${displayName.replace(/[^a-zA-Z0-9\u0600-\u06FF]/g, '-')}`;
 
         // إنشاء الروم
         const channel = await guild.channels.create({
@@ -484,7 +668,7 @@ async function createRoom(request, client, guildConfig) {
 
         // إرسال الرسالة
         const roomEmbed = colorManager.createEmbed()
-            .setTitle(`${request.roomTypeEn === 'condolence' ? '🖤' : '🎂'} **روم ${request.roomType}**`)
+            .setTitle(`${request.roomTypeEn === 'condolence' ? 'تعزيه' : 'hbd'} **Room**`)
             .setDescription(request.message)
             .addFields([
                 { name: 'لـ', value: request.forWho, inline: true },
@@ -492,8 +676,22 @@ async function createRoom(request, client, guildConfig) {
             ])
             .setTimestamp();
 
-        const sentMessage = await channel.send({ embeds: [roomEmbed] });
+        // إضافة الصورة إذا كانت موجودة
+        if (request.imageUrl) {
+            roomEmbed.setImage(request.imageUrl);
+        }
+
+        const sentMessage = await channel.send({ content: '@here', embeds: [roomEmbed] });
         console.log(`✅ تم إرسال رسالة الإمبد في الروم`);
+
+        // حفظ معلومات الرسالة للحماية من الحذف
+        roomEmbedMessages.set(channel.id, {
+            messageId: sentMessage.id,
+            channelId: channel.id,
+            embed: roomEmbed,
+            emojis: request.emojis || [],
+            request: request
+        });
 
         // إضافة الريآكتات من الطلب
         const emojis = request.emojis || [];
@@ -600,22 +798,75 @@ function parseScheduleTime(timeString) {
     const moment = require('moment-timezone');
     const now = moment().tz('Asia/Riyadh');
 
-    // بعد X ساعات
-    const hoursMatch = timeString.match(/بعد\s+(\d+)\s*ساعات?/);
-    if (hoursMatch) {
-        const hours = parseInt(hoursMatch[1]);
-        return now.clone().add(hours, 'hours').toDate();
+    // تنظيف المدخل
+    const cleanTime = timeString.trim().toLowerCase();
+
+    // الآن أو فوراً أو دحين أو الحين
+    if (cleanTime.includes('الآن') || cleanTime.includes('فوراً') || cleanTime.includes('فورا') || 
+        cleanTime.includes('دحين') || cleanTime.includes('الحين') || cleanTime.includes('حين') ||
+        cleanTime.includes('توني') || cleanTime === 'الان') {
+        return now.clone().add(1, 'second').toDate();
+    }
+
+    // بعد X ثانية
+    const secondsMatch = cleanTime.match(/بعد\s+(\d+)\s*ثوان[يی]?|ثانية|بعد\s+ثانية/);
+    if (secondsMatch) {
+        const seconds = parseInt(secondsMatch[1] || 1);
+        return now.clone().add(seconds, 'seconds').toDate();
     }
 
     // بعد X دقائق
-    const minutesMatch = timeString.match(/بعد\s+(\d+)\s*دقائق?|دقيقة/);
+    const minutesMatch = cleanTime.match(/بعد\s+(\d+)\s*دقائق?|دقيقة|بعد\s+دقيقة/);
     if (minutesMatch) {
         const minutes = parseInt(minutesMatch[1] || 1);
         return now.clone().add(minutes, 'minutes').toDate();
     }
 
+    // بعد X ساعات
+    const hoursMatch = cleanTime.match(/بعد\s+(\d+)\s*ساعات?|ساعة|بعد\s+ساعة/);
+    if (hoursMatch) {
+        const hours = parseInt(hoursMatch[1] || 1);
+        return now.clone().add(hours, 'hours').toDate();
+    }
+
+    // بعد X أيام
+    const daysMatch = cleanTime.match(/بعد\s+(\d+)\s*أيام?|يوم|بعد\s+يوم/);
+    if (daysMatch) {
+        const days = parseInt(daysMatch[1] || 1);
+        return now.clone().add(days, 'days').toDate();
+    }
+
+    // بكره (غداً) أو غدوة
+    if (cleanTime.includes('بكره') || cleanTime.includes('بكرة') || cleanTime.includes('غدوة')) {
+        const tomorrowMatch = cleanTime.match(/(\d+)\s*(صباحاً|مساءً|ص|م)?/);
+        if (tomorrowMatch) {
+            const hour = parseInt(tomorrowMatch[1]);
+            const isPM = tomorrowMatch[2] && (tomorrowMatch[2].includes('مساء') || tomorrowMatch[2] === 'م');
+            const targetHour = isPM && hour < 12 ? hour + 12 : hour;
+            return now.clone().add(1, 'day').hour(targetHour).minute(0).second(0).millisecond(0).toDate();
+        }
+        return now.clone().add(1, 'day').hour(12).minute(0).second(0).millisecond(0).toDate();
+    }
+
+    // غداً أو غدا
+    if (cleanTime.includes('غداً') || cleanTime.includes('غدا')) {
+        const tomorrowMatch = cleanTime.match(/(\d+)\s*(صباحاً|مساءً|ص|م)?/);
+        if (tomorrowMatch) {
+            const hour = parseInt(tomorrowMatch[1]);
+            const isPM = tomorrowMatch[2] && (tomorrowMatch[2].includes('مساء') || tomorrowMatch[2] === 'م');
+            const targetHour = isPM && hour < 12 ? hour + 12 : hour;
+            return now.clone().add(1, 'day').hour(targetHour).minute(0).second(0).millisecond(0).toDate();
+        }
+        return now.clone().add(1, 'day').hour(12).minute(0).second(0).millisecond(0).toDate();
+    }
+
+    // قبل شوي (بعد ساعة - كترجمة معكوسة)
+    if (cleanTime.includes('قبل شوي') || cleanTime.includes('شوي')) {
+        return now.clone().add(10, 'minutes').toDate();
+    }
+
     // الساعة X
-    const hourMatch = timeString.match(/(\d+)\s*(صباحاً|مساءً|ص|م)?/);
+    const hourMatch = cleanTime.match(/(\d+)\s*(صباحاً|مساءً|ص|م)?/);
     if (hourMatch) {
         const hour = parseInt(hourMatch[1]);
         const isPM = hourMatch[2] && (hourMatch[2].includes('مساء') || hourMatch[2] === 'م');
@@ -629,16 +880,6 @@ function parseScheduleTime(timeString) {
         }
 
         return targetDate.toDate();
-    }
-
-    // غداً
-    if (timeString.includes('غداً') || timeString.includes('غدا')) {
-        return now.clone().add(1, 'day').hour(12).minute(0).second(0).millisecond(0).toDate();
-    }
-
-    // الآن أو فوراً
-    if (timeString.includes('الآن') || timeString.includes('فوراً') || timeString.includes('فورا')) {
-        return now.clone().add(1, 'second').toDate();
     }
 
     // افتراضياً: بعد ساعة
@@ -678,6 +919,120 @@ function registerHandlers(client) {
         await handleEmojiMessage(message, client);
     });
 
+    // معالج حذف الرسائل - لإعادة إرسال الإمبد
+    client.on('messageDelete', async (message) => {
+        try {
+            // التحقق من أن الرسالة في روم محمي
+            if (roomEmbedMessages.has(message.channel.id)) {
+                const roomData = roomEmbedMessages.get(message.channel.id);
+                
+                // التحقق من أن الرسالة المحذوفة هي رسالة الإمبد
+                if (message.id === roomData.messageId) {
+                    console.log(`⚠️ تم حذف رسالة الإمبد في ${message.channel.name} - سيتم إعادة الإرسال بعد 5 ثواني`);
+
+                    // الانتظار 5 ثواني ثم إعادة الإرسال
+                    setTimeout(async () => {
+                        try {
+                            const channel = await client.channels.fetch(roomData.channelId);
+                            if (!channel) return;
+
+                            const newMessage = await channel.send({ 
+                                content: '@here', 
+                                embeds: [roomData.embed] 
+                            });
+
+                            console.log(`✅ تم إعادة إرسال رسالة الإمبد في ${channel.name}`);
+
+                            // تحديث معلومات الرسالة
+                            roomEmbedMessages.set(channel.id, {
+                                ...roomData,
+                                messageId: newMessage.id
+                            });
+
+                            // إعادة إضافة الريآكتات
+                            for (const reaction of roomData.emojis) {
+                                try {
+                                    await newMessage.react(reaction);
+                                } catch (error) {
+                                    const emojiIdMatch = reaction.match(/<a?:\w+:(\d+)>/);
+                                    if (emojiIdMatch) {
+                                        try {
+                                            await newMessage.react(emojiIdMatch[1]);
+                                        } catch (err) {
+                                            console.error('فشل في إضافة الريآكت:', err.message);
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (error) {
+                            console.error('❌ فشل في إعادة إرسال الإمبد:', error);
+                        }
+                    }, 5000);
+                }
+            }
+
+            // التحقق من أن الرسالة هي رسالة سيتب روم
+            for (const [guildId, setupData] of setupEmbedMessages.entries()) {
+                if (message.id === setupData.messageId && message.channel.id === setupData.channelId) {
+                    console.log(`⚠️ تم حذف رسالة سيتب الروم - سيتم إعادة الإرسال بعد 5 ثواني`);
+
+                    // الانتظار 5 ثواني ثم إعادة الإرسال
+                    setTimeout(async () => {
+                        try {
+                            const channel = await client.channels.fetch(setupData.channelId);
+                            if (!channel) return;
+
+                            const finalEmbed = colorManager.createEmbed()
+                                .setTitle('**Rooms**')
+                                .setDescription('**اختر نوع الروم التي تريد طلبها :**')
+                                .setImage(setupData.imageUrl)
+                                .setFooter({ text: 'Rooms system' });
+
+                            const menu = new ActionRowBuilder().addComponents(
+                                new StringSelectMenuBuilder()
+                                    .setCustomId('room_type_menu')
+                                    .setPlaceholder('اختر نوع الروم')
+                                    .addOptions([
+                                        {
+                                            label: 'روم تعزيه',
+                                            description: 'طلب روم عزاء',
+                                            value: 'condolence',
+                                        },
+                                        {
+                                            label: 'روم ميلاد',
+                                            description: 'طلب روم hbd',
+                                            value: 'birthday',
+                                        }
+                                    ])
+                            );
+
+                            const newMessage = await channel.send({ embeds: [finalEmbed], components: [menu] });
+
+                            console.log(`✅ تم إعادة إرسال رسالة سيتب الروم`);
+
+                            // تحديث معلومات الرسالة
+                            setupEmbedMessages.set(guildId, {
+                                messageId: newMessage.id,
+                                channelId: channel.id,
+                                embed: finalEmbed,
+                                menu: menu,
+                                imageUrl: setupData.imageUrl
+                            });
+
+                        } catch (error) {
+                            console.error('❌ فشل في إعادة إرسال رسالة سيتب الروم:', error);
+                        }
+                    }, 5000);
+                    
+                    break;
+                }
+            }
+
+        } catch (error) {
+            console.error('❌ خطأ في معالج حذف الرسائل:', error);
+        }
+    });
+
     console.log('✅ تم تسجيل معالجات setroom بنجاح');
 }
 
@@ -693,8 +1048,8 @@ async function execute(message, args, { BOT_OWNERS, client }) {
 
     // الخطوة 1: طلب روم الطلبات
     const step1Embed = colorManager.createEmbed()
-        .setTitle('📝 **إعداد نظام الغرف**')
-        .setDescription('**الخطوة 1/3: منشن روم الطلبات**\n\nقم بعمل منشن للروم الذي سيتم إرسال الطلبات فيه\n\n**📌 دليل صيغ الوقت المدعومة:**\n```\n• بعد ساعة / بعد ساعتين / بعد 3 ساعات\n• دقيقتين / بعد 5 دقائق / بعد دقيقة\n• 12 صباحاً / 5 مساءً / الساعة 8\n• غداً / غدا الساعة 3 / بكره 10 صباحاً\n• الآن / فوراً / دحين / الحين\n• بعد 30 ثانية```')
+        .setTitle('**إعداد نظام الرومات**')
+        .setDescription('**الخطوة 1/3: منشن روم الطلبات**\n\nقم بعمل منشن للروم الذي سيتم إرسال الطلبات فيه\n\n**📌 دليل صيغ الوقت المدعومة:**\n```\n⏰ فوري:\n• الآن / فوراً / دحين / الحين / توني\n\n⏱️ ثواني/دقائق:\n• بعد 30 ثانية / بعد ثانية\n• بعد دقيقة / بعد 5 دقائق / دقيقتين\n\n🕐 ساعات:\n• بعد ساعة / بعد ساعتين / بعد 3 ساعات\n• 12 صباحاً / 5 مساءً / الساعة 8\n\n📅 أيام:\n• غداً / غدا / بكره / بكرة / غدوة\n• بكره الساعة 10 / غداً 5 مساءً\n• بعد يوم / بعد 3 أيام\n\n⏳ أخرى:\n• شوي (بعد 10 دقائق)```')
         .setFooter({ text: 'لديك 60 ثانية للرد' });
 
     await message.channel.send({ embeds: [step1Embed] });
@@ -711,7 +1066,7 @@ async function execute(message, args, { BOT_OWNERS, client }) {
 
         // الخطوة 2: طلب روم الإيمبد
         const step2Embed = colorManager.createEmbed()
-            .setTitle('📝 **إعداد نظام الغرف**')
+            .setTitle('**إعداد نظام الرومات**')
             .setDescription('**الخطوة 2/3: منشن روم الإيمبد**\n\nقم بعمل منشن للروم الذي سيتم إرسال الإيمبد فيه')
             .setFooter({ text: 'لديك 60 ثانية للرد' });
 
@@ -728,7 +1083,7 @@ async function execute(message, args, { BOT_OWNERS, client }) {
 
             // الخطوة 3: طلب الصورة
             const step3Embed = colorManager.createEmbed()
-                .setTitle('📝 **إعداد نظام الغرف**')
+                .setTitle('**إعداد نظام الرومات**')
                 .setDescription('**الخطوة 3/3: أرسل الصورة**\n\nأرسل الصورة (إرفاق أو رابط)')
                 .setFooter({ text: 'لديك 120 ثانية للرد' });
 
@@ -769,10 +1124,10 @@ async function execute(message, args, { BOT_OWNERS, client }) {
                 if (saveRoomConfig(config)) {
                     // إرسال الإيمبد في روم الإيمبد
                     const finalEmbed = colorManager.createEmbed()
-                        .setTitle('🏠 **نظام طلبات الغرف**')
-                        .setDescription('**اختر نوع الغرفة التي تريد طلبها:**')
+                        .setTitle('**Rooms**')
+                        .setDescription('**اختر نوع الروم التي تريد طلبها :**')
                         .setImage(imageUrl)
-                        .setFooter({ text: 'اختر من القائمة أدناه' });
+                        .setFooter({ text: 'Rooms system' });
 
                     const menu = new ActionRowBuilder().addComponents(
                         new StringSelectMenuBuilder()
@@ -780,26 +1135,35 @@ async function execute(message, args, { BOT_OWNERS, client }) {
                             .setPlaceholder('اختر نوع الروم')
                             .addOptions([
                                 {
-                                    label: 'روم عزاء',
+                                    label: 'روم تعزيه',
                                     description: 'طلب روم عزاء',
                                     value: 'condolence',
-                                    emoji: '🖤'
+                            
                                 },
                                 {
                                     label: 'روم ميلاد',
-                                    description: 'طلب روم ميلاد',
+                                    description: 'طلب روم hbd',
                                     value: 'birthday',
-                                    emoji: '🎂'
+                                    
                                 }
                             ])
                     );
 
-                    await embedChannel.send({ embeds: [finalEmbed], components: [menu] });
+                    const setupMessage = await embedChannel.send({ embeds: [finalEmbed], components: [menu] });
+
+                    // حفظ رسالة السيتب للحماية من الحذف
+                    setupEmbedMessages.set(guildId, {
+                        messageId: setupMessage.id,
+                        channelId: embedChannel.id,
+                        embed: finalEmbed,
+                        menu: menu,
+                        imageUrl: imageUrl
+                    });
 
                     // رسالة نجاح
                     const successEmbed = colorManager.createEmbed()
                         .setTitle('✅ **تم الإعداد بنجاح**')
-                        .setDescription(`**تم إعداد نظام الغرف بنجاح!**\n\n📝 روم الطلبات: ${requestsChannel}\n📊 روم الإيمبد: ${embedChannel}`)
+                        .setDescription(`**تم إعداد نظام الرومات بنجاح!**\n\n روم الطلبات : ${requestsChannel}\nروم الإيمبد : ${embedChannel}`)
                         .setTimestamp();
 
                     await message.channel.send({ embeds: [successEmbed] });
