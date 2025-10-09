@@ -812,121 +812,151 @@ async function handleInteraction(interaction, context) {
     if (interaction.isModalSubmit() && interaction.customId.startsWith('masoul_modal_')) {
       const shortId = interaction.customId.replace('masoul_modal_', '');
       const modalData = client.modalData?.get(shortId);
+      
       if (!modalData) {
-        return interaction.reply({ content: '**انتهت صلاحية هذا النموذج. حاول مرة أخرى.**', ephemeral: true });
+        return await safeReply(interaction, '**❌ انتهت صلاحية هذا النموذج. حاول مرة أخرى.**');
       }
 
       const { responsibilityName, target, userId, timestamp, originalChannelId, originalMessageId } = modalData;
 
       if (interaction.replied || interaction.deferred) return;
 
-      const reason = interaction.fields.getTextInputValue('reason').trim() || 'لا يوجد سبب محدد';
-      if (!responsibilities[responsibilityName]) {
-        return interaction.reply({ content: '**المسؤولية غير موجودة!**', ephemeral: true });
-      }
-
-      const responsibility = responsibilities[responsibilityName];
-      const responsibles = responsibility.responsibles || [];
-      if (responsibles.length === 0) {
-        return interaction.reply({ content: '**لا يوجد مسؤولين معينين لهذه المسؤولية.**', ephemeral: true });
-      }
-
-      const embed = createCallEmbed(responsibilityName, reason, userId);
-
-      const claimCustomId = buildClaimCustomId(
-        responsibilityName,
-        timestamp,
-        userId,
-        originalChannelId,
-        originalMessageId || 'unknown'
-      );
-
-      const claimButton = new ButtonBuilder().setCustomId(claimCustomId).setLabel('Claim').setStyle(ButtonStyle.Success);
-
-      const guildId = interaction.guildId;
-      let goToMessageButton = null;
-      if (
-        originalMessageId && originalMessageId !== 'unknown' &&
-        guildId && originalChannelId && /^\d{17,19}$/.test(originalMessageId)
-      ) {
-        const messageUrl = `https://discord.com/channels/${guildId}/${originalChannelId}/${originalMessageId}`;
-        goToMessageButton = new ButtonBuilder().setLabel('🔗 Message Link').setStyle(ButtonStyle.Link).setURL(messageUrl);
-      }
-
-      const buttonRow = new ActionRowBuilder().addComponents(
-        claimButton,
-        ...(goToMessageButton ? [goToMessageButton] : [])
-      );
-
-      if (target === 'all') {
-        let sentCount = 0, failedCount = 0, onVacationCount = 0;
-        const vacationManager = require('../utils/vacationManager.js');
+      try {
+        const reason = interaction.fields.getTextInputValue('reason').trim() || 'لا يوجد سبب محدد';
         
-        for (const uid of responsibles) {
-          try {
-            // فحص حالة الإجازة
-            if (vacationManager.isUserOnVacation(uid)) {
-              onVacationCount++;
-              continue; // تخطي المستخدمين في إجازة
+        if (!responsibilities[responsibilityName]) {
+          return await safeReply(interaction, '**❌ المسؤولية غير موجودة!**');
+        }
+
+        const responsibility = responsibilities[responsibilityName];
+        const responsibles = responsibility.responsibles || [];
+        
+        if (responsibles.length === 0) {
+          return await safeReply(interaction, '**❌ لا يوجد مسؤولين معينين لهذه المسؤولية.**');
+        }
+
+        const embed = createCallEmbed(responsibilityName, reason, userId);
+
+        const claimCustomId = buildClaimCustomId(
+          responsibilityName,
+          timestamp,
+          userId,
+          originalChannelId,
+          originalMessageId || 'unknown'
+        );
+
+        const claimButton = new ButtonBuilder().setCustomId(claimCustomId).setLabel('Claim').setStyle(ButtonStyle.Success);
+
+        const guildId = interaction.guildId;
+        let goToMessageButton = null;
+        if (
+          originalMessageId && originalMessageId !== 'unknown' &&
+          guildId && originalChannelId && /^\d{17,19}$/.test(originalMessageId)
+        ) {
+          const messageUrl = `https://discord.com/channels/${guildId}/${originalChannelId}/${originalMessageId}`;
+          goToMessageButton = new ButtonBuilder().setLabel('🔗 Message Link').setStyle(ButtonStyle.Link).setURL(messageUrl);
+        }
+
+        const buttonRow = new ActionRowBuilder().addComponents(
+          claimButton,
+          ...(goToMessageButton ? [goToMessageButton] : [])
+        );
+
+        if (target === 'all') {
+          let sentCount = 0, failedCount = 0, onVacationCount = 0;
+          const vacationManager = require('../utils/vacationManager.js');
+          
+          for (const uid of responsibles) {
+            try {
+              // فحص حالة الإجازة
+              if (vacationManager.isUserOnVacation(uid)) {
+                onVacationCount++;
+                continue;
+              }
+              
+              const user = await client.users.fetch(uid);
+              await user.send({ embeds: [embed], components: [buttonRow] });
+              sentCount++;
+            } catch (err) {
+              failedCount++;
+              if (DEBUG) console.log(`فشل إرسال DM لـ ${uid}:`, err.message);
             }
-            
-            const user = await client.users.fetch(uid);
-            await user.send({ embeds: [embed], components: [buttonRow] });
-            sentCount++;
-          } catch {
-            failedCount++;
           }
-        }
-
-        const taskId = `${responsibilityName}_${timestamp}`;
-        const notificationsCommand = client.commands.get('notifications');
-        if (notificationsCommand?.trackTask) {
-          notificationsCommand.trackTask(taskId, responsibilityName, responsibles, client);
-        }
-
-        let replyMessage = `**تم إرسال الطلب لـ ${sentCount} من المسؤولين.**`;
-        if (failedCount > 0) replyMessage += `\n**فشل الإرسال لـ ${failedCount} مسؤول (رسائل خاصة مغلقة).**`;
-        if (onVacationCount > 0) replyMessage += `\n**🏖️ تم تخطي ${onVacationCount} مسؤول في إجازة.**`;
-        await interaction.reply({ content: replyMessage, ephemeral: true });
-      } else {
-        try {
-          const user = await client.users.fetch(target);
-          let displayName = user.username;
-          try {
-            const member = await interaction.guild.members.fetch(target);
-            displayName = member.displayName || member.nickname || user.username;
-          } catch { /* ignore */ }
-
-          await user.send({ embeds: [embed], components: [buttonRow] });
 
           const taskId = `${responsibilityName}_${timestamp}`;
           const notificationsCommand = client.commands.get('notifications');
           if (notificationsCommand?.trackTask) {
-            notificationsCommand.trackTask(taskId, responsibilityName, [target], client);
+            notificationsCommand.trackTask(taskId, responsibilityName, responsibles, client);
           }
 
-          await interaction.reply({ content: `**تم إرسال طلب خاص لمسؤول ${displayName}.**`, ephemeral: true });
-        } catch (error) {
-          let errorMessage = '**فشل في إرسال الرسالة الخاصة.**';
-          if (error?.code === 50007) errorMessage = '**لا يمكن إرسال رسالة خاصة للمستخدم. الرسائل الخاصة مغلقة.**';
-          else if (error?.code === 10013) errorMessage = '**المستخدم غير موجود أو غير متاح.**';
-          else if (error?.code === 50001) errorMessage = '**البوت لا يملك صلاحية لإرسال رسائل خاصة.**';
-          await interaction.reply({ content: errorMessage, ephemeral: true });
+          let replyMessage = `**✅ تم إرسال الطلب لـ ${sentCount} من المسؤولين.**`;
+          if (failedCount > 0) replyMessage += `\n**⚠️ فشل الإرسال لـ ${failedCount} مسؤول (رسائل خاصة مغلقة).**`;
+          if (onVacationCount > 0) replyMessage += `\n**🏖️ تم تخطي ${onVacationCount} مسؤول في إجازة.**`;
+          
+          await safeReply(interaction, replyMessage);
+          
+        } else {
+          try {
+            const user = await client.users.fetch(target);
+            let displayName = user.username;
+            
+            try {
+              const member = await interaction.guild.members.fetch(target);
+              displayName = member.displayName || member.nickname || user.username;
+            } catch { /* ignore */ }
+
+            await user.send({ embeds: [embed], components: [buttonRow] });
+
+            const taskId = `${responsibilityName}_${timestamp}`;
+            const notificationsCommand = client.commands.get('notifications');
+            if (notificationsCommand?.trackTask) {
+              notificationsCommand.trackTask(taskId, responsibilityName, [target], client);
+            }
+
+            await safeReply(interaction, `**✅ تم إرسال طلب خاص لمسؤول ${displayName}.**`);
+            
+          } catch (error) {
+            console.error('خطأ في إرسال DM للمسؤول:', error);
+            
+            let errorMessage = '**❌ فشل في إرسال الرسالة الخاصة.**';
+            if (error?.code === 50007) {
+              errorMessage = '**❌ لا يمكن إرسال رسالة خاصة للمستخدم. الرسائل الخاصة مغلقة.**';
+            } else if (error?.code === 10013) {
+              errorMessage = '**❌ المستخدم غير موجود أو غير متاح.**';
+            } else if (error?.code === 50001) {
+              errorMessage = '**❌ البوت لا يملك صلاحية لإرسال رسائل خاصة.**';
+            } else if (error?.code === 10062) {
+              errorMessage = '**❌ انتهت صلاحية التفاعل. حاول مرة أخرى.**';
+            }
+            
+            await safeReply(interaction, errorMessage);
+          }
         }
+
+        // Log
+        try {
+          logEvent(client, interaction.guild, {
+            type: 'TASK_LOGS',
+            title: 'Task Requested',
+            description: `Responsibility: **${responsibilityName}**`,
+            user: interaction.user,
+            fields: [
+              { name: 'Reason', value: reason, inline: false },
+              { name: 'Target', value: target === 'all' ? 'All' : `<@${target}>`, inline: true }
+            ]
+          });
+        } catch (logError) {
+          if (DEBUG) console.error('خطأ في تسجيل اللوق:', logError);
+        }
+
+        client.modalData?.delete(shortId);
+        
+      } catch (error) {
+        console.error('خطأ في معالجة مودال masoul:', error);
+        await safeReply(interaction, '**❌ حدث خطأ أثناء معالجة الطلب. حاول مرة أخرى.**');
+        client.modalData?.delete(shortId);
       }
-
-      logEvent(client, interaction.guild, {
-        type: 'TASK_LOGS',
-        title: 'Task Requested',
-        description: `Responsibility: **${responsibilityName}**`,
-        user: interaction.user,
-        fields: [
-          { name: 'Reason', value: reason, inline: false },
-          { name: 'Target', value: target === 'all' ? 'All' : `<@${target}>`, inline: true }
-        ]
-      });
-
-      client.modalData?.delete(shortId);
+      
       return;
     }
   } catch (error) {
