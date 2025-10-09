@@ -251,6 +251,11 @@ for (const file of commandFiles) {
     if ('name' in command && 'execute' in command) {
       client.commands.set(command.name, command);
       console.log(`Loaded command: ${command.name}`);
+      
+      // تسجيل معالج التفاعلات المستقل لأمر report
+      if (command.name === 'report' && command.registerInteractionHandler) {
+        command.registerInteractionHandler(client);
+      }
     }
   } catch (error) {
     console.error(`Error loading command ${file}:`, error);
@@ -1670,22 +1675,21 @@ async function checkExpiredReports() {
 // معالج التفاعلات المحسن للأداء
 client.on('interactionCreate', async (interaction) => {
   try {
+    // Log all interactions for debugging
+    if (interaction.customId) {
+      console.log(`🔔 تفاعل جديد: ${interaction.customId} من ${interaction.user.tag}`);
+    }
+
     // فحص سريع للتفاعلات غير الصحيحة
     if (!interaction?.isRepliable()) {
-      console.log('تفاعل غير قابل للرد');
+      console.log('❌ تفاعل غير قابل للرد');
       return;
     }
 
     // فحص عمر التفاعل بشكل أسرع (12 دقيقة بدلاً من 14)
     const interactionAge = Date.now() - interaction.createdTimestamp;
     if (interactionAge > 720000) { // 12 دقيقة
-      console.log('تفاعل منتهي الصلاحية');
-      return;
-    }
-
-    // فحص حالة التفاعل
-    if (interaction.replied || interaction.deferred) {
-      console.log('تفاعل تم الرد عليه مسبقاً');
+      console.log('❌ تفاعل منتهي الصلاحية');
       return;
     }
 
@@ -1695,6 +1699,17 @@ client.on('interactionCreate', async (interaction) => {
       return; // تجاهل بصمت لتوفير الأداء
     }
 
+    // --- Create a unified context object for all interaction handlers (MOVED TO TOP) ---
+    const context = {
+        client,
+        responsibilities,
+        points,
+        scheduleSave,
+        BOT_OWNERS,
+        reportsConfig,
+        logConfig: client.logConfig,
+        colorManager
+    };
 
     // Handle log system interactions
     if (interaction.customId && (interaction.customId.startsWith('log_') ||
@@ -2270,18 +2285,6 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // --- Create a unified context object for all interaction handlers ---
-    const context = {
-        client,
-        responsibilities,
-        points,
-        scheduleSave,
-        BOT_OWNERS,
-        reportsConfig,
-        logConfig: client.logConfig,
-        colorManager
-    };
-
     // Handle cooldown system interactions
     if (interaction.customId && interaction.customId.startsWith('cooldown_')) {
         const cooldownCommand = client.commands.get('cooldown');
@@ -2359,13 +2362,7 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    if (interaction.customId.startsWith('report_')) {
-        const reportCommand = client.commands.get('report');
-        if (reportCommand && reportCommand.handleInteraction) {
-            await reportCommand.handleInteraction(interaction, context);
-        }
-        return;
-    }
+    // معالج report تم نقله إلى ملف report.js كمعالج مستقل
 
     // Handle adminroles interactions (including refresh buttons)
     if (interaction.customId && interaction.customId.startsWith('adminroles_')) {
