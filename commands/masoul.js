@@ -47,32 +47,59 @@ function loadCurrentReportsConfig(guildId) {
   try {
     const reportsPath = path.join(__dirname, '..', 'data', 'reports.json');
     if (!fs.existsSync(reportsPath)) {
-      return { enabled: false, pointsOnReport: false, requiredFor: [] };
+      console.log(`⚠️ ملف reports.json غير موجود`);
+      return { enabled: false, pointsOnReport: false, requiredFor: [], approvalRequiredFor: [] };
     }
 
     const data = fs.readFileSync(reportsPath, 'utf8');
     if (!data.trim()) {
-      return { enabled: false, pointsOnReport: false, requiredFor: [] };
+      console.log(`⚠️ ملف reports.json فارغ`);
+      return { enabled: false, pointsOnReport: false, requiredFor: [], approvalRequiredFor: [] };
     }
 
     const allReportsConfig = JSON.parse(data);
-    
+    console.log(`📋 محتويات ملف reports.json:`, JSON.stringify(allReportsConfig, null, 2));
+    console.log(`🔍 السيرفرات المتاحة في الملف:`, Object.keys(allReportsConfig));
+    console.log(`🎯 السيرفر المطلوب: ${guildId}`);
+
     // إذا كان يوجد إعدادات خاصة بالسيرفر، نرجعها
     if (allReportsConfig[guildId]) {
-      return allReportsConfig[guildId];
+      console.log(`✅ تم العثور على إعدادات خاصة بالسيرفر ${guildId}:`, allReportsConfig[guildId]);
+      return {
+        enabled: allReportsConfig[guildId].enabled || false,
+        pointsOnReport: allReportsConfig[guildId].pointsOnReport || false,
+        requiredFor: allReportsConfig[guildId].requiredFor || [],
+        approvalRequiredFor: allReportsConfig[guildId].approvalRequiredFor || [],
+        templates: allReportsConfig[guildId].templates || {},
+        reportChannel: allReportsConfig[guildId].reportChannel || null,
+        approverType: allReportsConfig[guildId].approverType || 'owners',
+        approverTargets: allReportsConfig[guildId].approverTargets || []
+      };
     }
-    
+
     // إذا كان الملف يحتوي على إعدادات عامة (تشكيل قديم)
     if (allReportsConfig.enabled !== undefined) {
-      return allReportsConfig;
+      console.log(`⚠️ استخدام إعدادات عامة (تشكيل قديم):`, allReportsConfig);
+      return {
+        enabled: allReportsConfig.enabled || false,
+        pointsOnReport: allReportsConfig.pointsOnReport || false,
+        requiredFor: allReportsConfig.requiredFor || [],
+        approvalRequiredFor: allReportsConfig.approvalRequiredFor || [],
+        templates: allReportsConfig.templates || {},
+        reportChannel: allReportsConfig.reportChannel || null,
+        approverType: allReportsConfig.approverType || 'owners',
+        approverTargets: allReportsConfig.approverTargets || []
+      };
     }
-    
+
     // لا توجد إعدادات
-    return { enabled: false, pointsOnReport: false, requiredFor: [] };
-    
+    console.log(`⚠️ لا توجد إعدادات للسيرفر ${guildId} في الملف`);
+    console.log(`💡 تأكد من تفعيل نظام التقارير باستخدام أمر 'report'`);
+    return { enabled: false, pointsOnReport: false, requiredFor: [], approvalRequiredFor: [] };
+
   } catch (error) {
     console.error(`❌ خطأ في قراءة إعدادات التقارير للسيرفر ${guildId}:`, error);
-    return { enabled: false, pointsOnReport: false, requiredFor: [] };
+    return { enabled: false, pointsOnReport: false, requiredFor: [], approvalRequiredFor: [] };
   }
 }
 function writeJSONFile(filePath, data) {
@@ -276,65 +303,115 @@ async function handleClaimButton(interaction, context) {
     }
 
     // تحقق من نظام التقارير (قراءة فقط)
-    const guildId = interaction.guildId || interaction.guild?.id || client.guilds.cache.first()?.id;
-    const currentReportsConfig = loadCurrentReportsConfig(guildId);
+    // الحصول على السيرفر الصحيح من القناة الأصلية
+    let guildId = null;
 
-    const isReportRequired = currentReportsConfig && 
-                           currentReportsConfig.enabled && 
-                           Array.isArray(currentReportsConfig.requiredFor) && 
+    try {
+      if (originalChannelId) {
+        const channel = await client.channels.fetch(originalChannelId).catch(() => null);
+        if (channel && channel.guild) {
+          guildId = channel.guild.id;
+        }
+      }
+
+      // fallback: استخدام أول سيرفر إذا لم نستطع الحصول على السيرفر من القناة
+      if (!guildId) {
+        guildId = client.guilds.cache.first()?.id;
+      }
+    } catch (error) {
+      console.error('❌ خطأ في الحصول على معرف السيرفر:', error);
+      guildId = client.guilds.cache.first()?.id;
+    }
+
+    if (!guildId) {
+      console.error('❌ لم يتم العثور على معرف السيرفر');
+      return;
+    }
+
+    console.log(`🔍 فحص نظام التقارير للمسؤولية: ${responsibilityName} في السيرفر: ${guildId}`);
+
+    const currentReportsConfig = loadCurrentReportsConfig(guildId);
+    console.log(`📋 إعدادات التقارير المحملة للسيرفر ${guildId}:`, {
+      enabled: currentReportsConfig.enabled,
+      pointsOnReport: currentReportsConfig.pointsOnReport,
+      requiredFor: currentReportsConfig.requiredFor,
+      approvalRequiredFor: currentReportsConfig.approvalRequiredFor,
+      responsibilityName: responsibilityName,
+      fullConfig: currentReportsConfig
+    });
+
+    const isReportRequired = currentReportsConfig &&
+                           currentReportsConfig.enabled &&
+                           Array.isArray(currentReportsConfig.requiredFor) &&
                            currentReportsConfig.requiredFor.includes(responsibilityName);
 
+    console.log(`${isReportRequired ? '✅' : '❌'} هل التقرير مطلوب؟ ${isReportRequired}`);
+    console.log(`📊 تفاصيل الفحص:`);
+    console.log(`   - النظام مفعل؟ ${currentReportsConfig?.enabled || false}`);
+    console.log(`   - requiredFor موجود؟ ${Array.isArray(currentReportsConfig?.requiredFor)}`);
+    console.log(`   - requiredFor يحتوي المسؤولية؟ ${currentReportsConfig?.requiredFor?.includes(responsibilityName) || false}`);
+    console.log(`   - قائمة المسؤوليات المطلوبة: ${JSON.stringify(currentReportsConfig?.requiredFor || [])}`);
+
     if (isReportRequired) {
-        const reportId = `${interaction.user.id}_${Date.now()}`;
-        client.pendingReports.set(reportId, {
-            claimerId: interaction.user.id,
-            displayName: displayName,
-            responsibilityName,
-            requesterId,
-            timestamp,
-            reason: reason,
-            originalChannelId: originalChannelId,
-            originalMessageId: originalMessageId,
-            createdAt: Date.now()
-        });
-        scheduleSave();
+            const reportId = `${interaction.user.id}_${Date.now()}`;
 
-        // منح النقطة فوراً إذا كان النظام لا يتطلب تقرير للنقاط
-        if (!currentReportsConfig.pointsOnReport) {
-            if (!points[responsibilityName]) points[responsibilityName] = {};
-            if (!points[responsibilityName][interaction.user.id]) points[responsibilityName][interaction.user.id] = {};
-            if (typeof points[responsibilityName][interaction.user.id] === 'number') {
-                const oldPoints = points[responsibilityName][interaction.user.id];
-                points[responsibilityName][interaction.user.id] = { [Date.now() - (35 * 24 * 60 * 60 * 1000)]: oldPoints };
+            // إنشاء بيانات التقرير المعلق
+            const pendingReportData = {
+                claimerId: interaction.user.id,
+                displayName: displayName,
+                responsibilityName,
+                requesterId,
+                timestamp,
+                reason: reason,
+                originalChannelId: originalChannelId,
+                originalMessageId: originalMessageId,
+                createdAt: Date.now(),
+                guildId: guildId // إضافة معرف السيرفر
+            };
+
+            // حفظ التقرير المعلق
+            if (!client.pendingReports) {
+                client.pendingReports = new Map();
             }
-            if (!points[responsibilityName][interaction.user.id][timestamp]) {
-                points[responsibilityName][interaction.user.id][timestamp] = 0;
-            }
-            points[responsibilityName][interaction.user.id][timestamp] += 1;
+            client.pendingReports.set(reportId, pendingReportData);
             scheduleSave();
-        }
 
-        const reportEmbed = new EmbedBuilder()
-            .setTitle('تم استلام المهمة بنجاح')
-            .setDescription(`**هذه المهمة تتطلب تقريراً بعد الإنتهاء منها.**\n\n**السبب:** ${reason}\n\nيرجى الضغط على الزر أدناه لكتابة التقرير.`)
-            .setColor(colorManager.getColor(client))
-            .setFooter({text: 'By Ahmed.'});
+            // منح النقطة فوراً إذا كان النظام لا يتطلب تقرير للنقاط
+            if (!currentReportsConfig.pointsOnReport) {
+                if (!points[responsibilityName]) points[responsibilityName] = {};
+                if (!points[responsibilityName][interaction.user.id]) points[responsibilityName][interaction.user.id] = {};
+                if (typeof points[responsibilityName][interaction.user.id] === 'number') {
+                    const oldPoints = points[responsibilityName][interaction.user.id];
+                    points[responsibilityName][interaction.user.id] = { [Date.now() - (35 * 24 * 60 * 60 * 1000)]: oldPoints };
+                }
+                if (!points[responsibilityName][interaction.user.id][timestamp]) {
+                    points[responsibilityName][interaction.user.id][timestamp] = 0;
+                }
+                points[responsibilityName][interaction.user.id][timestamp] += 1;
+                scheduleSave();
+            }
 
-        const writeReportButton = new ButtonBuilder()
-            .setCustomId(`report_write_${reportId}`)
-            .setLabel('كتابة التقرير')
-            .setStyle(ButtonStyle.Success);
+            const reportEmbed = colorManager.createEmbed()
+                .setTitle('تم استلام المهمة بنجاح')
+                .setDescription(`**هذه المهمة تتطلب تقريراً بعد الإنتهاء منها.**\n\n**السبب:** ${reason}\n\nيرجى الضغط على الزر أدناه لكتابة التقرير.`)
+                .setFooter({text: 'By Ahmed.'});
 
-        const components = [writeReportButton];
-        if (originalMessageId && originalChannelId && originalMessageId !== 'unknown') {
-            const url = `https://discord.com/channels/${interaction.guildId}/${originalChannelId}/${originalMessageId}`;
-            components.push(new ButtonBuilder().setLabel('🔗 رابط الرسالة').setStyle(ButtonStyle.Link).setURL(url));
-        }
+            const writeReportButton = new ButtonBuilder()
+                .setCustomId(`report_write_${reportId}`)
+                .setLabel('كتابة التقرير')
+                .setStyle(ButtonStyle.Success);
 
-        const row = new ActionRowBuilder().addComponents(components);
+            const components = [writeReportButton];
 
-        await interaction.update({ embeds: [reportEmbed], components: [row] });
+            // إضافة رابط الرسالة الصحيح
+            if (originalMessageId && originalChannelId && originalMessageId !== 'unknown' && guildId) {
+                const url = `https://discord.com/channels/${guildId}/${originalChannelId}/${originalMessageId}`;
+                components.push(new ButtonBuilder().setLabel('🔗 رابط الرسالة').setStyle(ButtonStyle.Link).setURL(url));
+            }
 
+            const row = new ActionRowBuilder().addComponents(components);
+
+            await interaction.update({ embeds: [reportEmbed], components: [row] });
     } else {
         // --- ORIGINAL LOGIC for tasks NOT requiring a report ---
         // Award points immediately
@@ -504,7 +581,21 @@ async function execute(message, args, { responsibilities, points, scheduleSave, 
 
       if (interaction.customId === 'masoul_select_responsibility') {
         const selected = interaction.values[0];
-        const responsibility = responsibilities[selected];
+        
+        // إعادة تحميل المسؤوليات من الملف للتأكد من أحدث البيانات
+        let currentResponsibilities = {};
+        try {
+          const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
+          if (fs.existsSync(responsibilitiesPath)) {
+            const data = fs.readFileSync(responsibilitiesPath, 'utf8');
+            currentResponsibilities = JSON.parse(data);
+          }
+        } catch (error) {
+          console.error('خطأ في إعادة تحميل المسؤوليات:', error);
+          currentResponsibilities = responsibilities;
+        }
+        
+        const responsibility = currentResponsibilities[selected];
         if (!responsibility) {
           return interaction.reply({ content: '**المسؤولية غير موجودة!**', ephemeral: true });
         }
@@ -531,8 +622,8 @@ async function execute(message, args, { responsibilities, points, scheduleSave, 
 
               // فحص حالة الإجازة
               const isOnVacation = vacationManager.isUserOnVacation(responsibles[i]);
-              const buttonLabel = isOnVacation ? 
-                `${displayName.substring(0, 15)} 🏖️` : 
+              const buttonLabel = isOnVacation ?
+                `${displayName.substring(0, 15)} 🏖️` :
                 `${displayName.substring(0, 20)}`;
               const buttonStyle = isOnVacation ? ButtonStyle.Secondary : ButtonStyle.Primary;
 
@@ -607,7 +698,7 @@ async function execute(message, args, { responsibilities, points, scheduleSave, 
     }
   });
 
-  // كولكتور أزرار التواصل + الإلغاء
+  // كولجنونitor أزرار التواصل + الإلغاء
   const buttonCollector = message.channel.createMessageComponentCollector({
     filter: i => i.user.id === message.author.id && (i.customId.startsWith('masoul_contact_') || i.customId === 'cancel_masoul_menu'),
     time: 600000
@@ -800,19 +891,373 @@ async function showUserResponsibilities(message, targetUser, responsibilities, c
   }
 }
 
+// ===== معالج call_reason_modal (من bot.js) =====
+async function handleCallReasonModal(interaction, context) {
+  const { client, responsibilities } = context;
+
+  if (!interaction || !interaction.isModalSubmit()) {
+    console.log('تفاعل مودال غير صالح');
+    return;
+  }
+
+  const now = Date.now();
+  const interactionTime = interaction.createdTimestamp;
+  const timeDiff = now - interactionTime;
+
+  if (timeDiff > 13 * 60 * 1000) {
+    console.log('تم تجاهل مودال منتهي الصلاحية');
+    return;
+  }
+
+  if (interaction.replied || interaction.deferred) {
+    console.log('تم تجاهل تفاعل متكرر في نموذج الاستدعاء');
+    return;
+  }
+
+  const customIdParts = interaction.customId.replace('call_reason_modal_', '').split('_');
+  const responsibilityName = customIdParts[0];
+  const target = customIdParts[1];
+  const reason = interaction.fields.getTextInputValue('reason').trim() || 'لا يوجد سبب محدد';
+
+  if (!responsibilities[responsibilityName]) {
+    return interaction.reply({ content: '**المسؤولية غير موجودة!**', ephemeral: true });
+  }
+
+  const responsibility = responsibilities[responsibilityName];
+  const responsibles = responsibility.responsibles || [];
+
+  if (responsibles.length === 0) {
+    return interaction.reply({ content: '**لا يوجد مسؤولين معينين لهذه المسؤولية.**', ephemeral: true });
+  }
+
+  const originalChannelId = interaction.channelId;
+  const originalMessageId = interaction.message?.id;
+
+  const embed = colorManager.createEmbed()
+    .setTitle(`Call from owner.`)
+    .setDescription(`**المسؤولية:** ${responsibilityName}\n**السبب:** ${reason}\n**المستدعي:** <@${interaction.user.id}>`)
+    .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400677612304470086/images__5_-removebg-preview.png?ex=688d822e&is=688c30ae&hm=1ea7a63bb89b38bcd76c0f5668984d7fc919214096a3d3ee92f5d948497fcb51&')
+    .setFooter({ text: 'يُرجى الضغط على زر للوصول للاستدعاء  '});
+
+  const goButton = new ButtonBuilder()
+    .setCustomId(`go_to_call_${originalChannelId}_${originalMessageId}_${interaction.user.id}`)
+    .setLabel('🔗 الذهاب للرسالة')
+    .setStyle(ButtonStyle.Link)
+    .setURL(`https://discord.com/channels/${interaction.guildId || '@me'}/${originalChannelId}/${originalMessageId}`);
+
+  const buttonRow = new ActionRowBuilder().addComponents(goButton);
+
+  if (target === 'all') {
+    let sentCount = 0, failedCount = 0;
+    for (const userId of responsibles) {
+      try {
+        const user = await client.users.fetch(userId);
+        await user.send({ embeds: [embed], components: [buttonRow] });
+        sentCount++;
+      } catch (error) {
+        failedCount++;
+        console.error(`Failed to send DM to user ${userId}:`, error);
+      }
+    }
+
+    await interaction.reply({ content: `** تم إرسال الاستدعاء  لـ ${sentCount} من المسؤولين.**${failedCount > 0 ? `\n**⚠️ فشل الإرسال لـ ${failedCount} مسؤول (قد تكون الرسائل الخاصة مغلقة).**` : ''}`, ephemeral: true });
+  } else {
+    try {
+      const user = await client.users.fetch(target);
+      await user.send({ embeds: [embed], components: [buttonRow] });
+
+      await interaction.reply({ content: `** تم إرسال الاستدعاء  إلى <@${target}>.**`, ephemeral: true });
+    } catch (error) {
+      await interaction.reply({ content: '**فشل في إرسال الرسالة الخاصة.**', ephemeral: true });
+    }
+  }
+
+  logEvent(client, interaction.guild, {
+    type: 'ADMIN_CALLS',
+    title: 'Admin Call Requested',
+    description: `Admin called responsibility: **${responsibilityName}**`,
+    user: interaction.user,
+    fields: [
+      { name: 'Reason', value: reason, inline: false },
+      { name: 'Target', value: target === 'all' ? 'All' : `<@${target}>`, inline: true }
+    ]
+  });
+}
+
+// ===== معالج masoul_modal (من bot.js) =====
+async function handleMasoulModal(interaction, context) {
+  const { client, responsibilities, scheduleSave } = context;
+
+  try {
+    const shortId = interaction.customId.replace('masoul_modal_', '');
+    console.log(`[MASOUL] shortId: ${shortId}`);
+    const modalData = client.modalData?.get(shortId);
+    console.log(`[MASOUL] modalData:`, modalData);
+
+    if (!modalData) {
+      return await safeReply(interaction, '**❌ انتهت صلاحية هذا النموذج. حاول مرة أخرى.**');
+    }
+
+    const { responsibilityName, target, userId, timestamp, originalChannelId, originalMessageId } = modalData;
+
+    if (interaction.replied || interaction.deferred) return;
+
+    try {
+      const reason = interaction.fields.getTextInputValue('reason').trim() || 'لا يوجد سبب محدد';
+
+      // إعادة تحميل المسؤوليات من الملف للتأكد من أحدث البيانات
+      let currentResponsibilities = {};
+      try {
+        const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
+        if (fs.existsSync(responsibilitiesPath)) {
+          const data = fs.readFileSync(responsibilitiesPath, 'utf8');
+          currentResponsibilities = JSON.parse(data);
+        }
+      } catch (error) {
+        console.error('خطأ في إعادة تحميل المسؤوليات:', error);
+        currentResponsibilities = responsibilities;
+      }
+
+      if (!currentResponsibilities[responsibilityName]) {
+        return await safeReply(interaction, '**❌ المسؤولية غير موجودة!**');
+      }
+
+      const responsibility = currentResponsibilities[responsibilityName];
+      const responsibles = responsibility.responsibles || [];
+
+      if (responsibles.length === 0) {
+        return await safeReply(interaction, '**❌ لا يوجد مسؤولين معينين لهذه المسؤولية.**');
+      }
+
+      const embed = createCallEmbed(responsibilityName, reason, userId);
+
+      const claimCustomId = buildClaimCustomId(
+        responsibilityName,
+        timestamp,
+        userId,
+        originalChannelId,
+        originalMessageId || 'unknown'
+      );
+
+      const claimButton = new ButtonBuilder().setCustomId(claimCustomId).setLabel('Claim').setStyle(ButtonStyle.Success);
+
+      const guildId = interaction.guildId;
+      let goToMessageButton = null;
+      if (
+        originalMessageId && originalMessageId !== 'unknown' &&
+        guildId && originalChannelId && /^\d{17,19}$/.test(originalMessageId)
+      ) {
+        const messageUrl = `https://discord.com/channels/${guildId}/${originalChannelId}/${originalMessageId}`;
+        goToMessageButton = new ButtonBuilder().setLabel('🔗 Message Link').setStyle(ButtonStyle.Link).setURL(messageUrl);
+      }
+
+      const buttonRow = new ActionRowBuilder().addComponents(
+        claimButton,
+        ...(goToMessageButton ? [goToMessageButton] : [])
+      );
+
+      if (target === 'all') {
+        let sentCount = 0, failedCount = 0, onVacationCount = 0;
+        const vacationManager = require('../utils/vacationManager.js');
+
+        for (const uid of responsibles) {
+          try {
+            // فحص حالة الإجازة
+            if (vacationManager.isUserOnVacation(uid)) {
+              onVacationCount++;
+              continue;
+            }
+
+            const user = await client.users.fetch(uid);
+            await user.send({ embeds: [embed], components: [buttonRow] });
+            sentCount++;
+          } catch (err) {
+            failedCount++;
+            if (DEBUG) console.log(`فشل إرسال DM لـ ${uid}:`, err.message);
+          }
+        }
+
+        const taskId = `${responsibilityName}_${timestamp}`;
+        const notificationsCommand = client.commands.get('notifications');
+        if (notificationsCommand?.trackTask) {
+          notificationsCommand.trackTask(taskId, responsibilityName, responsibles, client);
+        }
+
+        let replyMessage = `**✅ تم إرسال الطلب لـ ${sentCount} من المسؤولين.**`;
+        if (failedCount > 0) replyMessage += `\n**⚠️ فشل الإرسال لـ ${failedCount} مسؤول (رسائل خاصة مغلقة).**`;
+        if (onVacationCount > 0) replyMessage += `\n**🏖️ تم تخطي ${onVacationCount} مسؤول في إجازة.**`;
+
+        await safeReply(interaction, replyMessage);
+
+      } else {
+        try {
+          const user = await client.users.fetch(target);
+          let displayName = user.username;
+
+          try {
+            const member = await interaction.guild.members.fetch(target);
+            displayName = member.displayName || member.nickname || user.username;
+          } catch { /* ignore */ }
+
+          await user.send({ embeds: [embed], components: [buttonRow] });
+
+          const taskId = `${responsibilityName}_${timestamp}`;
+          const notificationsCommand = client.commands.get('notifications');
+          if (notificationsCommand?.trackTask) {
+            notificationsCommand.trackTask(taskId, responsibilityName, [target], client);
+          }
+
+          await safeReply(interaction, `**✅ تم إرسال طلب خاص لمسؤول ${displayName}.**`);
+
+        } catch (error) {
+          console.error('خطأ في إرسال DM للمسؤول:', error);
+
+          let errorMessage = '**❌ فشل في إرسال الرسالة الخاصة.**';
+          if (error?.code === 50007) {
+            errorMessage = '**❌ لا يمكن إرسال رسالة خاصة للمستخدم. الرسائل الخاصة مغلقة.**';
+          } else if (error?.code === 10013) {
+            errorMessage = '**❌ المستخدم غير موجود أو غير متاح.**';
+          } else if (error?.code === 50001) {
+            errorMessage = '**❌ البوت لا يملك صلاحية لإرسال رسائل خاصة.**';
+          } else if (error?.code === 10062) {
+            errorMessage = '**❌ انتهت صلاحية التفاعل. حاول مرة أخرى.**';
+          }
+
+          await safeReply(interaction, errorMessage);
+        }
+      }
+
+      // Log
+      try {
+        logEvent(client, interaction.guild, {
+          type: 'TASK_LOGS',
+          title: 'Task Requested',
+          description: `Responsibility: **${responsibilityName}**`,
+          user: interaction.user,
+          fields: [
+            { name: 'Reason', value: reason, inline: false },
+            { name: 'Target', value: target === 'all' ? 'All' : `<@${target}>`, inline: true }
+          ]
+        });
+      } catch (logError) {
+        if (DEBUG) console.error('خطأ في تسجيل اللوق:', logError);
+      }
+
+      client.modalData?.delete(shortId);
+
+    } catch (error) {
+      console.error('خطأ في معالجة مودال masoul:', error);
+      await safeReply(interaction, '**❌ حدث خطأ أثناء معالجة الطلب. حاول مرة أخرى.**');
+      client.modalData?.delete(shortId);
+    }
+
+  } catch (error) {
+    console.error('خطأ في معالج masoul_modal:', error);
+    await safeReply(interaction, '**❌ حدث خطأ أثناء معالجة الطلب.**');
+  }
+}
+
+// ===== معالج go_to_call (من bot.js) =====
+async function handleGoToCall(interaction, context) {
+  const { client } = context;
+
+  try {
+    if (interaction.replied || interaction.deferred) {
+      console.log('تم تجاهل تفاعل متكرر في زر الذهاب');
+      return;
+    }
+
+    const parts = interaction.customId.replace('go_to_call_', '').split('_');
+    const channelId = parts[0];
+    const messageId = parts[1];
+    const adminId = parts[2];
+
+    const disabledButton = new ButtonBuilder()
+      .setCustomId(`go_to_call_${channelId}_${messageId}_${adminId}_disabled`)
+      .setLabel('تم الاستجابة')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true);
+
+    const disabledRow = new ActionRowBuilder().addComponents(disabledButton);
+
+    const channel = await client.channels.fetch(channelId);
+    if (!channel) {
+      return interaction.reply({ content: '**لم يتم العثور على القناة!**', ephemeral: true });
+    }
+
+    const jumpLink = `https://discord.com/channels/${interaction.guild?.id || '@me'}/${channelId}/${messageId}`;
+
+    const responseEmbed = colorManager.createEmbed()
+      .setDescription(`**✅ تم استلام الاستدعاء من <@${adminId}>**`)
+      .addFields([{ name: '\u200B', value: `[**اضغط هنا للذهاب للرسالة**](${jumpLink})`}])
+      .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400677612304470086/images__5_-removebg-preview.png?ex=688d822e&is=688c30ae&hm=1ea7a63bb89b38bcd76c0f5668984d7fc919214096a3d3ee92f5d948497fcb51&');
+
+    await interaction.update({
+      embeds: [interaction.message.embeds[0]],
+      components: [disabledRow]
+    });
+
+    await interaction.followUp({ embeds: [responseEmbed], ephemeral: true });
+
+    try {
+      const admin = await client.users.fetch(adminId);
+      const notificationEmbed = colorManager.createEmbed()
+        .setDescription(`**تم الرد على استدعائك من قبل <@${interaction.user.id}>**`)
+        .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400677612304470086/images__5_-removebg-preview.png?ex=688d822e&is=688c30ae&hm=1ea7a63bb89b38bcd76c0f5668984d7fc919214096a3d3ee92f5d948497fcb51&');
+
+      await admin.send({ embeds: [notificationEmbed] });
+
+      logEvent(client, interaction.guild, {
+        type: 'ADMIN_CALLS',
+        title: 'Admin Call Response',
+        description: `Response to admin call received`,
+        user: interaction.user,
+        fields: [
+          { name: 'Admin', value: `<@${adminId}>`, inline: true },
+          { name: 'Channel', value: `<#${channelId}>`, inline: true }
+        ]
+      });
+    } catch (error) {
+      console.log(`لا يمكن إرسال إشعار للمشرف ${adminId}: ${error.message}`);
+    }
+
+  } catch (error) {
+    console.error('خطأ في معالجة زر الذهاب:', error);
+    await safeReply(interaction, '**حدث خطأ أثناء معالجة الطلب.**');
+  }
+}
+
 // ===== نقطة دخول التفاعلات =====
 async function handleInteraction(interaction, context) {
   const { client, responsibilities, points, scheduleSave, reportsConfig } = context;
   try {
+    console.log(`[MASOUL] معالجة تفاعل: ${interaction.customId}`);
+
     if (interaction.isButton() && interaction.customId.startsWith('claim_task_')) {
+      console.log('[MASOUL] معالجة claim_task');
       await handleClaimButton(interaction, context);
       return;
     }
 
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('call_reason_modal_')) {
+      console.log('[MASOUL] معالجة call_reason_modal');
+      await handleCallReasonModal(interaction, context);
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('go_to_call_')) {
+      console.log('[MASOUL] معالجة go_to_call');
+      await handleGoToCall(interaction, context);
+      return;
+    }
+
     if (interaction.isModalSubmit() && interaction.customId.startsWith('masoul_modal_')) {
+      console.log('[MASOUL] معالجة masoul_modal');
       const shortId = interaction.customId.replace('masoul_modal_', '');
+      console.log(`[MASOUL] shortId: ${shortId}`);
       const modalData = client.modalData?.get(shortId);
-      
+      console.log(`[MASOUL] modalData:`, modalData);
+
       if (!modalData) {
         return await safeReply(interaction, '**❌ انتهت صلاحية هذا النموذج. حاول مرة أخرى.**');
       }
@@ -823,14 +1268,27 @@ async function handleInteraction(interaction, context) {
 
       try {
         const reason = interaction.fields.getTextInputValue('reason').trim() || 'لا يوجد سبب محدد';
-        
-        if (!responsibilities[responsibilityName]) {
+
+        // إعادة تحميل المسؤوليات من الملف للتأكد من أحدث البيانات
+        let currentResponsibilities = {};
+        try {
+          const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
+          if (fs.existsSync(responsibilitiesPath)) {
+            const data = fs.readFileSync(responsibilitiesPath, 'utf8');
+            currentResponsibilities = JSON.parse(data);
+          }
+        } catch (error) {
+          console.error('خطأ في إعادة تحميل المسؤوليات:', error);
+          currentResponsibilities = responsibilities;
+        }
+
+        if (!currentResponsibilities[responsibilityName]) {
           return await safeReply(interaction, '**❌ المسؤولية غير موجودة!**');
         }
 
-        const responsibility = responsibilities[responsibilityName];
+        const responsibility = currentResponsibilities[responsibilityName];
         const responsibles = responsibility.responsibles || [];
-        
+
         if (responsibles.length === 0) {
           return await safeReply(interaction, '**❌ لا يوجد مسؤولين معينين لهذه المسؤولية.**');
         }
@@ -865,7 +1323,7 @@ async function handleInteraction(interaction, context) {
         if (target === 'all') {
           let sentCount = 0, failedCount = 0, onVacationCount = 0;
           const vacationManager = require('../utils/vacationManager.js');
-          
+
           for (const uid of responsibles) {
             try {
               // فحص حالة الإجازة
@@ -873,7 +1331,7 @@ async function handleInteraction(interaction, context) {
                 onVacationCount++;
                 continue;
               }
-              
+
               const user = await client.users.fetch(uid);
               await user.send({ embeds: [embed], components: [buttonRow] });
               sentCount++;
@@ -892,14 +1350,14 @@ async function handleInteraction(interaction, context) {
           let replyMessage = `**✅ تم إرسال الطلب لـ ${sentCount} من المسؤولين.**`;
           if (failedCount > 0) replyMessage += `\n**⚠️ فشل الإرسال لـ ${failedCount} مسؤول (رسائل خاصة مغلقة).**`;
           if (onVacationCount > 0) replyMessage += `\n**🏖️ تم تخطي ${onVacationCount} مسؤول في إجازة.**`;
-          
+
           await safeReply(interaction, replyMessage);
-          
+
         } else {
           try {
             const user = await client.users.fetch(target);
             let displayName = user.username;
-            
+
             try {
               const member = await interaction.guild.members.fetch(target);
               displayName = member.displayName || member.nickname || user.username;
@@ -914,10 +1372,10 @@ async function handleInteraction(interaction, context) {
             }
 
             await safeReply(interaction, `**✅ تم إرسال طلب خاص لمسؤول ${displayName}.**`);
-            
+
           } catch (error) {
             console.error('خطأ في إرسال DM للمسؤول:', error);
-            
+
             let errorMessage = '**❌ فشل في إرسال الرسالة الخاصة.**';
             if (error?.code === 50007) {
               errorMessage = '**❌ لا يمكن إرسال رسالة خاصة للمستخدم. الرسائل الخاصة مغلقة.**';
@@ -928,7 +1386,7 @@ async function handleInteraction(interaction, context) {
             } else if (error?.code === 10062) {
               errorMessage = '**❌ انتهت صلاحية التفاعل. حاول مرة أخرى.**';
             }
-            
+
             await safeReply(interaction, errorMessage);
           }
         }
@@ -950,13 +1408,13 @@ async function handleInteraction(interaction, context) {
         }
 
         client.modalData?.delete(shortId);
-        
+
       } catch (error) {
         console.error('خطأ في معالجة مودال masoul:', error);
         await safeReply(interaction, '**❌ حدث خطأ أثناء معالجة الطلب. حاول مرة أخرى.**');
         client.modalData?.delete(shortId);
       }
-      
+
       return;
     }
   } catch (error) {

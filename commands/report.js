@@ -1,4 +1,4 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, ChannelType, ModalBuilder, TextInputBuilder, TextInputStyle, ChannelSelectMenuBuilder } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, ChannelType, ModalBuilder, TextInputBuilder, TextInputStyle, ChannelSelectMenuBuilder, RoleSelectMenuBuilder } = require('discord.js');
 const colorManager = require('../utils/colorManager.js');
 const fs = require('fs');
 const path = require('path');
@@ -26,7 +26,20 @@ function saveReportsConfig(guildId, guildConfig) {
     let allConfigs = {};
     try {
         if (fs.existsSync(reportsPath)) { 
-            allConfigs = JSON.parse(fs.readFileSync(reportsPath, 'utf8')); 
+            const fileContent = fs.readFileSync(reportsPath, 'utf8');
+            const parsed = JSON.parse(fileContent);
+
+            // حماية: التحقق من أن الملف بالصيغة الصحيحة (متعدد السيرفرات)
+            // إذا كان الملف يحتوي على مفاتيح من الصيغة القديمة، نتجاهله ونبدأ من جديد
+            if (parsed && typeof parsed === 'object') {
+                if (parsed.enabled !== undefined && parsed.reportChannel !== undefined) {
+                    // هذه صيغة قديمة! نتجاهلها ونبدأ من جديد
+                    console.warn('[WARN] Detected old reports.json format, resetting to guild-based format');
+                    allConfigs = {};
+                } else {
+                    allConfigs = parsed;
+                }
+            }
         }
     } catch (error) { 
         console.error('Error reading reports.json during save:', error); 
@@ -40,9 +53,9 @@ function saveReportsConfig(guildId, guildConfig) {
         if (!fs.existsSync(dataDir)) {
             fs.mkdirSync(dataDir, { recursive: true });
         }
-        
+
         fs.writeFileSync(reportsPath, JSON.stringify(allConfigs, null, 2));
-        console.log(`[DEBUG] Successfully saved config for guild ${guildId}`);
+        console.log(`[DEBUG] Successfully saved config for guild ${guildId} in correct format`);
         return true;
     } catch (error) {
         console.error(`[DEBUG] FAILED to save config for guild ${guildId}:`, error);
@@ -58,14 +71,14 @@ function createMainEmbed(client, guildId) {
     if (config.reportChannel) { 
         channelStatus = config.reportChannel === '0' ? 'خاص الأونرات' : `<#${config.reportChannel}>`; 
     }
-    
+
     let approverStatus = 'الأونرات فقط';
     if (config.approverType === 'roles' && config.approverTargets && config.approverTargets.length > 0) {
         approverStatus = config.approverTargets.map(id => `<@&${id}>`).join(', ');
     } else if (config.approverType === 'responsibility' && config.approverTargets && config.approverTargets.length > 0) {
         approverStatus = `أعضاء: ${config.approverTargets.join(', ')}`;
     }
-    
+
     return new EmbedBuilder()
         .setTitle('⚙️ إعدادات نظام التقارير')
         .setDescription('التحكم الكامل بإعدادات نظام التقارير والموافقة عليها.')
@@ -136,7 +149,7 @@ function createTemplateManagementEmbed(client, responsibilities, config) {
 
     const templateCount = Object.keys(config.templates || {}).length;
     const totalResps = Object.keys(responsibilities).length;
-    
+
     embed.addFields(
         { name: 'إجمالي المسؤوليات', value: totalResps.toString(), inline: true },
         { name: 'القوالب المحددة', value: templateCount.toString(), inline: true },
@@ -148,7 +161,7 @@ function createTemplateManagementEmbed(client, responsibilities, config) {
 
 async function execute(message, args, { client, BOT_OWNERS }) {
         if (!BOT_OWNERS.includes(message.author.id)) return message.react('❌');
-    
+
     try {
         await message.channel.send({ 
             embeds: [createMainEmbed(client, message.guild.id)], 
@@ -174,6 +187,9 @@ async function handleInteraction(interaction, context) {
             if (fs.existsSync(responsibilitiesPath)) {
                 const data = fs.readFileSync(responsibilitiesPath, 'utf8');
                 responsibilities = JSON.parse(data);
+                console.log(`[Report] تم تحميل ${Object.keys(responsibilities).length} مسؤولية:`, Object.keys(responsibilities));
+            } else {
+                console.log('[Report] ⚠️ ملف المسؤوليات غير موجود');
             }
         } catch (error) {
             console.error('❌ خطأ في قراءة المسؤوليات:', error);
@@ -183,13 +199,13 @@ async function handleInteraction(interaction, context) {
         const isSubmission = customId.startsWith('report_write_') || 
                            customId.startsWith('report_submit_') || 
                            customId.startsWith('report_edit_');
-        
+
         const isApprovalAction = customId.startsWith('report_approve_') || 
                                 customId.startsWith('report_reject_');
-        
+
         // تحميل BOT_OWNERS من السياق أو من الملف مباشرة
         const botOwnersToCheck = BOT_OWNERS || context.BOT_OWNERS || [];
-        
+
         // التحقق من صلاحيات الأزرار العادية (غير الموافقة/الرفض)
         // يجب أن يكون المستخدم هو نفسه الذي استخدم الأمر الأساسي
         if (!isSubmission && !isApprovalAction) {
@@ -208,7 +224,7 @@ async function handleInteraction(interaction, context) {
                 }
             }
         }
-        
+
         console.log(`✅ تم التحقق من صلاحيات المستخدم ${interaction.user.id}`);
 
         let config = loadReportsConfig(guildId);
@@ -219,13 +235,13 @@ async function handleInteraction(interaction, context) {
                 await interaction.deferReply({ ephemeral: true });
                 const respName = customId.replace('report_template_save_modal_', '');
                 const templateText = interaction.fields.getTextInputValue('template_text');
-                
+
                 if (templateText.trim()) { 
                     config.templates[respName] = templateText.trim(); 
                 } else { 
                     delete config.templates[respName]; 
                 }
-                
+
                 if (saveReportsConfig(guildId, config)) {
                     await interaction.editReply({ 
                         content: `✅ تم حفظ القالب للمسؤولية: ${respName}` 
@@ -241,11 +257,11 @@ async function handleInteraction(interaction, context) {
             if (customId === 'report_template_apply_all_modal') {
                 await interaction.deferReply({ ephemeral: true });
                 const templateText = interaction.fields.getTextInputValue('template_text_all');
-                
+
                 for (const respName in responsibilities) { 
                     config.templates[respName] = templateText.trim(); 
                 }
-                
+
                 if (saveReportsConfig(guildId, config)) {
                     await interaction.editReply({ 
                         content: `✅ تم تطبيق القالب بنجاح على جميع المسؤوليات.` 
@@ -263,21 +279,32 @@ async function handleInteraction(interaction, context) {
                 await interaction.deferReply({ ephemeral: true });
                 const reportId = customId.replace('report_submit_', '');
                 const reportData = client.pendingReports?.get(reportId);
-                
+
                 if (!reportData) {
                     return await interaction.editReply({ 
                         content: 'لم يتم العثور على هذا التقرير أو انتهت صلاحيته.' 
                     });
                 }
 
+                // التحقق من أن التقرير لم يتم إرساله من قبل
+                if (reportData.submitted) {
+                    return await interaction.editReply({ 
+                        content: '❌ تم إرسال هذا التقرير مسبقاً!' 
+                    });
+                }
+
                 const reportText = interaction.fields.getTextInputValue('report_text');
-                
-                // Update pending report with the text
+
+                // Update pending report with the text (but don't mark as submitted yet)
                 reportData.reportText = reportText;
                 reportData.submittedAt = Date.now();
                 client.pendingReports.set(reportId, reportData);
-                
-                // Create report embed
+
+                // الحصول على الإعدادات الصحيحة بناءً على معرف السيرفر
+                const reportGuildId = reportData.guildId || interaction.guildId;
+                const guildConfig = loadReportsConfig(reportGuildId);
+
+                // Create report embed with link to original message
                 const reportEmbed = new EmbedBuilder()
                     .setTitle('📋 تقرير مهمة جديد')
                     .setDescription(`**المسؤولية:** ${reportData.responsibilityName}\n**من قِبل:** <@${reportData.claimerId}> (${reportData.displayName})\n**السبب:** ${reportData.reason}`)
@@ -287,12 +314,20 @@ async function handleInteraction(interaction, context) {
                     .setColor(colorManager.getColor(client))
                     .setTimestamp()
                     .setFooter({ text: `Report ID: ${reportId}` });
-                
+
+                // إضافة رابط الرسالة الأصلية إذا كان متوفراً
+                if (reportData.originalMessageId && reportData.originalChannelId && reportData.originalMessageId !== 'unknown' && reportGuildId) {
+                    const messageUrl = `https://discord.com/channels/${reportGuildId}/${reportData.originalChannelId}/${reportData.originalMessageId}`;
+                    reportEmbed.addFields([
+                        { name: '🔗 الرسالة الأصلية', value: `[اضغط هنا](${messageUrl})`, inline: true }
+                    ]);
+                }
+
                 // Check if approval is required
-                const isApprovalRequired = config.approvalRequiredFor && 
-                                          Array.isArray(config.approvalRequiredFor) && 
-                                          config.approvalRequiredFor.includes(reportData.responsibilityName);
-                
+                const isApprovalRequired = guildConfig.approvalRequiredFor && 
+                                          Array.isArray(guildConfig.approvalRequiredFor) && 
+                                          guildConfig.approvalRequiredFor.includes(reportData.responsibilityName);
+
                 // Create approval buttons if needed
                 let components = [];
                 if (isApprovalRequired) {
@@ -301,19 +336,19 @@ async function handleInteraction(interaction, context) {
                         .setLabel('موافقة')
                         .setStyle(ButtonStyle.Success)
                         .setEmoji('✅');
-                    
+
                     const rejectButton = new ButtonBuilder()
                         .setCustomId(`report_reject_${reportId}`)
                         .setLabel('رفض')
                         .setStyle(ButtonStyle.Danger)
                         .setEmoji('❌');
-                    
+
                     components = [new ActionRowBuilder().addComponents(approveButton, rejectButton)];
                 }
-                
+
                 // Send report to channel or DMs
                 try {
-                    if (config.reportChannel === '0') {
+                    if (guildConfig.reportChannel === '0') {
                         // Send to bot owners via DM
                         for (const ownerId of BOT_OWNERS) {
                             try {
@@ -326,16 +361,26 @@ async function handleInteraction(interaction, context) {
                                 console.error(`Failed to send report to owner ${ownerId}:`, err);
                             }
                         }
+
+                        // Mark as submitted only after successful send
+                        reportData.submitted = true;
+                        client.pendingReports.set(reportId, reportData);
+
                         await interaction.editReply({ 
                             content: '✅ تم إرسال التقرير للأونرات بنجاح!' 
                         });
-                    } else if (config.reportChannel) {
+                    } else if (guildConfig.reportChannel) {
                         // Send to specific channel
-                        const reportChannel = await client.channels.fetch(config.reportChannel);
+                        const reportChannel = await client.channels.fetch(guildConfig.reportChannel);
                         await reportChannel.send({ 
                             embeds: [reportEmbed], 
                             components: components 
                         });
+
+                        // Mark as submitted only after successful send
+                        reportData.submitted = true;
+                        client.pendingReports.set(reportId, reportData);
+
                         await interaction.editReply({ 
                             content: '✅ تم إرسال التقرير بنجاح!' 
                         });
@@ -345,7 +390,7 @@ async function handleInteraction(interaction, context) {
                         });
                         return;
                     }
-                    
+
                     // If no approval required
                     if (!isApprovalRequired) {
                         // Award points if pointsOnReport is true
@@ -365,16 +410,17 @@ async function handleInteraction(interaction, context) {
                             points[responsibilityName][claimerId][timestamp] += 1;
                             scheduleSave();
                         }
-                        
+
                         // Always remove from pending reports when no approval is required
                         client.pendingReports.delete(reportId);
                         scheduleSave();
                     }
-                    
+
                 } catch (error) {
                     console.error('Error sending report:', error);
+                    // Don't mark as submitted if sending failed, so user can retry
                     await interaction.editReply({ 
-                        content: '❌ حدث خطأ في إرسال التقرير!' 
+                        content: '❌ حدث خطأ في إرسال التقرير! يرجى المحاولة مرة أخرى.' 
                     });
                 }
                 return;
@@ -385,7 +431,7 @@ async function handleInteraction(interaction, context) {
         if (customId.startsWith('report_write_')) {
             const reportId = customId.replace('report_write_', '');
             const reportData = client.pendingReports?.get(reportId);
-            
+
             if (!reportData) {
                 return await interaction.reply({ 
                     content: 'لم يتم العثور على هذا التقرير أو انتهت صلاحيته.', 
@@ -397,7 +443,11 @@ async function handleInteraction(interaction, context) {
                 .setCustomId(`report_submit_${reportId}`)
                 .setTitle('كتابة تقرير المهمة');
 
-            const template = config.templates[reportData.responsibilityName] || '';
+            // الحصول على الإعدادات الصحيحة بناءً على معرف السيرفر
+            const reportGuildId = reportData.guildId || interaction.guildId;
+            const guildConfig = loadReportsConfig(reportGuildId);
+
+            const template = guildConfig.templates?.[reportData.responsibilityName] || '';
             const reportInput = new TextInputBuilder()
                 .setCustomId('report_text')
                 .setLabel('الرجاء كتابة تقريرك هنا')
@@ -406,7 +456,7 @@ async function handleInteraction(interaction, context) {
                 .setRequired(true);
 
             modal.addComponents(new ActionRowBuilder().addComponents(reportInput));
-            
+
             try {
                 await interaction.showModal(modal);
             } catch (error) {
@@ -423,21 +473,21 @@ async function handleInteraction(interaction, context) {
         try {
             // تأخير التفاعل فقط للأزرار والقوائم التي لا تحتاج لفتح Modal
             const needsModal = customId === 'report_template_apply_all_btn' || customId === 'report_template_edit_select';
-            
+
             if ((interaction.isButton() || interaction.isStringSelectMenu() || interaction.isChannelSelectMenu()) && 
                 !interaction.replied && !interaction.deferred && !needsModal) {
                 await interaction.deferUpdate();
             }
         } catch (error) {
             console.error('❌ خطأ في تأجيل التفاعل:', error);
-            
+
             // تجاهل الأخطاء المعروفة
             const ignoredErrorCodes = [10008, 40060, 10062];
             if (error.code && ignoredErrorCodes.includes(error.code)) {
                 console.log(`تم تجاهل خطأ Discord معروف: ${error.code}`);
                 return;
             }
-            
+
             if (!interaction.replied && !interaction.deferred) {
                 return await interaction.reply({ 
                     content: '❌ حدث خطأ في معالجة هذا التفاعل', 
@@ -517,11 +567,22 @@ async function handleInteraction(interaction, context) {
                     break;
 
                 case 'report_select_req_report':
+                    // إعادة تحميل المسؤوليات للتأكد من أحدث البيانات
+                    let reqReportResps = {};
+                    try {
+                        if (fs.existsSync(responsibilitiesPath)) {
+                            const data = fs.readFileSync(responsibilitiesPath, 'utf8');
+                            reqReportResps = JSON.parse(data);
+                        }
+                    } catch (error) {
+                        console.error('[Report] ❌ خطأ في قراءة المسؤوليات:', error);
+                    }
+
                     responseContent = 'اختر المسؤوليات التي تتطلب تقرير:';
                     newComponents = [
                         new ActionRowBuilder().addComponents(
                             createResponsibilitySelectMenu(
-                                responsibilities, 
+                                reqReportResps, 
                                 'report_confirm_req_report', 
                                 'اختر المسؤوليات المطلوب تقرير لها'
                             )
@@ -536,11 +597,22 @@ async function handleInteraction(interaction, context) {
                     break;
 
                 case 'report_select_req_approval':
+                    // إعادة تحميل المسؤوليات للتأكد من أحدث البيانات
+                    let reqApprovalResps = {};
+                    try {
+                        if (fs.existsSync(responsibilitiesPath)) {
+                            const data = fs.readFileSync(responsibilitiesPath, 'utf8');
+                            reqApprovalResps = JSON.parse(data);
+                        }
+                    } catch (error) {
+                        console.error('[Report] ❌ خطأ في قراءة المسؤوليات:', error);
+                    }
+
                     responseContent = 'اختر المسؤوليات التي تتطلب موافقة على التقرير:';
                     newComponents = [
                         new ActionRowBuilder().addComponents(
                             createResponsibilitySelectMenu(
-                                responsibilities, 
+                                reqApprovalResps, 
                                 'report_confirm_req_approval', 
                                 'اختر المسؤوليات المطلوب موافقة تقريرها'
                             )
@@ -585,11 +657,22 @@ async function handleInteraction(interaction, context) {
                     break;
 
                 case 'report_template_select_resp':
+                    // إعادة تحميل المسؤوليات من الملف للتأكد من أحدث البيانات
+                    let latestResponsibilities = {};
+                    try {
+                        if (fs.existsSync(responsibilitiesPath)) {
+                            const data = fs.readFileSync(responsibilitiesPath, 'utf8');
+                            latestResponsibilities = JSON.parse(data);
+                        }
+                    } catch (error) {
+                        console.error('[Report] ❌ خطأ في قراءة المسؤوليات:', error);
+                    }
+
                     responseContent = 'اختر المسؤولية لتعديل قالبها:';
                     newComponents = [
                         new ActionRowBuilder().addComponents(
                             createResponsibilitySelectMenu(
-                                responsibilities, 
+                                latestResponsibilities, 
                                 'report_template_edit_select', 
                                 'اختر المسؤولية لتعديل قالبها'
                             )
@@ -616,7 +699,7 @@ async function handleInteraction(interaction, context) {
                         .setRequired(true);
 
                     applyAllModal.addComponents(new ActionRowBuilder().addComponents(allTemplateInput));
-                    
+
                     try {
                         await interaction.showModal(applyAllModal);
                     } catch (error) {
@@ -657,47 +740,49 @@ async function handleInteraction(interaction, context) {
                         )
                     ];
                     break;
-                
+
                 case 'report_set_approvers':
-                    responseContent = 'اختر نوع المعتمدين للموافقة على التقارير:';
-                    newComponents = [
-                        new ActionRowBuilder().addComponents(
-                            new StringSelectMenuBuilder()
-                                .setCustomId('report_select_approver_type')
-                                .setPlaceholder('اختر نوع المعتمدين')
-                                .addOptions([
-                                    {
-                                        label: 'الأونرات فقط',
-                                        description: 'فقط أصحاب البوت يمكنهم الموافقة',
-                                        value: 'owners'
-                                    },
-                                    {
-                                        label: 'رولات محددة',
-                                        description: 'أعضاء برولات معينة يمكنهم الموافقة',
-                                        value: 'roles'
-                                    },
-                                    {
-                                        label: 'مسؤوليات محددة',
-                                        description: 'أعضاء مسؤوليات معينة يمكنهم الموافقة',
-                                        value: 'responsibility'
-                                    }
-                                ])
-                        ),
-                        new ActionRowBuilder().addComponents(
-                            new ButtonBuilder()
-                                .setCustomId('report_advanced_settings')
-                                .setLabel('➡️ العودة')
-                                .setStyle(ButtonStyle.Secondary)
-                        )
-                    ];
-                    break;
+                    await interaction.editReply({
+                        content: 'اختر نوع المعتمدين للموافقة على التقارير:',
+                        components: [
+                            new ActionRowBuilder().addComponents(
+                                new StringSelectMenuBuilder()
+                                    .setCustomId('report_select_approver_type')
+                                    .setPlaceholder('اختر نوع المعتمدين')
+                                    .addOptions([
+                                        {
+                                            label: 'الأونرات فقط',
+                                            description: 'فقط أصحاب البوت يمكنهم الموافقة',
+                                            value: 'owners'
+                                        },
+                                        {
+                                            label: 'رولات محددة',
+                                            description: 'أعضاء برولات معينة يمكنهم الموافقة',
+                                            value: 'roles'
+                                        },
+                                        {
+                                            label: 'مسؤوليات محددة',
+                                            description: 'أعضاء مسؤوليات معينة يمكنهم الموافقة',
+                                            value: 'responsibility'
+                                        }
+                                    ])
+                            ),
+                            new ActionRowBuilder().addComponents(
+                                new ButtonBuilder()
+                                    .setCustomId('report_advanced_settings')
+                                    .setLabel('➡️ العودة')
+                                    .setStyle(ButtonStyle.Secondary)
+                            )
+                        ]
+                    });
+                    return;
 
                 case 'report_set_channel_button':
                     const channelMenu = new ChannelSelectMenuBuilder()
                         .setCustomId('report_channel_select')
                         .setPlaceholder('اختر قناة لإرسال التقارير إليها')
                         .addChannelTypes(ChannelType.GuildText);
-                    
+
                     responseContent = 'اختر القناة من القائمة:';
                     newComponents = [
                         new ActionRowBuilder().addComponents(channelMenu),
@@ -710,23 +795,37 @@ async function handleInteraction(interaction, context) {
                     ];
                     break;
             }
-            
+
             // Handle approve/reject buttons (special handling)
             if (customId.startsWith('report_approve_') || customId.startsWith('report_reject_')) {
                 const reportId = customId.replace('report_approve_', '').replace('report_reject_', '');
                 const reportData = client.pendingReports?.get(reportId);
                 const isApprove = customId.startsWith('report_approve_');
-                
+
                 if (!reportData) {
-                    return await interaction.followUp({ 
+                    return await interaction.editReply({ 
                         content: '❌ لم يتم العثور على هذا التقرير أو تمت معالجته مسبقاً.', 
-                        ephemeral: true 
+                        components: [] 
                     });
                 }
-                
+
+                // التحقق من أن التقرير لم تتم معالجته من قبل
+                if (reportData.processed) {
+                    return await interaction.editReply({ 
+                        content: '❌ تمت معالجة هذا التقرير مسبقاً.', 
+                        components: [] 
+                    });
+                }
+
+                // وضع علامة أن التقرير قيد المعالجة
+                reportData.processed = true;
+                reportData.processedBy = interaction.user.id;
+                reportData.processedAt = Date.now();
+                client.pendingReports.set(reportId, reportData);
+
                 // Check permissions based on approverType
                 let hasPermission = false;
-                
+
                 if (config.approverType === 'owners') {
                     hasPermission = BOT_OWNERS.includes(interaction.user.id);
                 } else if (config.approverType === 'roles' && config.approverTargets && config.approverTargets.length > 0) {
@@ -745,14 +844,20 @@ async function handleInteraction(interaction, context) {
                     // Default to owners if not configured
                     hasPermission = BOT_OWNERS.includes(interaction.user.id);
                 }
-                
+
                 if (!hasPermission) {
-                    return await interaction.followUp({ 
+                    // إلغاء علامة المعالجة في حالة عدم وجود صلاحية
+                    reportData.processed = false;
+                    delete reportData.processedBy;
+                    delete reportData.processedAt;
+                    client.pendingReports.set(reportId, reportData);
+
+                    return await interaction.editReply({ 
                         content: '❌ ليس لديك صلاحية للموافقة أو رفض التقارير!', 
-                        ephemeral: true 
+                        components: [] 
                     });
                 }
-                
+
                 // Update the original message
                 const originalEmbed = EmbedBuilder.from(interaction.message.embeds[0])
                     .setColor(isApprove ? '#00ff00' : '#ff0000')
@@ -763,9 +868,9 @@ async function handleInteraction(interaction, context) {
                             inline: false 
                         }
                     ]);
-                
-                await interaction.update({ embeds: [originalEmbed], components: [] });
-                
+
+                await interaction.editReply({ embeds: [originalEmbed], components: [] });
+
                 // Award points if approved and pointsOnReport is true
                 if (isApprove && config.pointsOnReport) {
                     const { claimerId, responsibilityName, timestamp } = reportData;
@@ -783,7 +888,7 @@ async function handleInteraction(interaction, context) {
                     points[responsibilityName][claimerId][timestamp] += 1;
                     scheduleSave();
                 }
-                
+
                 // Send notification to the user
                 try {
                     const user = await client.users.fetch(reportData.claimerId);
@@ -793,22 +898,22 @@ async function handleInteraction(interaction, context) {
                         .setColor(isApprove ? '#00ff00' : '#ff0000')
                         .setFooter({ text: `${isApprove ? 'تمت الموافقة' : 'تم الرفض'} بواسطة ${interaction.user.tag}` })
                         .setTimestamp();
-                    
+
                     if (isApprove && config.pointsOnReport) {
                         notificationEmbed.addFields([
                             { name: '🎁 النقاط', value: 'تم منحك نقطة للمهمة', inline: false }
                         ]);
                     }
-                    
+
                     await user.send({ embeds: [notificationEmbed] });
                 } catch (err) {
                     console.error('Failed to send notification to user:', err);
                 }
-                
+
                 // Remove from pending reports
                 client.pendingReports.delete(reportId);
                 scheduleSave();
-                
+
                 return;
             }
 
@@ -840,7 +945,7 @@ async function handleInteraction(interaction, context) {
                 }
             } catch (editError) {
                 console.error('خطأ في تحديث الرسالة:', editError);
-                
+
                 // محاولة إرسال رد جديد إذا فشل التحديث
                 if (!interaction.replied) {
                     await interaction.reply({
@@ -850,188 +955,198 @@ async function handleInteraction(interaction, context) {
                 }
             }
 
-        } else if (interaction.isStringSelectMenu() || interaction.isChannelSelectMenu()) {
-            let responseContent = '';
+        } else if (interaction.isStringSelectMenu() || interaction.isChannelSelectMenu() || interaction.isRoleSelectMenu()) {
             let shouldSave = false;
+            let responseContent = '';
 
-            switch (customId) {
-                case 'report_confirm_req_report':
-                    config.requiredFor = interaction.values;
-                    shouldSave = true;
-                    responseContent = '✅ تم تحديد المسؤوليات المطلوب تقرير لها.';
-                    break;
+            // Handle other select menus
+            if (interaction.isStringSelectMenu()) {
+                switch (customId) {
+                    case 'report_select_approver_type':
+                        const approverType = interaction.values[0];
+                        config.approverType = approverType;
 
-                case 'report_confirm_req_approval':
-                    config.approvalRequiredFor = interaction.values;
-                    shouldSave = true;
-                    responseContent = '✅ تم تحديد المسؤوليات المطلوب موافقة تقريرها.';
-                    break;
+                        if (approverType === 'owners') {
+                            config.approverTargets = [];
+                            config.approverType = 'owners'; // التأكد من حفظ النوع
+                            if (saveReportsConfig(guildId, config)) {
+                                // إعادة تحميل الإعدادات المحدثة
+                                const updatedConfig = loadReportsConfig(guildId);
+                                await interaction.editReply({
+                                    content: '✅ تم تعيين المعتمدين: الأونرات فقط',
+                                    embeds: [createMainEmbed(client, guildId)],
+                                    components: [createMainButtons(guildId)]
+                                });
+                            } else {
+                                await interaction.editReply({
+                                    content: '❌ فشل في حفظ الإعدادات',
+                                    embeds: [],
+                                    components: []
+                                });
+                            }
+                            return;
+                        } else if (approverType === 'roles') {
+                            await interaction.editReply({
+                                content: 'اختر الرولات المعتمدة للموافقة على التقارير:',
+                                embeds: [],
+                                components: [
+                                    new ActionRowBuilder().addComponents(
+                                        new RoleSelectMenuBuilder()
+                                            .setCustomId('report_select_approver_roles')
+                                            .setPlaceholder('اختر الرولات المعتمدة...')
+                                            .setMaxValues(10)
+                                    ),
+                                    new ActionRowBuilder().addComponents(
+                                        new ButtonBuilder()
+                                            .setCustomId('report_set_approvers')
+                                            .setLabel('➡️ العودة')
+                                            .setStyle(ButtonStyle.Secondary)
+                                    )
+                                ]
+                            });
+                            return;
+                        } else if (approverType === 'responsibility') {
+                            const respOptions = Object.keys(responsibilities).slice(0, 25).map(name => ({
+                                label: name,
+                                value: name,
+                                description: `السماح لمسؤولي ${name} بالموافقة`
+                            }));
 
-                case 'report_channel_select':
-                    config.reportChannel = interaction.values[0];
-                    shouldSave = true;
-                    responseContent = '✅ تم تحديد قناة التقارير.';
-                    break;
+                            if (respOptions.length === 0) {
+                                await interaction.editReply({
+                                    content: '❌ لا توجد مسؤوليات معرفة! يرجى إنشاء مسؤوليات أولاً.',
+                                    components: []
+                                });
+                                return;
+                            }
 
-                case 'report_select_approver_type':
-                    const approverType = interaction.values[0];
-                    config.approverType = approverType;
-                    
-                    if (approverType === 'owners') {
-                        config.approverTargets = [];
+                            await interaction.editReply({
+                                content: 'اختر المسؤوليات المعتمدة للموافقة على التقارير:',
+                                embeds: [],
+                                components: [
+                                    new ActionRowBuilder().addComponents(
+                                        new StringSelectMenuBuilder()
+                                            .setCustomId('report_select_approver_responsibilities')
+                                            .setPlaceholder('اختر المسؤوليات المعتمدة...')
+                                            .setMaxValues(Math.min(respOptions.length, 10))
+                                            .addOptions(respOptions)
+                                    ),
+                                    new ActionRowBuilder().addComponents(
+                                        new ButtonBuilder()
+                                            .setCustomId('report_set_approvers')
+                                            .setLabel('➡️ العودة')
+                                            .setStyle(ButtonStyle.Secondary)
+                                    )
+                                ]
+                            });
+                            return;
+                        }
+                        break;
+
+                    case 'report_select_approver_responsibilities':
+                        config.approverTargets = interaction.values;
+                        config.approverType = 'responsibility'; // التأكد من حفظ النوع
+                        if (saveReportsConfig(guildId, config)) {
+                            // إعادة تحميل الإعدادات المحدثة
+                            const updatedConfig = loadReportsConfig(guildId);
+                            await interaction.editReply({
+                                content: `✅ تم تعيين المعتمدين: ${interaction.values.join(', ')}`,
+                                embeds: [createMainEmbed(client, guildId)],
+                                components: [createMainButtons(guildId)]
+                            });
+                        } else {
+                            await interaction.editReply({
+                                content: '❌ فشل في حفظ الإعدادات',
+                                embeds: [],
+                                components: []
+                            });
+                        }
+                        return;
+
+                    case 'report_confirm_req_report':
+                        config.requiredFor = interaction.values;
                         shouldSave = true;
-                        responseContent = '✅ تم تحديد الأونرات كمعتمدين.';
-                    } else if (approverType === 'roles') {
-                        // Show role selection menu
-                        const guild = interaction.guild;
-                        const roles = guild.roles.cache
-                            .filter(r => r.name !== '@everyone')
-                            .sort((a, b) => b.position - a.position)
-                            .first(25);
-                        
-                        const roleOptions = roles.map(role => ({
-                            label: role.name,
-                            value: role.id,
-                            description: `موقع: ${role.position}`
-                        }));
-                        
-                        const roleSelectMenu = new StringSelectMenuBuilder()
-                            .setCustomId('report_select_approver_roles')
-                            .setPlaceholder('اختر الرولات المعتمدة')
-                            .setMinValues(1)
-                            .setMaxValues(roleOptions.length)
-                            .addOptions(roleOptions);
-                        
-                        await interaction.deferUpdate();
-                        await interaction.editReply({ 
-                            content: 'اختر الرولات التي يمكنها الموافقة على التقارير:', 
-                            components: [
-                                new ActionRowBuilder().addComponents(roleSelectMenu),
-                                new ActionRowBuilder().addComponents(
-                                    new ButtonBuilder()
-                                        .setCustomId('report_set_approvers')
-                                        .setLabel('➡️ العودة')
-                                        .setStyle(ButtonStyle.Secondary)
-                                )
-                            ] 
-                        });
-                        return;
-                    } else if (approverType === 'responsibility') {
-                        // Show responsibility selection menu
-                        const respMenu = createResponsibilitySelectMenu(
-                            responsibilities, 
-                            'report_select_approver_responsibilities', 
-                            'اختر المسؤوليات المعتمدة'
-                        );
-                        respMenu.setMinValues(1);
-                        respMenu.setMaxValues(Math.min(Object.keys(responsibilities).length, 25));
-                        
-                        await interaction.deferUpdate();
-                        await interaction.editReply({ 
-                            content: 'اختر المسؤوليات التي يمكن لأعضائها الموافقة على التقارير:', 
-                            components: [
-                                new ActionRowBuilder().addComponents(respMenu),
-                                new ActionRowBuilder().addComponents(
-                                    new ButtonBuilder()
-                                        .setCustomId('report_set_approvers')
-                                        .setLabel('➡️ العودة')
-                                        .setStyle(ButtonStyle.Secondary)
-                                )
-                            ] 
-                        });
-                        return;
-                    }
-                    break;
+                        responseContent = '✅ تم تحديث المسؤوليات المطلوب تقرير لها بنجاح.';
+                        break;
+
+                    case 'report_confirm_req_approval':
+                        config.approvalRequiredFor = interaction.values;
+                        shouldSave = true;
+                        responseContent = '✅ تم تحديث المسؤوليات المطلوب موافقة تقريرها بنجاح.';
+                        break;
+                }
+            }
+
+            // Handle role selection for approvers
+            if (interaction.isRoleSelectMenu() && customId === 'report_select_approver_roles') {
+                // Defer the update first
+                if (!interaction.deferred && !interaction.replied) {
+                    await interaction.deferUpdate();
+                }
                 
-                case 'report_select_approver_roles':
-                    config.approverTargets = interaction.values;
-                    shouldSave = true;
-                    responseContent = '✅ تم تحديد الرولات المعتمدة.';
-                    break;
-                
-                case 'report_select_approver_responsibilities':
-                    config.approverTargets = interaction.values;
-                    shouldSave = true;
-                    responseContent = '✅ تم تحديد المسؤوليات المعتمدة.';
-                    break;
-                
-                case 'report_template_edit_select':
-                    const selectedResp = interaction.values[0];
-                    if (selectedResp === 'none') {
-                        return await interaction.reply({ 
-                            content: '❌ لا توجد مسؤوليات متاحة.', 
-                            ephemeral: true 
-                        }).catch(() => {});
-                    }
+                config.approverTargets = interaction.values;
+                config.approverType = 'roles'; // التأكد من حفظ النوع
+                if (saveReportsConfig(guildId, config)) {
+                    const rolesMentions = interaction.values.map(id => `<@&${id}>`).join(', ');
+                    // إعادة تحميل الإعدادات المحدثة
+                    const updatedConfig = loadReportsConfig(guildId);
+                    await interaction.editReply({
+                        content: `✅ تم تعيين المعتمدين: ${rolesMentions}`,
+                        embeds: [createMainEmbed(client, guildId)],
+                        components: [createMainButtons(guildId)]
+                    });
+                } else {
+                    await interaction.editReply({
+                        content: '❌ فشل في حفظ الإعدادات',
+                        embeds: [],
+                        components: []
+                    });
+                }
+                return;
+            }
 
-                    // التحقق من وجود المسؤولية
-                    if (!responsibilities[selectedResp]) {
-                        return await interaction.reply({ 
-                            content: `❌ المسؤولية "${selectedResp}" غير موجودة. يرجى تحديث قائمة المسؤوليات.`, 
-                            ephemeral: true 
-                        }).catch(() => {});
-                    }
-
-                    const editModal = new ModalBuilder()
-                        .setCustomId(`report_template_save_modal_${selectedResp}`)
-                        .setTitle(`تعديل قالب: ${selectedResp}`);
-
-                    const currentTemplate = config.templates[selectedResp] || '';
-                    const templateInput = new TextInputBuilder()
-                        .setCustomId('template_text')
-                        .setLabel('قالب التقرير')
-                        .setStyle(TextInputStyle.Paragraph)
-                        .setValue(currentTemplate)
-                        .setPlaceholder('اكتب قالب التقرير هنا...')
-                        .setRequired(false);
-
-                    editModal.addComponents(new ActionRowBuilder().addComponents(templateInput));
-                    
-                    try {
-                        await interaction.showModal(editModal);
-                    } catch (error) {
-                        console.error('Error showing template edit modal:', error);
-                        await interaction.reply({ 
-                            content: '❌ حدث خطأ في عرض نموذج التعديل.', 
-                            ephemeral: true 
-                        }).catch(() => {});
-                    }
-                    return;
+            // Handle channel selection
+            if (interaction.isChannelSelectMenu() && customId === 'report_channel_select') {
+                const channelId = interaction.values[0];
+                config.reportChannel = channelId;
+                shouldSave = true;
+                responseContent = `✅ تم تحديد قناة التقارير: <#${channelId}>`;
             }
 
             // Handle saving and response
             if (shouldSave) {
                 if (saveReportsConfig(guildId, config)) {
-                    await interaction.followUp({ content: responseContent, ephemeral: true });
+                    if (responseContent) {
+                        await interaction.followUp({ content: responseContent, ephemeral: true });
+                    }
                 } else {
                     await interaction.followUp({ content: '❌ فشل في حفظ الإعدادات.', ephemeral: true });
                 }
             }
 
-            // Return to main menu
-            try {
+            // Return to main menu if needed
+            if (responseContent && !responseContent.startsWith('✅')) {
+                // If it's not a success message, show the main menu
                 await interaction.editReply({ 
-                    content: '', 
+                    content: responseContent, 
                     embeds: [createMainEmbed(client, guildId)], 
                     components: [createMainButtons(guildId)] 
                 });
-            } catch (editError) {
-                console.error('خطأ في العودة للقائمة الرئيسية:', editError);
-                
-                // محاولة إرسال رسالة جديدة
-                if (!interaction.replied) {
-                    await interaction.reply({
-                        embeds: [createMainEmbed(client, guildId)],
-                        components: [createMainButtons(guildId)],
-                        ephemeral: true
-                    }).catch(() => {});
-                }
+            } else if (responseContent) {
+                // If it's a success message, just show the confirmation
+                 await interaction.editReply({ 
+                    content: responseContent, 
+                    embeds: [], 
+                    components: [] 
+                });
             }
+
+
         }
 
     } catch (error) {
         console.error('Error in report interaction handler:', error);
-        
+
         try {
             if (interaction.deferred || interaction.replied) {
                 await interaction.followUp({ 
@@ -1053,25 +1168,25 @@ async function handleInteraction(interaction, context) {
 // تسجيل معالج التفاعلات المستقل
 function registerInteractionHandler(client) {
     console.log('🔧 تسجيل معالج تفاعلات التقارير...');
-    
+
     client.on('interactionCreate', async (interaction) => {
         // التحقق من أن التفاعل يخص نظام التقارير
         if (!interaction.customId || !interaction.customId.startsWith('report_')) {
             return;
         }
-        
+
         console.log(`[Report] معالجة تفاعل: ${interaction.customId} من ${interaction.user.tag}`);
-        
+
         try {
             // إعادة تحميل البيانات من الملفات
             const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
             const pointsPath = path.join(__dirname, '..', 'data', 'points.json');
             const botConfigPath = path.join(__dirname, '..', 'data', 'botConfig.json');
-            
+
             let responsibilities = {};
             let points = {};
             let BOT_OWNERS = [];
-            
+
             try {
                 if (fs.existsSync(responsibilitiesPath)) {
                     responsibilities = JSON.parse(fs.readFileSync(responsibilitiesPath, 'utf8'));
@@ -1086,7 +1201,7 @@ function registerInteractionHandler(client) {
             } catch (error) {
                 console.error('❌ خطأ في قراءة البيانات:', error);
             }
-            
+
             // دالة للحفظ
             const scheduleSave = () => {
                 try {
@@ -1102,7 +1217,7 @@ function registerInteractionHandler(client) {
                     console.error('❌ خطأ في حفظ البيانات:', error);
                 }
             };
-            
+
             // إنشاء كائن السياق
             const context = {
                 client,
@@ -1114,10 +1229,10 @@ function registerInteractionHandler(client) {
                 logConfig: client.logConfig,
                 colorManager
             };
-            
+
             // استدعاء المعالج
             await handleInteraction(interaction, context);
-            
+
         } catch (error) {
             console.error('خطأ في معالج تفاعلات التقارير:', error);
             if (!interaction.replied && !interaction.deferred) {
@@ -1128,7 +1243,7 @@ function registerInteractionHandler(client) {
             }
         }
     });
-    
+
     console.log('✅ تم تسجيل معالج تفاعلات التقارير بنجاح');
 }
 
