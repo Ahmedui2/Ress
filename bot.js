@@ -95,15 +95,6 @@ let botConfig = readJSONFile(DATA_FILES.botConfig, {
     pendingReports: {}
 });
 
-let reportsConfig = readJSONFile(DATA_FILES.reports, {
-  enabled: false,
-  pointsOnReport: false,
-  reportChannel: null,
-  requiredFor: [],
-  approvalRequiredFor: [],
-  templates: {}
-});
-
 // لا نحتاج لمتغيرات محلية لـ cooldowns و notifications
 // سيتم قراءتها مباشرة من الملفات عند الحاجة
 
@@ -251,7 +242,7 @@ for (const file of commandFiles) {
     if ('name' in command && 'execute' in command) {
       client.commands.set(command.name, command);
       console.log(`Loaded command: ${command.name}`);
-      
+
       // تسجيل معالج التفاعلات المستقل لأمر report
       if (command.name === 'report' && command.registerInteractionHandler) {
         command.registerInteractionHandler(client);
@@ -268,7 +259,7 @@ try {
   if (setroomCommand.registerHandlers) {
     setroomCommand.registerHandlers(client);
   }
-  
+
   // استعادة الجدولات المحفوظة عند بدء البوت
   if (setroomCommand.restoreSchedules) {
     setTimeout(() => {
@@ -337,7 +328,6 @@ function saveData(force = false) {
         writeJSONFile(DATA_FILES.responsibilities, responsibilities);
         writeJSONFile(DATA_FILES.logConfig, client.logConfig || logConfig);
         writeJSONFile(DATA_FILES.botConfig, botConfig);
-        writeJSONFile(DATA_FILES.reports, reportsConfig);
 
         isDataDirty = false;
         return true;
@@ -1084,12 +1074,12 @@ client.on('messageCreate', async message => {
       if (commandName === 'مسؤولياتي') {
         await showUserResponsibilities(message, message.author, responsibilities, client);
       } else {
-        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager, reportsConfig });
+        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
       }
     }
     // Commands for everyone (اجازتي)
     else if (commandName === 'اجازتي') {
-      await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager, reportsConfig });
+      await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
     }
     // Commands for admins and owners (مسؤول, اجازه)
     else if (commandName === 'مسؤول' || commandName === 'اجازه') {
@@ -1108,7 +1098,7 @@ client.on('messageCreate', async message => {
         if (commandName === 'مسؤول') {
           console.log(`✅ تم منح الصلاحية للمستخدم ${message.author.id}`);
         }
-        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager, reportsConfig });
+        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
       } else {
         if (commandName === 'مسؤول') {
           console.log(`❌ المستخدم ${message.author.id} لا يملك الصلاحيات المطلوبة لأمر مسؤول`);
@@ -1120,7 +1110,7 @@ client.on('messageCreate', async message => {
     // Commands for owners only (call, stats, setup, report, set-vacation)
     else if (commandName === 'call' || commandName === 'stats' || commandName === 'setup' || commandName === 'report' || commandName === 'set-vacation') {
       if (isOwner) {
-        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager, reportsConfig });
+        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
       } else {
         await message.react('❌');
         return;
@@ -1129,7 +1119,7 @@ client.on('messageCreate', async message => {
     // Commands for owners only (all other commands)
     else {
       if (isOwner) {
-        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager, reportsConfig });
+        await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
       } else {
         await message.react('❌');
         return;
@@ -1320,7 +1310,7 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 
                         const roleAddLog = auditLogs.entries.first();
                         let addedByUser = null;
-                        
+
                         if (roleAddLog && roleAddLog.target.id === userId && 
                             (Date.now() - roleAddLog.createdTimestamp) < 5000) {
                             addedByUser = roleAddLog.executor;
@@ -1338,7 +1328,7 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
                                 if (updatedMember.roles.cache.has(roleId)) {
                                     await updatedMember.roles.remove(role, 'فحص ثانوي - منع إضافة رول أعلى من المحفوظ');
                                     console.log(`🔒 تم إزالة الرول مرة أخرى في الفحص الثانوي (حظر ترقيات): ${role.name}`);
-                                    
+
                                     // إرسال تحذير إضافي في اللوق
                                     logEvent(client, newMember.guild, {
                                         type: 'SECURITY_ACTIONS',
@@ -1387,7 +1377,7 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
                         logEvent(client, newMember.guild, {
                             type: 'SECURITY_ACTIONS',
                             title: 'منع ترقية محظور',
-                            description: 'تم منع إضافة رول أعلى من الرول المحفوظ لعضو محظور',
+                            description: 'تم منع إضافة رول أعلى من المحفوظ لعضو محظور',
                             details: 'نظام الحماية منع محاولة تجاوز حظر الترقية',
                             user: newMember.user,
                             fields: [
@@ -1675,9 +1665,12 @@ async function checkExpiredReports() {
 // معالج التفاعلات المحسن للأداء
 client.on('interactionCreate', async (interaction) => {
   try {
+    // تعريف customId في البداية
+    const customId = interaction?.customId || '';
+
     // Log all interactions for debugging
-    if (interaction.customId) {
-      console.log(`🔔 تفاعل جديد: ${interaction.customId} من ${interaction.user.tag}`);
+    if (customId) {
+      console.log(`🔔 تفاعل جديد: ${customId} من ${interaction.user.tag}`);
     }
 
     // فحص سريع للتفاعلات غير الصحيحة
@@ -1699,6 +1692,11 @@ client.on('interactionCreate', async (interaction) => {
       return; // تجاهل بصمت لتوفير الأداء
     }
 
+    // تسجيل تفصيلي للمودال
+    if (interaction.customId && interaction.customId.startsWith('masoul_modal_')) {
+      console.log(`[DEBUG] تفاعل masoul_modal اكتُشف في بداية المعالج`);
+    }
+
     // --- Create a unified context object for all interaction handlers (MOVED TO TOP) ---
     const context = {
         client,
@@ -1706,7 +1704,7 @@ client.on('interactionCreate', async (interaction) => {
         points,
         scheduleSave,
         BOT_OWNERS,
-        reportsConfig,
+        reportsConfig: undefined, // Removed reportsConfig as it's not defined and not needed
         logConfig: client.logConfig,
         colorManager
     };
@@ -2090,18 +2088,29 @@ client.on('interactionCreate', async (interaction) => {
                 );
 
                 if (result.success) {
-                    const successEmbed = new EmbedBuilder()
-                        .setColor(colorManager.getColor() || '#00FF00')
-                        .setDescription(`✅ **تم إنهاء إجازة <@${userId}>**`);
+                    const removedRolesText = result.vacation.removedRoles && result.vacation.removedRoles.length > 0
+                        ? result.vacation.removedRoles.map(id => `<@&${id}>`).join(', ')
+                        : 'لا توجد أدوار إدارية تم سحبها';
 
-                    await interaction.update({ embeds: [successEmbed], components: [] });
+                    const updatedEmbed = new EmbedBuilder()
+                        .setColor(colorManager.getColor('approved') || '#00FF00')
+                        .setTitle('✅ تم قبول طلب الإجازة')
+                        .setDescription(`**تم إنهاء إجازة <@${userId}>**`)
+                        .addFields(
+                            { name: '📋 الأدوار التي تم سحبها فعلياً', value: removedRolesText, inline: false },
+                            { name: '📊 عدد الأدوار المسحوبة', value: `${result.vacation.removedRoles?.length || 0} دور`, inline: true },
+                            { name: '⏰ مدة الإجازة', value: `من <t:${Math.floor(new Date(result.vacation.startDate).getTime() / 1000)}:f> إلى <t:${Math.floor(new Date(result.vacation.endDate).getTime() / 1000)}:f>`, inline: false }
+                        )
+                        .setTimestamp();
+
+                    await interaction.update({ embeds: [updatedEmbed], components: [] });
 
                     // إرسال إشعار للمستخدم
                     try {
                         const user = await client.users.fetch(userId);
                         const notificationEmbed = new EmbedBuilder()
                             .setTitle('تم الموافقة على إنهاء الإجازة')
-                            .setColor(colorManager.getColor() || '#00FF00')
+                            .setColor(colorManager.getColor('approved') || '#00FF00')
                             .setDescription('تم الموافقة على طلبك لإنهاء الإجازة مبكراً')
                             .addFields(
                                 { name: 'موافق من قبل', value: `<@${interaction.user.id}>`, inline: true },
@@ -2377,183 +2386,19 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-
-    // Handle claim buttons - استخدام المعالج الجديد من masoul.js
-    if (interaction.isButton() && interaction.customId.startsWith('claim_task_')) {
+    // Handle masoul interactions - تمرير جميع التفاعلات المتعلقة بـ masoul إلى معالج مستقل
+    if (
+      (interaction.isButton() && interaction.customId.startsWith('claim_task_')) ||
+      (interaction.isModalSubmit() && interaction.customId.startsWith('call_reason_modal_')) ||
+      (interaction.isButton() && interaction.customId.startsWith('go_to_call_')) ||
+      (interaction.isModalSubmit() && interaction.customId.startsWith('masoul_modal_'))
+    ) {
+        console.log(`[MASOUL] تفاعل: ${interaction.customId}`);
         const masoulCommand = client.commands.get('مسؤول');
         if (masoulCommand && masoulCommand.handleInteraction) {
             await masoulCommand.handleInteraction(interaction, context);
         }
         return;
-    }
-
-    // Handle modal submissions for call مع معالجة محسنة
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('call_reason_modal_')) {
-      // التحقق الشامل من صلاحية التفاعل
-      if (!interaction || !interaction.isModalSubmit()) {
-        console.log('تفاعل مودال غير صالح');
-        return;
-      }
-
-      // التحقق من عمر التفاعل
-      const now = Date.now();
-      const interactionTime = interaction.createdTimestamp;
-      const timeDiff = now - interactionTime;
-
-      if (timeDiff > 13 * 60 * 1000) {
-        console.log('تم تجاهل مودال منتهي الصلاحية');
-        return;
-      }
-
-      // منع التفاعلات المتكررة
-      if (interaction.replied || interaction.deferred) {
-        console.log('تم تجاهل تفاعل متكرر في نموذج الاستدعاء');
-        return;
-      }
-
-      const customIdParts = interaction.customId.replace('call_reason_modal_', '').split('_');
-      const responsibilityName = customIdParts[0];
-      const target = customIdParts[1];
-      const reason = interaction.fields.getTextInputValue('reason').trim() || 'لا يوجد سبب محدد';
-
-      if (!responsibilities[responsibilityName]) {
-        return interaction.reply({ content: '**المسؤولية غير موجودة!**', ephemeral: true });
-      }
-
-      const responsibility = responsibilities[responsibilityName];
-      const responsibles = responsibility.responsibles || [];
-
-      if (responsibles.length === 0) {
-        return interaction.reply({ content: '**لا يوجد مسؤولين معينين لهذه المسؤولية.**', ephemeral: true });
-      }
-
-      // Get original message for navigation
-      const originalChannelId = interaction.channelId;
-      const originalMessageId = interaction.message?.id;
-
-      const embed = colorManager.createEmbed()
-        .setTitle(`Call from owner.`)
-        .setDescription(`**المسؤولية:** ${responsibilityName}\n**السبب:** ${reason}\n**المستدعي:** <@${interaction.user.id}>`)
-        .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400677612304470086/images__5_-removebg-preview.png?ex=688d822e&is=688c30ae&hm=1ea7a63bb89b38bcd76c0f5668984d7fc919214096a3d3ee92f5d948497fcb51&')
-        .setFooter({ text: 'يُرجى الضغط على زر للوصول للاستدعاء  '});
-
-      const goButton = new ButtonBuilder()
-        .setCustomId(`go_to_call_${originalChannelId}_${originalMessageId}_${interaction.user.id}`)
-        .setLabel('🔗 الذهاب للرسالة')
-        .setStyle(ButtonStyle.Link)
-        .setURL(`https://discord.com/channels/${interaction.guildId || '@me'}/${originalChannelId}/${originalMessageId}`);
-
-      const buttonRow = new ActionRowBuilder().addComponents(goButton);
-
-      if (target === 'all') {
-        let sentCount = 0;
-        for (const userId of responsibles) {
-          try {
-            const user = await client.users.fetch(userId);
-            await user.send({ embeds: [embed], components: [buttonRow] });
-            sentCount++;
-          } catch (error) {
-            console.error(`Failed to send DM to user ${userId}:`, error);
-          }
-        }
-
-        await interaction.reply({ content: `** تم إرسال الاستدعاء  لـ ${sentCount} من المسؤولين.**`, ephemeral: true });
-      } else {
-        try {
-          const user = await client.users.fetch(target);
-          await user.send({ embeds: [embed], components: [buttonRow] });
-
-          await interaction.reply({ content: `** تم إرسال الاستدعاء  إلى <@${target}>.**`, ephemeral: true });
-        } catch (error) {
-          await interaction.reply({ content: '**فشل في إرسال الرسالة الخاصة.**', ephemeral: true });
-        }
-      }
-
-      logEvent(client, interaction.guild, {
-          type: 'ADMIN_CALLS',
-          title: 'Admin Call Requested',
-          description: `Admin called responsibility: **${responsibilityName}**`,
-          user: interaction.user,
-          fields: [
-              { name: 'Reason', value: reason, inline: false },
-              { name: 'Target', value: target === 'all' ? 'All' : `<@${target}>`, inline: true }
-          ]
-      });
-      return;
-    }
-
-    // Handle go to call button
-    if (interaction.isButton() && interaction.customId.startsWith('go_to_call_')) {
-      try {
-        if (interaction.replied || interaction.deferred) {
-          console.log('تم تجاهل تفاعل متكرر في زر الذهاب');
-          return;
-        }
-
-        const parts = interaction.customId.replace('go_to_call_', '').split('_');
-        const channelId = parts[0];
-        const messageId = parts[1];
-        const adminId = parts[2];
-
-        // تعطيل الزر فوراً بعد الضغط عليه
-        const disabledButton = new ButtonBuilder()
-          .setCustomId(`go_to_call_${channelId}_${messageId}_${adminId}_disabled`)
-          .setLabel('تم الاستجابة')
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(true);
-
-        const disabledRow = new ActionRowBuilder().addComponents(disabledButton);
-
-        const channel = await client.channels.fetch(channelId);
-        if (!channel) {
-          return interaction.reply({ content: '**لم يتم العثور على القناة!**', ephemeral: true });
-        }
-
-        const jumpLink = `https://discord.com/channels/${interaction.guild?.id || '@me'}/${channelId}/${messageId}`;
-
-        const responseEmbed = colorManager.createEmbed()
-          .setDescription(`**✅ تم استلام الاستدعاء من <@${adminId}>**`)
-          .addFields([{ name: '\u200B', value: `[**اضغط هنا للذهاب للرسالة**](${jumpLink})`}])
-          .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400677612304470086/images__5_-removebg-preview.png?ex=688d822e&is=688c30ae&hm=1ea7a63bb89b38bcd76c0f5668984d7fc919214096a3d3ee92f5d948497fcb51&');
-
-        // تحديث الرسالة لتعطيل الزر
-        await interaction.update({
-          embeds: [interaction.message.embeds[0]],
-          components: [disabledRow]
-        });
-
-        // إرسال رد منفصل
-        await interaction.followUp({ embeds: [responseEmbed], ephemeral: true });
-
-        // Send notification to admin
-        try {
-          const admin = await client.users.fetch(adminId);
-          const notificationEmbed = colorManager.createEmbed()
-            .setDescription(`**تم الرد على استدعائك من قبل <@${interaction.user.id}>**`)
-            .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400677612304470086/images__5_-removebg-preview.png?ex=688d822e&is=688c30ae&hm=1ea7a63bb89b38bcd76c0f5668984d7fc919214096a3d3ee92f5d948497fcb51&');
-
-          await admin.send({ embeds: [notificationEmbed] });
-
-          // Log the response to admin call
-          logEvent(client, interaction.guild, {
-              type: 'ADMIN_CALLS',
-              title: 'Admin Call Response',
-              description: `Response to admin call received`,
-              user: interaction.user,
-              fields: [
-                  { name: 'Admin', value: `<@${adminId}>`, inline: true },
-                  { name: 'Channel', value: `<#${channelId}>`, inline: true }
-              ]
-          });
-        } catch (error) {
-          console.log(`لا يمكن إرسال إشعار للمشرف ${adminId}: ${error.message}`);
-        }
-
-      } catch (error) {
-        console.error('خطأ في معالجة زر الذهاب:', error);
-        await safeReply(interaction, '**حدث خطأ أثناء معالجة الطلب.**');
-      }
-      return;
     }
 
     // Handle modal submissions for setup
@@ -3238,7 +3083,7 @@ client.on('interactionCreate', async (interaction) => {
 
             const responsibilityName = parts[2];
             const userId = parts[3]; // Store the target user ID
-            // التحقق من الكولداون
+            // Check cooldown
             const { checkCooldown } = require('./commands/cooldown.js');
             const cooldownTime = checkCooldown(buttonInteraction.user.id, responsibilityName);
             if (cooldownTime > 0) {
@@ -3503,6 +3348,13 @@ client.on('interactionCreate', async (interaction) => {
     }
 
   } catch (error) {
+    // تسجيل أي خطأ للتشخيص
+    console.error(`[CATCH] خطأ في معالج التفاعلات: ${error.message}`);
+    const customId = interaction?.customId || 'unknown';
+    if (interaction && interaction.customId) {
+      console.error(`[CATCH] customId: ${customId}`);
+    }
+
     // قائمة الأخطاء المتجاهلة الموسعة
     const ignoredErrorCodes = [
       10008, // Unknown Message
@@ -3536,14 +3388,11 @@ client.on('interactionCreate', async (interaction) => {
     if (error.message && (
       error.message.includes('Unknown interaction') ||
       error.message.includes('Already replied') ||
-      error.message.includes('Unknown user') ||
-      error.message.includes('already been acknowledged') ||
-      error.message.includes('Interaction has already been acknowledged') ||
-      error.message.includes('Unknown Message') ||
+      error.message.includes('Reply timeout') ||
       error.message.includes('Invalid Form Body') ||
       error.message.includes('Cannot read properties of undefined') ||
-      error.message.includes('Missing Access') ||
-      error.message.includes('Missing Permissions')
+      error.message.includes('Unknown Message') ||
+      error.message.includes('Unknown channel')
     )) {
       console.log(`تم تجاهل خطأ معروف: ${error.message.substring(0, 50)}...`);
       return;
@@ -3617,7 +3466,7 @@ async function showUserResponsibilities(message, targetUser, responsibilities, c
 async function handleDeleteSingleRecord(interaction, roleId, recordIndex) {
     try {
         const promoteLogsPath = path.join(__dirname, 'data', 'promoteLogs.json');
-        
+
         // Check permissions
         if (!BOT_OWNERS.includes(interaction.user.id)) {
             await interaction.reply({
@@ -3629,11 +3478,11 @@ async function handleDeleteSingleRecord(interaction, roleId, recordIndex) {
 
         // Read current logs
         const logs = readJSONFile(promoteLogsPath, []);
-        
+
         // Filter logs for this role
         const roleRecords = logs.filter(log => {
             if (!log.data) return false;
-            
+
             if (log.type === 'BULK_PROMOTION') {
                 return log.data.targetRoleId === roleId || log.data.sourceRoleId === roleId;
             } else if (log.type === 'PROMOTION_APPLIED' || log.type === 'PROMOTION_ENDED') {
@@ -3641,7 +3490,7 @@ async function handleDeleteSingleRecord(interaction, roleId, recordIndex) {
             } else if (log.type === 'MULTI_PROMOTION_APPLIED') {
                 return log.data.roleIds && log.data.roleIds.includes(roleId);
             }
-            
+
             return log.data.roleId === roleId;
         });
 
@@ -3654,7 +3503,7 @@ async function handleDeleteSingleRecord(interaction, roleId, recordIndex) {
         }
 
         const recordToDelete = roleRecords[recordIndex];
-        
+
         // Find and remove the record from all logs
         const indexInAllLogs = logs.findIndex(log => 
             log.timestamp === recordToDelete.timestamp && 
@@ -3671,7 +3520,7 @@ async function handleDeleteSingleRecord(interaction, roleId, recordIndex) {
 
         // Remove the record
         logs.splice(indexInAllLogs, 1);
-        
+
         // Save updated logs
         writeJSONFile(promoteLogsPath, logs);
 
@@ -3702,7 +3551,7 @@ async function handleDeleteSingleRecord(interaction, roleId, recordIndex) {
 async function handleDeleteAllRecords(interaction, roleId) {
     try {
         const promoteLogsPath = path.join(__dirname, 'data', 'promoteLogs.json');
-        
+
         // Check permissions
         if (!BOT_OWNERS.includes(interaction.user.id)) {
             await interaction.reply({
@@ -3715,11 +3564,11 @@ async function handleDeleteAllRecords(interaction, roleId) {
         // Read current logs
         const logs = readJSONFile(promoteLogsPath, []);
         const originalCount = logs.length;
-        
+
         // Filter out logs for this role
         const filteredLogs = logs.filter(log => {
             if (!log.data) return true;
-            
+
             if (log.type === 'BULK_PROMOTION') {
                 return !(log.data.targetRoleId === roleId || log.data.sourceRoleId === roleId);
             } else if (log.type === 'PROMOTION_APPLIED' || log.type === 'PROMOTION_ENDED') {
@@ -3727,12 +3576,12 @@ async function handleDeleteAllRecords(interaction, roleId) {
             } else if (log.type === 'MULTI_PROMOTION_APPLIED') {
                 return !(log.data.roleIds && log.data.roleIds.includes(roleId));
             }
-            
+
             return log.data.roleId !== roleId;
         });
 
         const deletedCount = originalCount - filteredLogs.length;
-        
+
         if (deletedCount === 0) {
             await interaction.update({
                 content: '⚠️ **لا توجد سجلات لحذفها لهذا الرول!**',
@@ -3783,7 +3632,7 @@ async function handleBulkPromotionStats(interaction, client) {
     // استخراج معرف البيانات والصفحة الحالية
     let currentPage = 0;
     let dataKey = interaction.customId;
-    
+
     if (interaction.customId.includes('stats_nav_')) {
         const parts = interaction.customId.split('_');
         dataKey = parts.slice(3).join('_'); // كل شيء بعد stats_nav_
@@ -3793,7 +3642,7 @@ async function handleBulkPromotionStats(interaction, client) {
     // البحث عن البيانات في جميع المفاتيح المحفوظة
     let membersData = null;
     let actualKey = null;
-    
+
     for (const [key, data] of client.bulkPromotionMembers.entries()) {
         if (key === dataKey || key.includes(dataKey.split('_').slice(-1)[0])) {
             membersData = data;
@@ -3824,18 +3673,18 @@ async function handleBulkPromotionStats(interaction, client) {
 
         // جمع إحصائيات جميع الأعضاء المترقين
         const membersWithStats = [];
-        
+
         for (const member of membersData.successfulMembers) {
             const memberObj = typeof member === 'object' ? member : { id: member, displayName: null };
-            
+
             try {
                 // الحصول على كائن العضو من السيرفر
                 const guildMember = await interaction.guild.members.fetch(memberObj.id).catch(() => null);
-                
+
                 if (guildMember) {
                     // جمع الإحصائيات للعضو
                     const stats = await getRealUserStats(memberObj.id);
-                    
+
                     membersWithStats.push({
                         id: memberObj.id,
                         displayName: guildMember.displayName || guildMember.user.username,
@@ -3863,7 +3712,7 @@ async function handleBulkPromotionStats(interaction, client) {
         // محاولة الحصول على أسماء الرولات
         let sourceRoleName = 'الرول المصدر';
         let targetRoleName = 'الرول المستهدف';
-        
+
         try {
             if (membersData.sourceRoleId) {
                 const sourceRole = await interaction.guild.roles.fetch(membersData.sourceRoleId);
@@ -3893,7 +3742,7 @@ async function handleBulkPromotionStats(interaction, client) {
 
             // تنسيق الوقت الصوتي
             const voiceTimeFormatted = formatDuration(stats.voiceTime || 0);
-            
+
             const statsValue = `الوقت الصوتي: ${voiceTimeFormatted}\nالانضمامات: ${stats.joinedChannels || 0}\nالرسائل: ${stats.messages || 0}\nالتفاعلات: ${stats.reactionsGiven || 0}`;
 
             statsEmbed.addFields([{
@@ -3907,14 +3756,14 @@ async function handleBulkPromotionStats(interaction, client) {
         const components = [];
         if (totalPages > 1) {
             const navigationRow = new ActionRowBuilder();
-            
+
             // زر السابق
             const prevButton = new ButtonBuilder()
                 .setCustomId(`stats_nav_${Math.max(0, currentPage - 1)}_${actualKey}`)
                 .setLabel('السابق')
                 .setStyle(ButtonStyle.Secondary)
                 .setDisabled(currentPage === 0);
-                
+
             // زر التالي
             const nextButton = new ButtonBuilder()
                 .setCustomId(`stats_nav_${Math.min(totalPages - 1, currentPage + 1)}_${actualKey}`)
