@@ -22,6 +22,8 @@ const activeRooms = new Map();
 const activeRoomsPath = path.join(__dirname, '..', 'data', 'activeRooms.json');
 // تخزين جدولات حذف الرومات
 const roomDeletionJobs = new Map();
+// تخزين جدولات الفحص الدورية للرسائل
+const messageVerificationJobs = new Map();
 
 // حفظ الجدولات
 function saveSchedules() {
@@ -83,22 +85,25 @@ async function deleteRoom(channelId, client) {
         if (!channel) {
             console.log(`⚠️ الروم ${channelId} غير موجود (ربما تم حذفه مسبقاً)`);
             activeRooms.delete(channelId);
+            roomEmbedMessages.delete(channelId);
+            cancelVerificationJobs(channelId);
             saveActiveRooms();
             return;
         }
-        await channel.delete('انتهت مدة الروم (24 ساعة)');
+        await channel.delete('انتهت مدة الروم (12 ساعة)');
         console.log(`🗑️ تم حذف الروم: ${channel.name}`);
         
         activeRooms.delete(channelId);
         roomEmbedMessages.delete(channelId);
+        cancelVerificationJobs(channelId);
         saveActiveRooms();
     } catch (error) {
         console.error(`❌ خطأ في حذف الروم ${channelId}:`, error);
     }
 }
-// جدولة حذف روم بعد 24 ساعة
+// جدولة حذف روم بعد 12 ساعة
 function scheduleRoomDeletion(channelId, client) {
-    const deletionTime = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 ساعة
+    const deletionTime = new Date(Date.now() + 12 * 60 * 60 * 1000); // 12 ساعة
     
     const job = schedule.scheduleJob(deletionTime, async () => {
         console.log(`⏰ حان موعد حذف الروم: ${channelId}`);
@@ -107,7 +112,162 @@ function scheduleRoomDeletion(channelId, client) {
     });
     
     roomDeletionJobs.set(channelId, job);
-    console.log(`✅ تم جدولة حذف الروم ${channelId} بعد 24 ساعة`);
+    console.log(`✅ تم جدولة حذف الروم ${channelId} بعد 12 ساعة`);
+}
+
+// إلغاء جميع جدولات الفحص لروم معين
+function cancelVerificationJobs(channelId) {
+    const jobs = messageVerificationJobs.get(channelId);
+    if (jobs && Array.isArray(jobs)) {
+        jobs.forEach(job => {
+            if (job && job.cancel) {
+                job.cancel();
+            }
+        });
+        messageVerificationJobs.delete(channelId);
+        console.log(`🗑️ تم إلغاء جدولات الفحص للروم ${channelId}`);
+    }
+}
+
+// إعادة إرسال setup embed إذا لم يكن موجوداً
+async function resendSetupEmbed(guildId, client) {
+    try {
+        const config = loadRoomConfig();
+        const guildConfig = config[guildId];
+        
+        if (!guildConfig || !guildConfig.embedChannelId || !guildConfig.imageUrl) {
+            console.error(`❌ لا توجد بيانات setup للسيرفر ${guildId}`);
+            return false;
+        }
+
+        const setupData = setupEmbedMessages.get(guildId);
+        const embedChannel = await client.channels.fetch(guildConfig.embedChannelId).catch(() => null);
+        
+        if (!embedChannel) {
+            console.error(`❌ قناة الإيمبد ${guildConfig.embedChannelId} غير موجودة`);
+            return false;
+        }
+
+        // محاولة جلب الرسالة الأصلية
+        if (setupData && setupData.messageId) {
+            const existingMessage = await embedChannel.messages.fetch(setupData.messageId).catch(() => null);
+            if (existingMessage) {
+                console.log(`✅ رسالة setup embed موجودة بالفعل في ${embedChannel.name}`);
+                return true;
+            }
+        }
+
+        // إعادة الإرسال
+        console.log(`🔄 إعادة إرسال setup embed في ${embedChannel.name}`);
+        
+        const finalEmbed = colorManager.createEmbed()
+            .setTitle('**Rooms**')
+            .setDescription('**اختر نوع الروم التي تريد طلبها :**')
+            .setImage(guildConfig.imageUrl)
+            .setFooter({ text: 'Rooms system' });
+
+        const menu = new ActionRowBuilder().addComponents(
+            new StringSelectMenuBuilder()
+                .setCustomId('room_type_menu')
+                .setPlaceholder('اختر نوع الروم')
+                .addOptions([
+                    {
+                        label: 'روم تعزيه',
+                        description: 'طلب روم عزاء',
+                        value: 'condolence',
+                    },
+                    {
+                        label: 'روم ميلاد',
+                        description: 'طلب روم hbd',
+                        value: 'birthday',
+                    }
+                ])
+        );
+
+        const newMessage = await embedChannel.send({ embeds: [finalEmbed], components: [menu] });
+
+        // تحديث معلومات الرسالة
+        setupEmbedMessages.set(guildId, {
+            messageId: newMessage.id,
+            channelId: embedChannel.id,
+            imageUrl: guildConfig.imageUrl
+        });
+        
+        saveSetupEmbedMessages(setupEmbedMessages);
+
+        console.log(`✅ تم إعادة إرسال setup embed بنجاح في ${embedChannel.name}`);
+        return true;
+    } catch (error) {
+        console.error(`❌ خطأ في إعادة إرسال setup embed:`, error.message);
+        return false;
+    }
+}
+
+// فحص setup embed
+async function verifySetupEmbed(guildId, messageId, channelId, client, attempt = 1) {
+    try {
+        const channel = await client.channels.fetch(channelId).catch(() => null);
+        if (!channel) {
+            console.error(`❌ [فحص setup ${attempt}] القناة ${channelId} غير موجودة`);
+            return false;
+        }
+
+        const message = await channel.messages.fetch(messageId).catch(() => null);
+        if (!message) {
+            console.error(`❌ [فحص setup ${attempt}] رسالة setup ${messageId} غير موجودة`);
+            return false;
+        }
+
+        console.log(`✅ [فحص setup ${attempt}] تم التحقق من وجود setup embed في ${channel.name}`);
+        return true;
+    } catch (error) {
+        console.error(`❌ [فحص setup ${attempt}] خطأ في التحقق:`, error.message);
+        return false;
+    }
+}
+
+// جدولة فحص setup embed بعد 3 دقائق
+function scheduleSetupEmbedThreeMinuteCheck(guildId, messageId, channelId, client) {
+    const checkTime = new Date(Date.now() + 3 * 60 * 1000);
+    
+    const job = schedule.scheduleJob(checkTime, async () => {
+        console.log(`⏰ [فحص setup 3 دقائق] فحص setup embed للسيرفر ${guildId}`);
+        
+        const isValid = await verifySetupEmbed(guildId, messageId, channelId, client, 2);
+        if (!isValid) {
+            console.log(`🔄 [فحص setup 3 دقائق] محاولة إعادة الإرسال...`);
+            await resendSetupEmbed(guildId, client);
+        }
+    });
+    
+    console.log(`📅 تم جدولة فحص setup embed بعد 3 دقائق للسيرفر ${guildId}`);
+    return job;
+}
+
+// جدولة فحص دوري لـ setup embed
+function scheduleSetupEmbedPeriodicChecks(guildId, messageId, channelId, client) {
+    const jobs = [];
+    const jobKey = `setup_${guildId}`;
+    
+    // فحص كل 10 دقائق لمدة ساعة (6 فحوصات)
+    for (let i = 1; i <= 6; i++) {
+        const checkTime = new Date(Date.now() + (i * 10 * 60 * 1000));
+        
+        const job = schedule.scheduleJob(checkTime, async () => {
+            console.log(`⏰ [فحص دوري setup ${i}/6] فحص setup embed للسيرفر ${guildId}`);
+            
+            const isValid = await verifySetupEmbed(guildId, messageId, channelId, client, i + 2);
+            if (!isValid) {
+                console.log(`🔄 [فحص دوري setup ${i}/6] محاولة إعادة الإرسال...`);
+                await resendSetupEmbed(guildId, client);
+            }
+        });
+        
+        jobs.push(job);
+    }
+    
+    console.log(`📅 تم جدولة 6 فحوصات دورية لـ setup embed (كل 10 دقائق) للسيرفر ${guildId}`);
+    messageVerificationJobs.set(jobKey, jobs);
 }
 // فحص وحذف الرومات القديمة
 async function checkAndDeleteOldRooms(client) {
@@ -118,9 +278,9 @@ async function checkAndDeleteOldRooms(client) {
         const roomAge = now - roomData.createdAt;
         const hoursSinceCreation = roomAge / (1000 * 60 * 60);
         
-        if (hoursSinceCreation >= 24) {
+        if (hoursSinceCreation >= 12) {
             roomsToDelete.push(channelId);
-        } else { const remainingTime = (24 * 60 * 60 * 1000) - roomAge;
+        } else { const remainingTime = (12 * 60 * 60 * 1000) - roomAge;
             const deletionTime = new Date(now + remainingTime);
             
             const job = schedule.scheduleJob(deletionTime, async () => {
@@ -232,6 +392,7 @@ async function checkAndRestoreSetupEmbed(client) {
                     );
 
                     const newMessage = await embedChannel.send({ embeds: [finalEmbed], components: [menu] });
+                    console.log(`📤 تم إرسال setup embed في السيرفر ${guildId} - جاري التحقق...`);
 
                     setupEmbedMessages.set(guildId, {
                         messageId: newMessage.id,
@@ -241,7 +402,24 @@ async function checkAndRestoreSetupEmbed(client) {
                     
                     saveSetupEmbedMessages(setupEmbedMessages);
 
-                    console.log(`✅ تم إرسال إيمبد الروم في السيرفر ${guildId}`);
+                    // فحص فوري للتأكد من الإرسال (بعد ثانية واحدة)
+                    setTimeout(async () => {
+                        const isVerified = await verifySetupEmbed(guildId, newMessage.id, embedChannel.id, client, 1);
+                        if (isVerified) {
+                            console.log(`✅ [فحص فوري] تأكيد نجاح إرسال setup embed في ${embedChannel.name}`);
+                        } else {
+                            console.error(`⚠️ [فحص فوري] فشل التحقق من setup embed - سيتم المحاولة مجدداً`);
+                            await resendSetupEmbed(guildId, client);
+                        }
+                    }, 1000);
+
+                    // جدولة فحص بعد 3 دقائق
+                    scheduleSetupEmbedThreeMinuteCheck(guildId, newMessage.id, embedChannel.id, client);
+
+                    // جدولة فحوصات دورية كل 10 دقائق لمدة ساعة
+                    scheduleSetupEmbedPeriodicChecks(guildId, newMessage.id, embedChannel.id, client);
+
+                    console.log(`✅ تم إرسال setup embed مع نظام الفحص في السيرفر ${guildId}`);
                 }
             } catch (channelError) {
                 console.error(`❌ خطأ في فحص/استعادة الإيمبد للسيرفر ${guildId}:`, channelError);
@@ -949,9 +1127,9 @@ async function createRoom(request, client, guildConfig) {
         });
         saveActiveRooms();
         
-        // جدولة حذف الروم بعد 24 ساعة
+        // جدولة حذف الروم بعد 12 ساعة
         scheduleRoomDeletion(channel.id, client);
-        console.log(`✅ تم إنشاء روم ${request.roomType} بنجاح: ${roomName}`);
+        console.log(`✅ تم إنشاء روم ${request.roomType} بنجاح: ${roomName} (سيتم حذفها تلقائياً بعد 12 ساعة)`);
         
         // إرسال إشعار لصاحب الطلب
         try {
@@ -1375,6 +1553,7 @@ async function execute(message, args, { BOT_OWNERS, client }) {
                     );
 
                     const setupMessage = await embedChannel.send({ embeds: [finalEmbed], components: [menu] });
+                    console.log(`📤 تم إرسال setup embed للمرة الأولى - جاري التحقق...`);
 
                     // حفظ رسالة السيتب للحماية من الحذف
                     setupEmbedMessages.set(guildId, {
@@ -1387,10 +1566,27 @@ async function execute(message, args, { BOT_OWNERS, client }) {
                     
                     saveSetupEmbedMessages(setupEmbedMessages);
 
+                    // فحص فوري للتأكد من الإرسال (بعد ثانية واحدة)
+                    setTimeout(async () => {
+                        const isVerified = await verifySetupEmbed(guildId, setupMessage.id, embedChannel.id, client, 1);
+                        if (isVerified) {
+                            console.log(`✅ [فحص فوري] تأكيد نجاح إرسال setup embed في ${embedChannel.name}`);
+                        } else {
+                            console.error(`⚠️ [فحص فوري] فشل التحقق من setup embed - سيتم المحاولة مجدداً`);
+                            await resendSetupEmbed(guildId, client);
+                        }
+                    }, 1000);
+
+                    // جدولة فحص بعد 3 دقائق
+                    scheduleSetupEmbedThreeMinuteCheck(guildId, setupMessage.id, embedChannel.id, client);
+
+                    // جدولة فحوصات دورية كل 10 دقائق لمدة ساعة
+                    scheduleSetupEmbedPeriodicChecks(guildId, setupMessage.id, embedChannel.id, client);
+
                     // رسالة نجاح
                     const successEmbed = colorManager.createEmbed()
                         .setTitle('✅ **تم الإعداد بنجاح**')
-                        .setDescription(`**تم إعداد نظام الرومات بنجاح!**\n\n روم الطلبات : ${requestsChannel}\nروم الإيمبد : ${embedChannel}`)
+                        .setDescription(`**تم إعداد نظام الرومات بنجاح مع نظام الفحص المتقدم!**\n\n روم الطلبات : ${requestsChannel}\nروم الإيمبد : ${embedChannel}`)
                         .setTimestamp();
 
                     await message.channel.send({ embeds: [successEmbed] });
