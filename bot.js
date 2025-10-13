@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, Partials, Collection, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, EmbedBuilder, Events } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, Collection, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, EmbedBuilder, Events, MessageFlags } = require('discord.js');
 const dotenv = require('dotenv');
 const fs = require('fs');
 const path = require('path');
@@ -266,6 +266,14 @@ try {
       setroomCommand.restoreSchedules(client);
       console.log('✅ تم فحص واستعادة جدولات الغرف');
     }, 3000); // انتظار 3 ثواني لضمان جاهزية البوت
+  }
+
+  // فحص واستعادة الإيمبد المحذوف
+  if (setroomCommand.checkAndRestoreSetupEmbed) {
+    setTimeout(async () => {
+      await setroomCommand.checkAndRestoreSetupEmbed(client);
+      console.log('✅ تم فحص واستعادة إيمبد الروم');
+    }, 5000); // انتظار 5 ثواني لضمان جاهزية جميع القنوات
   }
 } catch (error) {
   console.error('❌ خطأ في تسجيل معالجات setroom:', error);
@@ -617,7 +625,7 @@ client.once(Events.ClientReady, async () => {
     }
 
     // تتبع النشاط الصوتي باستخدام client.voiceSessions المحسّن
-    client.on('voiceStateUpdate', (oldState, newState) => {
+    client.on('voiceStateUpdate', async (oldState, newState) => {
         // تجاهل البوتات
         if (!newState.member || newState.member.user.bot) return;
 
@@ -637,24 +645,20 @@ client.once(Events.ClientReady, async () => {
         // التحقق من وجود جلسة نشطة
         const existingSession = client.voiceSessions.get(userId);
 
-        console.log(`🔄 تغيير في الحالة الصوتية للمستخدم ${displayName}:`);
-        console.log(`   - القناة القديمة: ${oldChannelName} (${oldChannelId || 'لا يوجد'})`);
-        console.log(`   - القناة الجديدة: ${newChannelName} (${newChannelId || 'لا يوجد'})`);
 
         // 1. المستخدم انضم لقناة صوتية لأول مرة (لم يكن في أي قناة)
         if (!oldChannelId && newChannelId) {
-            const joinResult = trackUserActivity(userId, 'voice_join');
+            await trackUserActivity(userId, 'voice_join');
             client.voiceSessions.set(userId, { startTime: now, channelId: newChannelId, channelName: newChannelName });
-            console.log(`🎤 ${displayName} انضم للقناة الصوتية ${newChannelName} - تم الحفظ: ${joinResult}`);
+            console.log(`🎤 ${displayName} انضم للقناة الصوتية ${newChannelName}`);
         }
 
         // 2. المستخدم غادر القناة الصوتية كلياً (من قناة إلى لا شيء)
         else if (oldChannelId && !newChannelId) {
             if (existingSession) {
                 const sessionDuration = now - existingSession.startTime;
-                let timeResult = false;
                 if (sessionDuration > 0 && existingSession.startTime && existingSession.channelId) {
-                    timeResult = trackUserActivity(userId, 'voice_time', {
+                    await trackUserActivity(userId, 'voice_time', {
                         duration: sessionDuration,
                         channelId: existingSession.channelId,
                         channelName: existingSession.channelName,
@@ -663,9 +667,7 @@ client.once(Events.ClientReady, async () => {
                     });
                 }
                 client.voiceSessions.delete(userId);
-                console.log(`🎤 ${displayName} غادر القناة الصوتية ${existingSession.channelName} - المدة: ${Math.round(sessionDuration / 1000)} ثانية - تم الحفظ: ${timeResult}`);
-            } else {
-                console.log(`⚠️ ${displayName} غادر القناة ولكن لا توجد جلسة مسجلة`);
+                console.log(`🎤 ${displayName} غادر القناة الصوتية ${existingSession.channelName} - المدة: ${Math.round(sessionDuration / 1000)} ثانية`);
             }
         }
 
@@ -674,9 +676,8 @@ client.once(Events.ClientReady, async () => {
             // حفظ الوقت في القناة السابقة
             if (existingSession) {
                 const sessionDuration = now - existingSession.startTime;
-                let timeResult = false;
                 if (sessionDuration > 0 && existingSession.startTime && existingSession.channelId) {
-                    timeResult = trackUserActivity(userId, 'voice_time', {
+                    await trackUserActivity(userId, 'voice_time', {
                         duration: sessionDuration,
                         channelId: existingSession.channelId,
                         channelName: existingSession.channelName,
@@ -684,20 +685,17 @@ client.once(Events.ClientReady, async () => {
                         endTime: now
                     });
                 }
-                console.log(`⏱️ تم حفظ ${Math.round(sessionDuration / 1000)} ثانية من القناة ${existingSession.channelName} - حفظ: ${timeResult}`);
             }
 
             // تسجيل انضمام للقناة الجديدة وبدء جلسة جديدة
-            const joinResult = trackUserActivity(userId, 'voice_join');
+            await trackUserActivity(userId, 'voice_join');
             client.voiceSessions.set(userId, { startTime: now, channelId: newChannelId, channelName: newChannelName });
-            console.log(`🔄 ${displayName} انتقل من ${oldChannelName} إلى ${newChannelName} - بدء جلسة جديدة: ${joinResult}`);
+            console.log(`🔄 ${displayName} انتقل من ${oldChannelName} إلى ${newChannelName}`);
         }
 
         // 4. أي تغيير آخر ضمن نفس القناة (mute/unmute, deafen/undeafen, etc.)
         else if (oldChannelId && newChannelId && oldChannelId === newChannelId) {
             // لا نحتاج لفعل شيء هنا - المستخدم لا يزال في نفس القناة
-            // قد نضيف تتبع للـ mute/unmute في المستقبل
-            console.log(`🔄 ${displayName} تغيير في الحالة ضمن نفس القناة ${newChannelName} - لا يؤثر على تتبع الوقت`);
             return; // لا نحتاج لعرض الإحصائيات
         }
 
@@ -1069,8 +1067,8 @@ client.on('messageCreate', async message => {
     const CURRENT_ADMIN_ROLES = getCachedAdminRoles();
     const hasAdminRole = CURRENT_ADMIN_ROLES.length > 0 && member.roles.cache.some(role => CURRENT_ADMIN_ROLES.includes(role.id));
 
-    // Commands for everyone (help, top, مسؤولياتي)
-    if (commandName === 'help' || commandName === 'top' || commandName === 'مسؤولياتي') {
+    // Commands for everyone (help, tops, تفاعلي)
+    if (commandName === 'help' || commandName === 'tops' || commandName === 'توب' || commandName === 'تفاعلي') {
       if (commandName === 'مسؤولياتي') {
         await showUserResponsibilities(message, message.author, responsibilities, client);
       } else {
@@ -1081,8 +1079,8 @@ client.on('messageCreate', async message => {
     else if (commandName === 'اجازتي') {
       await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
     }
-    // Commands for admins and owners (مسؤول, اجازه)
-    else if (commandName === 'مسؤول' || commandName === 'اجازه') {
+    // Commands for admins and owners (مسؤول, اجازه, check, rooms)
+    else if (commandName === 'مسؤول' || commandName === 'اجازه' || commandName === 'مسؤولياتي' || commandName === 'اجازتي' || commandName === 'check' || commandName === 'rooms') {
       if (commandName === 'مسؤول') {
         console.log(`🔍 التحقق من صلاحيات المستخدم ${message.author.id} لأمر مسؤول:`);
         console.log(`- isOwner: ${isOwner}`);
@@ -1107,8 +1105,8 @@ client.on('messageCreate', async message => {
         return;
       }
     }
-    // Commands for owners only (call, stats, setup, report, set-vacation)
-    else if (commandName === 'call' || commandName === 'stats' || commandName === 'setup' || commandName === 'report' || commandName === 'set-vacation') {
+    // Commands for owners only (call, stats, setup, report, set-vacation, top)
+    else if (commandName === 'call' || commandName === 'stats' || commandName === 'setup' || commandName === 'report' || commandName === 'set-vacation' || commandName === 'top') {
       if (isOwner) {
         await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
       } else {
@@ -1452,7 +1450,7 @@ async function handleDownDMInteraction(interaction, context) {
     // Check permissions
     const hasPermission = await downManager.hasPermission(interaction, BOT_OWNERS);
     if (!hasPermission) {
-        return interaction.reply({ content: '❌ ليس لديك صلاحية لاستخدام هذا الأمر!', ephemeral: true });
+        return interaction.reply({ content: '❌ ليس لديك صلاحية لاستخدام هذا الأمر!', flags: MessageFlags.Ephemeral });
     }
 
     const customId = interaction.customId;
@@ -1478,7 +1476,7 @@ async function handleDownDMInteraction(interaction, context) {
             }
 
             if (!targetGuild) {
-                return interaction.reply({ content: '❌ لم يتم العثور على سيرفر مشترك!', ephemeral: true });
+                return interaction.reply({ content: '❌ لم يتم العثور على سيرفر مشترك!', flags: MessageFlags.Ephemeral });
             }
 
             const selectedUser = await targetGuild.members.fetch(selectedUserId);
@@ -1560,7 +1558,7 @@ async function handleDownDMInteraction(interaction, context) {
 
             const guild = client.guilds.cache.get(guildId);
             if (!guild) {
-                return interaction.reply({ content: '❌ السيرفر غير موجود!', ephemeral: true });
+                return interaction.reply({ content: '❌ السيرفر غير موجود!', flags: MessageFlags.Ephemeral });
             }
 
             const result = await downManager.createDown(
@@ -1606,7 +1604,7 @@ async function handleDownDMInteraction(interaction, context) {
     } catch (error) {
         console.error('Error in DM down interaction:', error);
         if (!interaction.replied && !interaction.deferred) {
-            await interaction.reply({ content: '❌ حدث خطأ أثناء معالجة التفاعل!', ephemeral: true });
+            await interaction.reply({ content: '❌ حدث خطأ أثناء معالجة التفاعل!', flags: MessageFlags.Ephemeral });
         }
     }
 }
@@ -1770,7 +1768,7 @@ client.on('interactionCreate', async (interaction) => {
                     console.log('⚠️ لم يتم العثور على معالج تعديل النقاط في أمر reset');
                     await interaction.reply({
                         content: '❌ معالج تعديل النقاط غير متوفر حالياً',
-                        ephemeral: true
+                        flags: MessageFlags.Ephemeral
                     });
                 }
                 return;
@@ -1792,7 +1790,7 @@ client.on('interactionCreate', async (interaction) => {
                     console.log('⚠️ لم يتم العثور على معالج تعديل النشاط');
                     await interaction.reply({
                         content: '❌ معالج تعديل النشاط غير متوفر حالياً',
-                        ephemeral: true
+                        flags: MessageFlags.Ephemeral
                     });
                 }
                 return;
@@ -1808,7 +1806,7 @@ client.on('interactionCreate', async (interaction) => {
                     console.log('⚠️ لم يتم العثور على معالج تعديل التقييم');
                     await interaction.reply({
                         content: '❌ معالج تعديل التقييم غير متوفر حالياً',
-                        ephemeral: true
+                        flags: MessageFlags.Ephemeral
                     });
                 }
                 return;
@@ -1823,7 +1821,7 @@ client.on('interactionCreate', async (interaction) => {
                     console.log('⚠️ لم يتم العثور على معالج اختيار المسؤولية للتعديل');
                     await interaction.reply({
                         content: '❌ معالج اختيار المسؤولية للتعديل غير متوفر حالياً',
-                        ephemeral: true
+                        flags: MessageFlags.Ephemeral
                     });
                 }
                 return;
@@ -1833,7 +1831,7 @@ client.on('interactionCreate', async (interaction) => {
             console.log(`⚠️ تفاعل تعديل غير مُعرَّف: ${interaction.customId}`);
             await interaction.reply({
                 content: '❌ هذه الميزة قيد التطوير - يرجى المحاولة لاحقاً',
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
 
         } catch (error) {
@@ -1841,7 +1839,7 @@ client.on('interactionCreate', async (interaction) => {
             if (!interaction.replied && !interaction.deferred) {
                 await interaction.reply({
                     content: '❌ حدث خطأ أثناء معالجة طلب التعديل',
-                    ephemeral: true
+                    flags: MessageFlags.Ephemeral
                 });
             }
         }
@@ -1876,7 +1874,7 @@ client.on('interactionCreate', async (interaction) => {
                 if (!interaction.replied && !interaction.deferred) {
                     await interaction.reply({
                         content: 'حدث خطأ في معالجة إعدادات التقديم الإداري.',
-                        ephemeral: true
+                        flags: MessageFlags.Ephemeral
                     });
                 }
             } catch (replyError) {
@@ -1906,7 +1904,7 @@ client.on('interactionCreate', async (interaction) => {
                 if (!interaction.replied && !interaction.deferred) {
                     await interaction.reply({
                         content: '❌ حدث خطأ في معالجة طلب التقديم الإداري.',
-                        ephemeral: true
+                        flags: MessageFlags.Ephemeral
                     });
                 }
             } catch (replyError) {
@@ -1928,7 +1926,7 @@ client.on('interactionCreate', async (interaction) => {
                 if (!interaction.replied && !interaction.deferred) {
                     await interaction.reply({
                         content: '❌ حدث خطأ أثناء عرض الإحصائيات.',
-                        ephemeral: true
+                        flags: MessageFlags.Ephemeral
                     });
                 }
             } catch (replyError) {
@@ -1966,7 +1964,7 @@ client.on('interactionCreate', async (interaction) => {
                 if (!interaction.replied && !interaction.deferred) {
                     await interaction.reply({
                         content: '❌ حدث خطأ في معالجة سجلات الترقيات.',
-                        ephemeral: true
+                        flags: MessageFlags.Ephemeral
                     });
                 }
             } catch (replyError) {
@@ -1996,7 +1994,7 @@ client.on('interactionCreate', async (interaction) => {
                 if (!interaction.replied && !interaction.deferred) {
                     await interaction.reply({
                         content: '❌ حدث خطأ في معالجة نظام الترقيات.',
-                        ephemeral: true
+                        flags: MessageFlags.Ephemeral
                     });
                 }
             } catch (replyError) {
@@ -2067,15 +2065,15 @@ client.on('interactionCreate', async (interaction) => {
             if (!isAuthorizedApprover) {
                 const errorEmbed = new EmbedBuilder()
                     .setColor('#FF0000')
-                    .setDescription('❌ **ليس لديك صلاحية للموافقة أو رفض طلبات إنهاء الإجازات.**');
-                return interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+                    .setDescription('❌ **يعني محد شاف لا تسوي خوي بس**')
+                return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
             }
 
             const vacations = require('./utils/vacationManager').readJson(path.join(__dirname, 'data', 'vacations.json'));
             const pendingTermination = vacations.pendingTermination?.[userId];
 
             if (!pendingTermination) {
-                return interaction.reply({ content: 'لا يوجد طلب إنهاء إجازة معلق لهذا المستخدم.', ephemeral: true });
+                return interaction.reply({ content: 'لا يوجد طلب إنهاء إجازة معلق لهذا المستخدم.', flags: MessageFlags.Ephemeral });
             }
 
             if (action === 'approve') {
@@ -2090,16 +2088,16 @@ client.on('interactionCreate', async (interaction) => {
                 if (result.success) {
                     const removedRolesText = result.vacation.removedRoles && result.vacation.removedRoles.length > 0
                         ? result.vacation.removedRoles.map(id => `<@&${id}>`).join(', ')
-                        : 'لا توجد أدوار إدارية تم سحبها';
+                        : 'لا توجد رولات إدارية تم سحبها';
 
                     const updatedEmbed = new EmbedBuilder()
                         .setColor(colorManager.getColor('approved') || '#00FF00')
-                        .setTitle('✅ تم قبول طلب الإجازة')
+                        .setTitle('✅️Vacation Accepted')
                         .setDescription(`**تم إنهاء إجازة <@${userId}>**`)
                         .addFields(
-                            { name: '📋 الأدوار التي تم سحبها فعلياً', value: removedRolesText, inline: false },
-                            { name: '📊 عدد الأدوار المسحوبة', value: `${result.vacation.removedRoles?.length || 0} دور`, inline: true },
-                            { name: '⏰ مدة الإجازة', value: `من <t:${Math.floor(new Date(result.vacation.startDate).getTime() / 1000)}:f> إلى <t:${Math.floor(new Date(result.vacation.endDate).getTime() / 1000)}:f>`, inline: false }
+                            { name: 'الرولات التي تم سحبها فعلياً', value: removedRolesText, inline: false },
+                            { name: 'عدد الرولان المسحوبة', value: `${result.vacation.removedRoles?.length || 0} دور`, inline: true },
+                            { name: ' مدة الإجازة', value: `من <t:${Math.floor(new Date(result.vacation.startDate).getTime() / 1000)}:f> إلى <t:${Math.floor(new Date(result.vacation.endDate).getTime() / 1000)}:f>`, inline: false }
                         )
                         .setTimestamp();
 
@@ -2109,7 +2107,7 @@ client.on('interactionCreate', async (interaction) => {
                     try {
                         const user = await client.users.fetch(userId);
                         const notificationEmbed = new EmbedBuilder()
-                            .setTitle('تم الموافقة على إنهاء الإجازة')
+                            .setTitle('✅️ Ended')
                             .setColor(colorManager.getColor('approved') || '#00FF00')
                             .setDescription('تم الموافقة على طلبك لإنهاء الإجازة مبكراً')
                             .addFields(
@@ -2191,8 +2189,8 @@ client.on('interactionCreate', async (interaction) => {
             if (!isAuthorizedApprover) {
                 const errorEmbed = new EmbedBuilder()
                     .setColor('#FF0000')
-                    .setDescription('❌ **ليس لديك صلاحية للموافقة أو رفض طلبات الإجازات.**');
-                return interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+                    .setDescription('❌ ** خوي ها؟.**');
+                return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
             }
 
             if (action === 'approve') {
@@ -2200,16 +2198,16 @@ client.on('interactionCreate', async (interaction) => {
                 if (result.success) {
                     const removedRolesText = result.vacation.removedRoles && result.vacation.removedRoles.length > 0
                         ? result.vacation.removedRoles.map(id => `<@&${id}>`).join(', ')
-                        : 'لا توجد أدوار إدارية تم سحبها';
+                        : 'لا توجد رولات إدارية تم سحبها';
 
                     const updatedEmbed = new EmbedBuilder()
                         .setColor(colorManager.getColor('approved') || '#2ECC71')
-                        .setTitle('✅ تم قبول طلب الإجازة')
+                        .setTitle('✅ Accepted')
                         .setDescription(`**تم قبول إجازة <@${userId}>**`)
                         .addFields(
-                            { name: '📋 الأدوار التي تم سحبها فعلياً', value: removedRolesText, inline: false },
-                            { name: '📊 عدد الأدوار المسحوبة', value: `${result.vacation.removedRoles?.length || 0} دور`, inline: true },
-                            { name: '⏰ مدة الإجازة', value: `من <t:${Math.floor(new Date(result.vacation.startDate).getTime() / 1000)}:f> إلى <t:${Math.floor(new Date(result.vacation.endDate).getTime() / 1000)}:f>`, inline: false }
+                            { name: ' الرولات التي تم سحبها فعلياً', value: removedRolesText, inline: false },
+                            { name: ' عدد الرولات المسحوبة', value: `${result.vacation.removedRoles?.length || 0} دور`, inline: true },
+                            { name: ' مدة الإجازة', value: `من <t:${Math.floor(new Date(result.vacation.startDate).getTime() / 1000)}:f> إلى <t:${Math.floor(new Date(result.vacation.endDate).getTime() / 1000)}:f>`, inline: false }
                         )
                         .setTimestamp();
 
@@ -2218,17 +2216,17 @@ client.on('interactionCreate', async (interaction) => {
                     const user = await client.users.fetch(userId).catch(() => null);
                     if (user) {
                         const dmEmbed = new EmbedBuilder()
-                            .setTitle('تم قبول طلب الإجازة')
+                            .setTitle('✅️Accepted')
                             .setColor(colorManager.getColor('approved') || '#2ECC71')
-                            .setDescription('تم الموافقة على طلب إجازتك. تم سحب أدوارك الإدارية مؤقتاً وستعود عند انتهاء الإجازة.')
-                            .setFooter({ text: 'استمتع بإجازتك!' });
+                            .setDescription('تم الموافقة على طلب اجازتك حاول ان تأفك بالرومات عالاقل.')
+                            .setFooter({ text: ' اكتب اجازتي لمعرفه التفاصيل!' });
                         await user.send({ embeds: [dmEmbed] }).catch(err => console.log(`فشل في إرسال رسالة للمستخدم ${userId}: ${err}`));
                     }
                 } else {
                     const errorEmbed = new EmbedBuilder()
                         .setColor('#FF0000')
                         .setDescription(`❌ **فشل في الموافقة:** ${result.message}`);
-                    await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+                    await interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
                 }
                 return;
             }
@@ -2249,7 +2247,7 @@ client.on('interactionCreate', async (interaction) => {
                 const user = await client.users.fetch(userId).catch(() => null);
                 if (user) {
                     const dmEmbed = new EmbedBuilder()
-                        .setTitle('تم رفض طلب الإجازة')
+                        .setTitle('Rejected')
                         .setColor(colorManager.getColor('rejected') || '#E74C3C')
                         .setDescription('تم رفض طلب إجازتك.')
                         .addFields(
@@ -2261,7 +2259,34 @@ client.on('interactionCreate', async (interaction) => {
                 return;
             }
         }
+}
+        if (customId === 'suggestion_button') {
 
+      const respCommand = client.commands.get('resp');
+
+      if (respCommand && respCommand.handleSuggestionButton) {
+
+        await respCommand.handleSuggestionButton(interaction, client);
+
+      }
+
+      return;
+
+    }
+
+    // Handle resp modal submissions
+
+    if (interaction.isModalSubmit() && customId === 'suggestion_modal') {
+
+      const respCommand = client.commands.get('resp');
+
+      if (respCommand && respCommand.handleSuggestionModal) {
+
+        await respCommand.handleSuggestionModal(interaction, client);
+
+      }
+
+      return;
         // The old handler for early termination has been moved to my-vacation.js
     }
 
@@ -2278,7 +2303,7 @@ client.on('interactionCreate', async (interaction) => {
       } catch (error) {
         console.error('Error in adminroles interaction:', error);
         if (!interaction.replied && !interaction.deferred) {
-          await interaction.reply({ content: '❌ حدث خطأ أثناء معالجة التفاعل!', ephemeral: true });
+          await interaction.reply({ content: '❌ حدث خطأ أثناء معالجة التفاعل!', flags: MessageFlags.Ephemeral });
         }
       }
       return;
@@ -2320,7 +2345,7 @@ client.on('interactionCreate', async (interaction) => {
                 if (!interaction.replied && !interaction.deferred) {
                     await interaction.reply({
                         content: '❌ حدث خطأ أثناء معالجة التفاعل. يرجى المحاولة مرة أخرى.',
-                        ephemeral: true
+                        flags: MessageFlags.Ephemeral
                     }).catch(() => {});
                 }
             }
@@ -3471,7 +3496,7 @@ async function handleDeleteSingleRecord(interaction, roleId, recordIndex) {
         if (!BOT_OWNERS.includes(interaction.user.id)) {
             await interaction.reply({
                 content: '❌ **ليس لديك صلاحية لحذف السجلات!**',
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
             return;
         }
@@ -3497,7 +3522,7 @@ async function handleDeleteSingleRecord(interaction, roleId, recordIndex) {
         if (recordIndex >= roleRecords.length) {
             await interaction.reply({
                 content: '❌ **السجل غير موجود!**',
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
             return;
         }
@@ -3513,7 +3538,7 @@ async function handleDeleteSingleRecord(interaction, roleId, recordIndex) {
         if (indexInAllLogs === -1) {
             await interaction.reply({
                 content: '❌ **لم يتم العثور على السجل في القائمة العامة!**',
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
             return;
         }
@@ -3542,7 +3567,7 @@ async function handleDeleteSingleRecord(interaction, roleId, recordIndex) {
         console.error('خطأ في حذف السجل:', error);
         await interaction.reply({
             content: '❌ **حدث خطأ أثناء حذف السجل!**',
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 }
@@ -3556,7 +3581,7 @@ async function handleDeleteAllRecords(interaction, roleId) {
         if (!BOT_OWNERS.includes(interaction.user.id)) {
             await interaction.reply({
                 content: '❌ **ليس لديك صلاحية لحذف السجلات!**',
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
             return;
         }
@@ -3654,7 +3679,7 @@ async function handleBulkPromotionStats(interaction, client) {
     if (!membersData) {
         return interaction.reply({
             content: 'لم يتم العثور على بيانات الأعضاء المترقين أو انتهت صلاحيتها.',
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 
@@ -3664,12 +3689,12 @@ async function handleBulkPromotionStats(interaction, client) {
         client.bulkPromotionMembers.delete(actualKey);
         return interaction.reply({
             content: 'انتهت صلاحية بيانات الأعضاء المترقين (24 ساعة).',
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 
     try {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         // جمع إحصائيات جميع الأعضاء المترقين
         const membersWithStats = [];
@@ -3835,7 +3860,7 @@ async function safeReply(interaction, content, options = {}) {
 
     const replyOptions = {
       content: content || 'حدث خطأ',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
       ...options
     };
 
@@ -3974,7 +3999,7 @@ async function handleAdminRolesInteraction(interaction, context) {
   // Implement basic logic or reply with a message indicating fallback
   await interaction.reply({
     content: 'Fallback handler for adminroles. The command might not be loaded correctly.',
-    ephemeral: true
+    flags: MessageFlags.Ephemeral
   });
 }
 
