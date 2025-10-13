@@ -102,8 +102,9 @@ class PromoteManager {
         this.startBanMonitoring();
         // بدء مهام الصيانة فور التهيئة
         setTimeout(() => this.startMaintenanceTasks(), 5000); // تأخير 5 ثوانٍ
-    }
-
+    
+this.startAutoMenuUpdate(client);
+        }
     ensureDataFiles() {
         // Create default settings file
         if (!fs.existsSync(promoteSettingsPath)) {
@@ -1900,8 +1901,41 @@ class PromoteManager {
                 }
             }
         }, 300000); // 5 minutes
+        }
+    startAutoMenuUpdate(client) {
+
+        setInterval(async () => {
+
+            try {
+
+                const settings = this.getSettings();
+
+                if (settings.menuChannel && settings.menuMessageId) {
+
+                    const promoteCommand = require('../commands/promote.js');
+
+                    if (promoteCommand && promoteCommand.createPermanentMenu) {
+
+                        await promoteCommand.createPermanentMenu(client, settings.menuChannel);
+
+                        console.log('✅ تم تحديث منيو الترقيات تلقائياً');
+
+                    }
+
+                }
+
+            } catch (error) {
+
+                console.error('خطأ في تحديث المنيو التلقائي:', error);
+
+            }
+
+        }, 10000); // تحديث كل 30 ثانية
+
     }
 
+    // Member leave/join handlers for promotions
+    
     // Member leave/join handlers for promotions
     async handleMemberLeave(member) {
         try {

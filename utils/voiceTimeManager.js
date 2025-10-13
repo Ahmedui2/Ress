@@ -172,13 +172,11 @@ async function saveVoiceSession(userId, channelId, channelName, duration, startT
         // حفظ النسخة الاحتياطية المبسطة في JSON
         const saveResult = writeJsonFile(voiceTimeDataPath, voiceData);
         
-        if (saveResult) {
-            console.log(`💾 تم حفظ جلسة صوتية: ${formatDuration(duration)} للمستخدم ${userId} في قناة ${channelName}`);
-            return sessionId;
-        } else {
-            console.warn(`⚠️ تم حفظ الجلسة في قاعدة البيانات لكن فشل حفظ النسخة الاحتياطية JSON للمستخدم ${userId}`);
-            return sessionId; // نعيد sessionId لأن الحفظ الأساسي (قاعدة البيانات) نجح
+        if (!saveResult) {
+            console.warn(`⚠️ فشل حفظ النسخة الاحتياطية JSON للمستخدم ${userId}`);
         }
+        
+        return sessionId;
         
     } catch (error) {
         console.error('خطأ في حفظ الجلسة الصوتية:', error);

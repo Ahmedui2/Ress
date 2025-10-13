@@ -204,7 +204,6 @@ class DatabaseManager {
             // تحديث النشاط اليومي
             await this.updateDailyActivity(date, userId, { voiceTime: duration });
 
-            console.log(`💾 تم حفظ جلسة صوتية: ${Math.round(duration/1000)}s للمستخدم ${userId} في ${channelName}`);
             return sessionId;
 
         } catch (error) {
@@ -235,46 +234,22 @@ class DatabaseManager {
                 await this.run(`UPDATE user_totals SET total_voice_joins = total_voice_joins + ?, last_activity = ? WHERE user_id = ?`, [voiceJoins, new Date().toISOString(), userId]);
             }
             if (reactions > 0) {
-                // فحص حالة السجل قبل التحديث
-                const beforeUpdate = await this.get(`SELECT total_reactions FROM user_totals WHERE user_id = ?`, [userId]);
-                console.log(`📊 عدد التفاعلات قبل التحديث للمستخدم ${userId}: ${beforeUpdate ? beforeUpdate.total_reactions : 'سجل غير موجود'}`);
-
                 // تحديث التفاعلات مع التحقق من النجاح
                 const updateResult = await this.run(`UPDATE user_totals SET total_reactions = total_reactions + ?, last_activity = ? WHERE user_id = ?`, [reactions, new Date().toISOString(), userId]);
 
-                console.log(`🔄 نتيجة تحديث التفاعلات للمستخدم ${userId}: تغييرات=${updateResult.changes}, معرف_آخر=${updateResult.id}`);
-
                 if (updateResult.changes === 0) {
-                    console.error(`⚠️ لم يتم تحديث أي سجل للمستخدم ${userId} - قد يكون السجل غير موجود`);
-
                     // محاولة إنشاء السجل إذا لم يكن موجوداً
                     try {
                         await this.run(`
                             INSERT INTO user_totals (user_id, total_reactions, total_messages, total_voice_time, total_voice_joins, first_seen, last_activity)
                             VALUES (?, ?, 0, 0, 0, strftime('%s', 'now'), ?)
                         `, [userId, reactions, new Date().toISOString()]);
-                        console.log(`✅ تم إنشاء سجل جديد للمستخدم ${userId} مع ${reactions} تفاعل`);
                     } catch (insertError) {
                         console.error(`❌ فشل في إنشاء سجل جديد للمستخدم ${userId}:`, insertError);
-                    }
-                } else {
-                    // التحقق من التحديث بجلب البيانات الحالية
-                    const currentStats = await this.get(`
-                        SELECT total_messages, total_voice_time, total_voice_joins, total_reactions 
-                        FROM user_totals WHERE user_id = ?
-                    `, [userId]);
-
-                    if (currentStats) {
-                        console.log(`✅ تم تحديث التفاعلات للمستخدم ${userId}: الإجمالي الآن=${currentStats.total_reactions}, تغييرات=${updateResult.changes}`);
-                    } else {
-                        console.error(`❌ فشل في جلب البيانات المحدثة للمستخدم ${userId}`);
                     }
                 }
             }
 
-            if (messages > 0 || voiceTime > 0 || voiceJoins > 0 || reactions > 0) {
-                console.log(`📊 تم تحديث إجماليات المستخدم ${userId}: +${messages} رسائل, +${Math.round(voiceTime/1000)}s صوت, +${voiceJoins} انضمامات, +${reactions} تفاعلات`);
-            }
         } catch (error) {
             console.error('خطأ في تحديث إجماليات المستخدم:', error);
             throw error;
@@ -399,7 +374,6 @@ class DatabaseManager {
             const user = await this.get('SELECT * FROM user_totals WHERE user_id = ?', [userId]);
 
             if (!user) {
-                console.log(`📊 إنشاء سجل جديد للمستخدم ${userId}`);
                 return {
                     totalVoiceTime: 0,
                     totalSessions: 0,
@@ -416,15 +390,6 @@ class DatabaseManager {
             // حساب أيام النشاط الفعلية
             const activeDays = await this.getActiveDaysCount(userId, 30);
             const weeklyActiveDays = await this.getWeeklyActiveDays(userId);
-
-            console.log(`📊 بيانات المستخدم ${userId}:`, {
-                voiceTime: user.total_voice_time,
-                messages: user.total_messages,
-                activeDays: activeDays,
-                weeklyActiveDays: weeklyActiveDays,
-                reactions: user.total_reactions,
-                voiceJoins: user.total_voice_joins
-            });
 
             return {
                 totalVoiceTime: user.total_voice_time || 0,

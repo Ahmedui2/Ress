@@ -93,7 +93,6 @@ async function trackUserActivity(userId, activityType, data = {}) {
             case 'voice_join':
                 await dbManager.updateUserTotals(userId, { voiceJoins: 1 });
                 await dbManager.updateDailyActivity(today, userId, { voiceJoins: 1 });
-                console.log(`🎤 تم تسجيل انضمام صوتي للمستخدم ${userId}`);
                 break;
 
             case 'voice_time':
@@ -106,19 +105,13 @@ async function trackUserActivity(userId, activityType, data = {}) {
                 // حفظ الجلسة الصوتية المفصلة
                 try {
                     const { saveVoiceSession } = require('./voiceTimeManager');
-                    const sessionId = await saveVoiceSession(userId, channelId, channelName, duration, startTime, endTime);
-                    if (sessionId) {
-                        console.log(`⏱️ تم حفظ جلسة صوتية: ${Math.round(duration / 1000)} ثانية للمستخدم ${userId} في ${channelName}`);
-                    } else {
-                        console.log(`⚠️ لم يتم حفظ الجلسة الصوتية للمستخدم ${userId}`);
-                    }
+                    await saveVoiceSession(userId, channelId, channelName, duration, startTime, endTime);
                 } catch (error) {
                     console.error('❌ خطأ في حفظ الجلسة الصوتية:', error.message);
                     // حفظ بيانات مبسطة على الأقل
                     try {
                         await dbManager.updateUserTotals(userId, { voiceTime: duration });
                         await dbManager.updateDailyActivity(today, userId, { voiceTime: duration });
-                        console.log(`✅ تم حفظ الوقت الصوتي بشكل مبسط: ${Math.round(duration / 1000)} ثانية`);
                     } catch (fallbackError) {
                         console.error('❌ فشل الحفظ البديل:', fallbackError.message);
                     }
@@ -127,7 +120,6 @@ async function trackUserActivity(userId, activityType, data = {}) {
 
             case 'reaction':
                 try {
-                    console.log(`🔄 بدء تسجيل تفاعل للمستخدم ${userId} - ${data.emoji || 'تفاعل'}`);
 
                     // تحديث إجماليات المستخدم
                     await dbManager.updateUserTotals(userId, { reactions: 1 });

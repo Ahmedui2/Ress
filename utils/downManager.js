@@ -494,6 +494,8 @@ class DownManager {
     // Auto expiration checker with notification
     startExpirationChecker(client) {
         this.client = client; // Store client reference
+        
+        // فحص الداونات المنتهية كل دقيقة
         setInterval(async () => {
             try {
                 const expiredDowns = this.getExpiredDowns();
@@ -504,8 +506,27 @@ class DownManager {
                 console.error('Error in down expiration checker:', error);
             }
         }, 60000); // Check every minute
+
+        // تحديث المنيو التلقائي كل 30 ثانية
+        setInterval(async () => {
+            try {
+                const settings = this.getSettings();
+                if (settings.menuChannel && settings.menuMessageId) {
+                    const downCommand = require('../commands/down.js');
+                    if (downCommand && downCommand.createPermanentMenu) {
+                        await downCommand.createPermanentMenu(client, settings.menuChannel);
+                        console.log('✅ تم تحديث منيو الداون تلقائياً');
+                    }
+                }
+            } catch (error) {
+                console.error('خطأ في تحديث المنيو التلقائي:', error);
+            }
+        }, 30000); // تحديث كل 30 ثانية
     }
 
+    
+
+    // Process expired down 
     // Process expired down with notification and role restoration
     async processExpiredDown(expiredDown) {
         try {
