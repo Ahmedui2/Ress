@@ -163,16 +163,11 @@ if (!client.voiceSessions) {
   client.voiceSessions = new Map();
 }
 
-// إعداد قائمة مالكي البوت من ملف botConfig أولاً، ثم متغير البيئة كبديل
+// إعداد قائمة مالكي البوت من ملف botConfig فقط
 let BOT_OWNERS = [];
 if (botConfig.owners && Array.isArray(botConfig.owners) && botConfig.owners.length > 0) {
     BOT_OWNERS = [...botConfig.owners]; // استنساخ المصفوفة
     console.log('✅ تم تحميل المالكين من ملف botConfig.json:', BOT_OWNERS);
-} else if (process.env.BOT_OWNERS) {
-    BOT_OWNERS = process.env.BOT_OWNERS.split(',').filter(id => id.trim());
-    botConfig.owners = BOT_OWNERS;
-    writeJSONFile(DATA_FILES.botConfig, botConfig);
-    console.log('✅ تم تحميل المالكين من متغير البيئة وحفظهم في botConfig.json:', BOT_OWNERS);
 } else {
     console.log('⚠️ لم يتم العثور على مالكين محددين');
 }
