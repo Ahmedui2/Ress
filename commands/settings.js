@@ -2,10 +2,40 @@ const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, 
 const { logEvent } = require('../utils/logs_system.js');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
+const fs = require('fs');
+const path = require('path');
 
 const name = 'settings';
 
 const activeCommandCollectors = new Map();
+
+const responsibleRolesPath = path.join(__dirname, '..', 'data', 'responsibleRoles.json');
+
+function loadResponsibleRoles() {
+  try {
+    if (fs.existsSync(responsibleRolesPath)) {
+      const data = fs.readFileSync(responsibleRolesPath, 'utf8');
+      const roles = JSON.parse(data);
+      return Array.isArray(roles) ? roles : [];
+    }
+    return [];
+  } catch (error) {
+    console.error('خطأ في قراءة responsibleRoles:', error);
+    return [];
+  }
+}
+
+function saveResponsibleRoles(roles) {
+  try {
+    const finalRoles = Array.isArray(roles) ? roles : [];
+    fs.writeFileSync(responsibleRolesPath, JSON.stringify(finalRoles, null, 2));
+    console.log('✅ تم حفظ رولات المسؤولين في JSON');
+    return true;
+  } catch (error) {
+    console.error('خطأ في حفظ responsibleRoles:', error);
+    return false;
+  }
+}
 
 async function execute(message, args, { responsibilities, client, scheduleSave, BOT_OWNERS }) {
   if (activeCommandCollectors.has(message.author.id)) {
@@ -308,6 +338,21 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
               responsibility.responsibles.splice(index, 1);
               await saveResponsibilities();
 
+              // إزالة جميع رولات المسؤولية من المسؤول المحذوف
+              if (removedMember && responsibility.roles && responsibility.roles.length > 0) {
+                for (const roleId of responsibility.roles) {
+                  try {
+                    const role = message.guild.roles.cache.get(roleId);
+                    if (role && removedMember.roles.cache.has(roleId)) {
+                      await removedMember.roles.remove(roleId);
+                      console.log(`✅ تم إزالة رول ${role.name} من ${removedMember.displayName}`);
+                    }
+                  } catch (error) {
+                    console.log(`لا يمكن إزالة رول ${roleId} من ${removedUserId}: ${error.message}`);
+                  }
+                }
+              }
+
               if (removedMember) {
                 try {
                   const removalEmbed = colorManager.createEmbed()
@@ -369,6 +414,21 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
                   responsibility.responsibles.push(userId);
                   await saveResponsibilities();
 
+                  // إعطاء المسؤول جميع رولات المسؤولية تلقائياً
+                  if (responsibility.roles && responsibility.roles.length > 0) {
+                    for (const roleId of responsibility.roles) {
+                      try {
+                        const role = message.guild.roles.cache.get(roleId);
+                        if (role && !member.roles.cache.has(roleId)) {
+                          await member.roles.add(roleId);
+                          console.log(`✅ تم إعطاء ${member.displayName} رول ${role.name}`);
+                        }
+                      } catch (error) {
+                        console.log(`لا يمكن إضافة رول ${roleId} لـ ${userId}: ${error.message}`);
+                      }
+                    }
+                  }
+
                   try {
                     const welcomeEmbed = colorManager.createEmbed()
                       .setTitle(' Resb')
@@ -426,6 +486,252 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
     } catch (error) {
       console.error('خطأ في عرض إدارة المسؤولين:', error);
       await safeReply(interaction, '**حدث خطأ في عرض إدارة المسؤولين**');
+    }
+  }
+
+  async function showRoleManagement(interaction, responsibilityName) {
+    try {
+      const responsibility = responsibilities[responsibilityName];
+      if (!responsibility) {
+        return await safeReply(interaction, '**المسؤولية غير موجودة!**');
+      }
+
+      // تهيئة حقل roles إن لم يكن موجوداً
+      if (!responsibility.roles) {
+        responsibility.roles = [];
+      }
+
+      const existingCollector = activeCollectors.get(`role_${responsibilityName}`);
+      if (existingCollector) {
+        existingCollector.stop('new_session');
+        activeCollectors.delete(`role_${responsibilityName}`);
+      }
+
+      const rolesList = responsibility.roles || [];
+      let rolesText = '';
+
+      if (rolesList.length > 0) {
+        for (let i = 0; i < rolesList.length; i++) {
+          try {
+            const role = message.guild.roles.cache.get(rolesList[i]);
+            if (role) {
+              rolesText += `**${i + 1}.** ${role.name} (<@&${rolesList[i]}>)\n`;
+            } else {
+              rolesText += `**${i + 1}.** رول محذوف (${rolesList[i]})\n`;
+            }
+          } catch (error) {
+            rolesText += `**${i + 1}.** رول محذوف (${rolesList[i]})\n`;
+          }
+        }
+      } else {
+        rolesText = '**لا توجد رولات مضافة**';
+      }
+
+      const embed = colorManager.createEmbed()
+        .setTitle(`**إدارة رولات: ${responsibilityName}**`)
+        .setDescription(`**الرولات الحالية:**\n${rolesText}\n\n**للإضافة منشن رول أو اكتب الآي دي\nللحذف اكتب رقم الرول\nعند الانتهاء اكتب تم**`)
+        .setFooter({ text: 'By Ahmed.' });
+
+      const backButton = new ButtonBuilder()
+        .setCustomId(`back_to_main_${responsibilityName}`)
+        .setLabel('Back')
+        .setStyle(ButtonStyle.Secondary);
+
+      const row = new ActionRowBuilder().addComponents(backButton);
+      
+      await interaction.update({ embeds: [embed], components: [row] });
+
+      const messageFilter = m => m.author.id === interaction.user.id && m.channel.id === message.channel.id;
+      const messageCollector = message.channel.createMessageCollector({
+        filter: messageFilter,
+        time: 300000
+      });
+
+      activeCollectors.set(`role_${responsibilityName}`, messageCollector);
+
+      messageCollector.on('collect', async (msg) => {
+        try {
+          await msg.delete().catch(() => {});
+
+          const content = msg.content.trim();
+          const lowerContent = content.toLowerCase();
+
+          if (lowerContent === 'تم' || lowerContent === 'done') {
+            messageCollector.stop('user_done');
+            await updateMainMenu();
+            return;
+          }
+
+          // التحقق من حذف رول بالرقم
+          if (/^\d+$/.test(content)) {
+            const index = parseInt(content) - 1;
+            const currentRoles = responsibility.roles || [];
+
+            if (index >= 0 && index < currentRoles.length) {
+              const removedRoleId = currentRoles[index];
+              const role = message.guild.roles.cache.get(removedRoleId);
+
+              responsibility.roles.splice(index, 1);
+              await saveResponsibilities();
+
+              // إزالة الرول من جميع المسؤولين الحاليين
+              let removedCount = 0;
+              if (role) {
+                for (const responsibleId of (responsibility.responsibles || [])) {
+                  try {
+                    const member = await message.guild.members.fetch(responsibleId);
+                    if (member.roles.cache.has(removedRoleId)) {
+                      await member.roles.remove(removedRoleId);
+                      removedCount++;
+                      console.log(`✅ تم إزالة رول ${role.name} من ${member.displayName}`);
+                    }
+                  } catch (error) {
+                    console.log(`لا يمكن إزالة الرول من ${responsibleId}: ${error.message}`);
+                  }
+                }
+              }
+
+              await safeFollowUp(interaction, `**✅ تم حذف الرول رقم ${content} بنجاح**${removedCount > 0 ? `\n**تم إزالة الرول من ${removedCount} مسؤول**` : ''}`);
+
+              logEvent(client, message.guild, {
+                type: 'RESPONSIBILITY_MANAGEMENT',
+                title: 'تم حذف رول من مسؤولية',
+                description: `تم حذف رول ${role ? role.name : removedRoleId} من مسؤولية ${responsibilityName}${removedCount > 0 ? ` وإزالته من ${removedCount} مسؤول` : ''}`,
+                user: interaction.user,
+                fields: [
+                  { name: 'المسؤولية', value: responsibilityName, inline: true },
+                  { name: 'الرول المحذوف', value: role ? `<@&${removedRoleId}>` : removedRoleId, inline: true },
+                  { name: 'تمت الإزالة من', value: `${removedCount} مسؤول`, inline: true }
+                ]
+              });
+
+              // تحديث العرض
+              await updateRoleDisplay();
+            } else {
+              await safeFollowUp(interaction, '**رقم غير صحيح. يرجى اختيار رقم من القائمة.**');
+            }
+          } else {
+            // إضافة رول جديد
+            let roleId = null;
+
+            if (msg.mentions.roles.size > 0) {
+              roleId = msg.mentions.roles.first().id;
+            } else {
+              const idMatch = content.match(/\d{17,19}/);
+              if (idMatch) {
+                roleId = idMatch[0];
+              }
+            }
+
+            if (roleId) {
+              try {
+                const role = await message.guild.roles.fetch(roleId);
+                if (!role) {
+                  return await safeFollowUp(interaction, '**الرول غير موجود!**');
+                }
+
+                // التحقق من عدم وجود الرول في مسؤولية أخرى
+                for (const [respName, resp] of Object.entries(responsibilities)) {
+                  if (respName !== responsibilityName && resp.roles && resp.roles.includes(roleId)) {
+                    return await safeFollowUp(interaction, `**⚠️ هذا الرول موجود بالفعل في مسؤولية: ${respName}**\n**لا يمكن استخدام نفس الرول في مسؤوليتين مختلفتين!**`);
+                  }
+                }
+
+                const currentRoles = responsibility.roles || [];
+                if (currentRoles.includes(roleId)) {
+                  await safeFollowUp(interaction, '**هذا الرول موجود بالفعل!**');
+                } else {
+                  responsibility.roles.push(roleId);
+                  await saveResponsibilities();
+
+                  // إعطاء الرول لجميع المسؤولين الحاليين
+                  for (const responsibleId of (responsibility.responsibles || [])) {
+                    try {
+                      const member = await message.guild.members.fetch(responsibleId);
+                      if (!member.roles.cache.has(roleId)) {
+                        await member.roles.add(roleId);
+                      }
+                    } catch (error) {
+                      console.log(`لا يمكن إضافة الرول لـ ${responsibleId}: ${error.message}`);
+                    }
+                  }
+
+                  await safeFollowUp(interaction, `**✅ تم إضافة الرول ${role.name} بنجاح**`);
+
+                  logEvent(client, message.guild, {
+                    type: 'RESPONSIBILITY_MANAGEMENT',
+                    title: 'تم إضافة رول لمسؤولية',
+                    description: `تم إضافة رول ${role.name} لمسؤولية ${responsibilityName}`,
+                    user: interaction.user,
+                    fields: [
+                      { name: 'المسؤولية', value: responsibilityName, inline: true },
+                      { name: 'الرول الجديد', value: `<@&${roleId}>`, inline: true }
+                    ]
+                  });
+
+                  // تحديث العرض
+                  await updateRoleDisplay();
+                }
+              } catch (error) {
+                await safeFollowUp(interaction, '**لم يتم العثور على الرول!**');
+              }
+            } else {
+              await safeFollowUp(interaction, '**يرجى منشن الرول أو كتابة الآي دي الصحيح**');
+            }
+          }
+
+          async function updateRoleDisplay() {
+            const rolesList = responsibility.roles || [];
+            let rolesText = '';
+
+            if (rolesList.length > 0) {
+              for (let i = 0; i < rolesList.length; i++) {
+                try {
+                  const role = message.guild.roles.cache.get(rolesList[i]);
+                  if (role) {
+                    rolesText += `**${i + 1}.** ${role.name} (<@&${rolesList[i]}>)\n`;
+                  } else {
+                    rolesText += `**${i + 1}.** رول محذوف (${rolesList[i]})\n`;
+                  }
+                } catch (error) {
+                  rolesText += `**${i + 1}.** رول محذوف (${rolesList[i]})\n`;
+                }
+              }
+            } else {
+              rolesText = '**لا توجد رولات مضافة**';
+            }
+
+            const embed = colorManager.createEmbed()
+              .setTitle(`**إدارة رولات: ${responsibilityName}**`)
+              .setDescription(`**الرولات الحالية:**\n${rolesText}\n\n**للإضافة منشن رول أو اكتب الآي دي\nللحذف اكتب رقم الرول\nعند الانتهاء اكتب تم**`)
+              .setFooter({ text: 'By Ahmed.' });
+
+            const backButton = new ButtonBuilder()
+              .setCustomId(`back_to_main_${responsibilityName}`)
+              .setLabel('Back')
+              .setStyle(ButtonStyle.Secondary);
+
+            const row = new ActionRowBuilder().addComponents(backButton);
+            
+            await interaction.editReply({ embeds: [embed], components: [row] });
+          }
+        } catch (error) {
+          console.error('خطأ في معالجة رسالة إدارة الرولات:', error);
+          await safeFollowUp(interaction, '**حدث خطأ أثناء المعالجة**');
+        }
+      });
+
+      messageCollector.on('end', (collected, reason) => {
+        console.log(`انتهى collector إدارة الرولات للمسؤولية ${responsibilityName} - السبب: ${reason}`);
+        activeCollectors.delete(`role_${responsibilityName}`);
+        if (reason !== 'user_done' && reason !== 'new_session') {
+          interaction.editReply({ content: '**انتهت مهلة هذا الإجراء.**', embeds: [], components: [] }).catch(() => {});
+        }
+      });
+
+    } catch (error) {
+      console.error('خطأ في عرض إدارة الرولات:', error);
+      await safeReply(interaction, '**حدث خطأ في عرض إدارة الرولات**');
     }
   }
 
@@ -542,6 +848,11 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
             .setLabel('manage')
             .setStyle(ButtonStyle.Secondary);
 
+          const roleButton = new ButtonBuilder()
+            .setCustomId(`role_${selected}`)
+            .setLabel('role')
+            .setStyle(ButtonStyle.Success);
+
           const orderedKeys = getOrderedResponsibilities();
           const currentIndex = orderedKeys.indexOf(selected);
           
@@ -550,7 +861,7 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
             .setLabel('main menu')
             .setStyle(ButtonStyle.Secondary);
 
-          const buttonsRow1 = new ActionRowBuilder().addComponents(editButton, renameButton, deleteButton, manageButton);
+          const buttonsRow1 = new ActionRowBuilder().addComponents(editButton, renameButton, deleteButton, manageButton, roleButton);
           
           // إنشاء select menu للترتيب
           const positionOptions = orderedKeys.map((key, index) => ({
@@ -662,6 +973,8 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
           await interaction.showModal(modal);
         } else if (action === 'manage') {
           await showResponsibleManagement(interaction, responsibilityName);
+        } else if (action === 'role') {
+          await showRoleManagement(interaction, responsibilityName);
         } else if (action === 'search') {
           // إظهار نافذة البحث عن الأعضاء
           const modal = new ModalBuilder()
@@ -749,6 +1062,11 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
             .setLabel('manage')
             .setStyle(ButtonStyle.Secondary);
 
+          const roleButton = new ButtonBuilder()
+            .setCustomId(`role_${responsibilityName}`)
+            .setLabel('role')
+            .setStyle(ButtonStyle.Success);
+
           const updatedOrderedKeys = getOrderedResponsibilities();
           const updatedIndex = updatedOrderedKeys.indexOf(responsibilityName);
           
@@ -757,7 +1075,7 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
             .setLabel('main menu')
             .setStyle(ButtonStyle.Secondary);
 
-          const buttonsRow1 = new ActionRowBuilder().addComponents(editButton, renameButton, deleteButton, manageButton);
+          const buttonsRow1 = new ActionRowBuilder().addComponents(editButton, renameButton, deleteButton, manageButton, roleButton);
           
           // إنشاء select menu للترتيب بالمواقع المحدثة
           const positionOptions = updatedOrderedKeys.map((key, index) => ({
