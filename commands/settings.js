@@ -60,6 +60,32 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
     }
   }
 
+  // دالة لترتيب المسؤوليات حسب خاصية order أو أبجدياً
+  function getOrderedResponsibilities() {
+    const keys = Object.keys(responsibilities);
+    
+    // فرز حسب خاصية order إذا كانت موجودة، وإلا أبجدياً
+    return keys.sort((a, b) => {
+      const orderA = responsibilities[a].order ?? 999999;
+      const orderB = responsibilities[b].order ?? 999999;
+      
+      if (orderA !== orderB) {
+        return orderA - orderB;
+      }
+      
+      // إذا كان الترتيب متساوي، فرز أبجدياً
+      return a.localeCompare(b, 'ar');
+    });
+  }
+  
+  // دالة لإعادة ترقيم المسؤوليات بعد التعديل
+  function reorderResponsibilities() {
+    const orderedKeys = getOrderedResponsibilities();
+    orderedKeys.forEach((key, index) => {
+      responsibilities[key].order = index;
+    });
+  }
+
   async function sendSettingsMenu() {
     const embed = colorManager.createEmbed()
       .setTitle('**Res sys**')
@@ -67,7 +93,8 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
       .setFooter({ text: 'By Ahmed.' })
       .setThumbnail('https://cdn.discordapp.com/emojis/1186585722401063032.png?v=1');
 
-    const options = Object.keys(responsibilities).map(key => ({
+    const orderedKeys = getOrderedResponsibilities();
+    const options = orderedKeys.map(key => ({
       label: key,
       description: responsibilities[key].description ? responsibilities[key].description.substring(0, 50) : 'لا يوجد شرح',
       value: key
@@ -120,7 +147,8 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
         .setFooter({ text: 'By Ahmed.' })
         .setThumbnail('https://cdn.discordapp.com/emojis/1186585722401063032.png?v=1');
 
-      const options = Object.keys(responsibilities).map(key => ({
+      const orderedKeys = getOrderedResponsibilities();
+      const options = orderedKeys.map(key => ({
         label: key,
         description: responsibilities[key].description ? responsibilities[key].description.substring(0, 50) : 'لا يوجد شرح',
         value: key
@@ -193,6 +221,14 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
       }
 
       const content = await generateManagementContent(responsibilityName);
+      
+      // إضافة زر البحث بعد زر Back
+      const searchButton = new ButtonBuilder()
+        .setCustomId(`search_${responsibilityName}`)
+        .setLabel('🔍 بحث وإضافة')
+        .setStyle(ButtonStyle.Success);
+
+      content.components[0].addComponents(searchButton);
 
       // We need to reply to the interaction first, then we can edit that reply later.
       if (!interaction.replied && !interaction.deferred) {
@@ -206,6 +242,41 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
       });
 
       activeCollectors.set(responsibilityName, messageCollector);
+
+      // إضافة collector للأزرار في صفحة إدارة المسؤولين
+      const buttonFilter = i => i.user.id === interaction.user.id && i.customId.startsWith('search_');
+      const buttonCollector = message.channel.createMessageComponentCollector({ 
+        filter: buttonFilter,
+        time: 300000 
+      });
+
+      buttonCollector.on('collect', async (buttonInt) => {
+        try {
+          if (buttonInt.customId === `search_${responsibilityName}`) {
+            // إظهار نافذة البحث عن الأعضاء
+            const modal = new ModalBuilder()
+              .setCustomId(`search_members_modal_${responsibilityName}`)
+              .setTitle('بحث عن أعضاء');
+
+            const searchInput = new TextInputBuilder()
+              .setCustomId('search_query')
+              .setLabel('اكتب اسم العضو للبحث')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+              .setPlaceholder('مثال: Ahmed, محمد, Ali');
+
+            const actionRow = new ActionRowBuilder().addComponents(searchInput);
+            modal.addComponents(actionRow);
+            await buttonInt.showModal(modal);
+          }
+        } catch (error) {
+          console.error('خطأ في معالج أزرار إدارة المسؤولين:', error);
+        }
+      });
+
+      messageCollector.on('end', () => {
+        buttonCollector.stop();
+      });
 
       messageCollector.on('collect', async (msg) => {
         try {
@@ -240,7 +311,7 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
               if (removedMember) {
                 try {
                   const removalEmbed = colorManager.createEmbed()
-                    .setTitle('Deleþed ')
+                    .setTitle('Deleted ')
                     .setDescription(`**تم إزالتك من مسؤولية: ${responsibilityName}**`)
                     .addFields([
                       { name: 'المسؤولية', value: responsibilityName, inline: true },
@@ -453,7 +524,12 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
 
           const editButton = new ButtonBuilder()
             .setCustomId(`edit_${selected}`)
-            .setLabel('edit')
+            .setLabel('edit desc')
+            .setStyle(ButtonStyle.Primary);
+
+          const renameButton = new ButtonBuilder()
+            .setCustomId(`rename_${selected}`)
+            .setLabel('rename')
             .setStyle(ButtonStyle.Primary);
 
           const deleteButton = new ButtonBuilder()
@@ -466,12 +542,31 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
             .setLabel('manage')
             .setStyle(ButtonStyle.Secondary);
 
+          const orderedKeys = getOrderedResponsibilities();
+          const currentIndex = orderedKeys.indexOf(selected);
+          
           const backButton = new ButtonBuilder()
             .setCustomId('back_to_menu')
             .setLabel('main menu')
             .setStyle(ButtonStyle.Secondary);
 
-          const buttonsRow = new ActionRowBuilder().addComponents(editButton, deleteButton, manageButton, backButton);
+          const buttonsRow1 = new ActionRowBuilder().addComponents(editButton, renameButton, deleteButton, manageButton);
+          
+          // إنشاء select menu للترتيب
+          const positionOptions = orderedKeys.map((key, index) => ({
+            label: `${index + 1}. ${key}`,
+            value: index.toString(),
+            default: index === currentIndex,
+            description: index === currentIndex ? '(الموضع الحالي)' : `نقل إلى الموضع ${index + 1}`
+          }));
+
+          const positionSelect = new StringSelectMenuBuilder()
+            .setCustomId(`reorder_${selected}`)
+            .setPlaceholder(' اختر الموضع الجديد للمسؤولية')
+            .addOptions(positionOptions);
+
+          const buttonsRow2 = new ActionRowBuilder().addComponents(backButton);
+          const selectRow = new ActionRowBuilder().addComponents(positionSelect);
 
           const respList = responsibility.responsibles && responsibility.responsibles.length > 0
             ? responsibility.responsibles.map(r => `<@${r}>`).join(', ')
@@ -482,10 +577,10 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
             : '**لا يوجد شرح**';
 
           const embedEdit = colorManager.createEmbed()
-            .setTitle(`**تعديل المسؤولية: ${selected}**`)
-            .setDescription(`**المسؤولون:** ${respList}\n**الشرح:** ${desc}`);
+            .setTitle(`**تعديل المسؤولية : ${selected}**`)
+            .setDescription(`**المسؤولون :** ${respList}\n**الشرح :** ${desc}\n**الترتيب :** ${currentIndex + 1} من ${orderedKeys.length}`);
 
-          await interaction.update({ embeds: [embedEdit], components: [buttonsRow] });
+          await interaction.update({ embeds: [embedEdit], components: [buttonsRow1, selectRow, buttonsRow2] });
         }
       } else if (interaction.customId === 'back_to_menu' || interaction.customId.startsWith('back_to_main_')) {
         // إيقاف جميع الـ collectors النشطة عند العودة للقائمة الرئيسية
@@ -549,9 +644,151 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
           const actionRow = new ActionRowBuilder().addComponents(descInput);
           modal.addComponents(actionRow);
           await interaction.showModal(modal);
+        } else if (action === 'rename') {
+          const modal = new ModalBuilder()
+            .setCustomId(`rename_modal_${responsibilityName}`)
+            .setTitle(`**تغيير اسم المسؤولية**`);
+
+          const nameInput = new TextInputBuilder()
+            .setCustomId('new_responsibility_name')
+            .setLabel('الاسم الجديد للمسؤولية')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setPlaceholder('أدخل الاسم الجديد')
+            .setValue(responsibilityName);
+
+          const actionRow = new ActionRowBuilder().addComponents(nameInput);
+          modal.addComponents(actionRow);
+          await interaction.showModal(modal);
         } else if (action === 'manage') {
           await showResponsibleManagement(interaction, responsibilityName);
+        } else if (action === 'search') {
+          // إظهار نافذة البحث عن الأعضاء
+          const modal = new ModalBuilder()
+            .setCustomId(`search_members_modal_${responsibilityName}`)
+            .setTitle('بحث عن أعضاء');
+
+          const searchInput = new TextInputBuilder()
+            .setCustomId('search_query')
+            .setLabel('اكتب اسم العضو للبحث')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setPlaceholder('مثال: Ahmed, محمد, Ali');
+
+          const actionRow = new ActionRowBuilder().addComponents(searchInput);
+          modal.addComponents(actionRow);
+          await interaction.showModal(modal);
         }
+      } else if (interaction.isStringSelectMenu() && interaction.customId.startsWith('reorder_')) {
+        // معالجة إعادة الترتيب من select menu
+        const responsibilityName = interaction.customId.replace('reorder_', '');
+        const newPosition = parseInt(interaction.values[0]);
+        
+        if (!responsibilities[responsibilityName]) {
+          await updateMainMenu();
+          return await safeReply(interaction, '**المسؤولية غير موجودة!**');
+        }
+        
+        const orderedKeys = getOrderedResponsibilities();
+        const currentPosition = orderedKeys.indexOf(responsibilityName);
+        
+        if (currentPosition === newPosition) {
+          return await safeReply(interaction, '**المسؤولية في نفس الموضع بالفعل!**');
+        }
+        
+        // إزالة المسؤولية من موضعها الحالي
+        orderedKeys.splice(currentPosition, 1);
+        // إدراجها في الموضع الجديد
+        orderedKeys.splice(newPosition, 0, responsibilityName);
+        
+        // إعادة ترقيم جميع المسؤوليات
+        orderedKeys.forEach((key, index) => {
+          responsibilities[key].order = index;
+        });
+        
+        await saveResponsibilities();
+        await safeReply(interaction, `**✅ تم نقل "${responsibilityName}" إلى الموضع ${newPosition + 1}**`);
+        
+        logEvent(client, message.guild, {
+          type: 'RESPONSIBILITY_MANAGEMENT',
+          title: 'تم إعادة ترتيب مسؤولية',
+          description: `تم نقل "${responsibilityName}" من الموضع ${currentPosition + 1} إلى ${newPosition + 1}`,
+          user: interaction.user,
+          fields: [
+            { name: 'المسؤولية', value: responsibilityName, inline: true },
+            { name: 'الموضع القديم', value: (currentPosition + 1).toString(), inline: true },
+            { name: 'الموضع الجديد', value: (newPosition + 1).toString(), inline: true }
+          ]
+        });
+        
+        // تحديث المنيو مباشرة بالمسؤوليات والمواقع الجديدة
+        setTimeout(async () => {
+          const responsibility = responsibilities[responsibilityName];
+          if (!responsibility) {
+            await updateMainMenu();
+            return;
+          }
+
+          const editButton = new ButtonBuilder()
+            .setCustomId(`edit_${responsibilityName}`)
+            .setLabel('edit desc')
+            .setStyle(ButtonStyle.Primary);
+
+          const renameButton = new ButtonBuilder()
+            .setCustomId(`rename_${responsibilityName}`)
+            .setLabel('rename')
+            .setStyle(ButtonStyle.Primary);
+
+          const deleteButton = new ButtonBuilder()
+            .setCustomId(`delete_${responsibilityName}`)
+            .setLabel('delete')
+            .setStyle(ButtonStyle.Danger);
+
+          const manageButton = new ButtonBuilder()
+            .setCustomId(`manage_${responsibilityName}`)
+            .setLabel('manage')
+            .setStyle(ButtonStyle.Secondary);
+
+          const updatedOrderedKeys = getOrderedResponsibilities();
+          const updatedIndex = updatedOrderedKeys.indexOf(responsibilityName);
+          
+          const backButton = new ButtonBuilder()
+            .setCustomId('back_to_menu')
+            .setLabel('main menu')
+            .setStyle(ButtonStyle.Secondary);
+
+          const buttonsRow1 = new ActionRowBuilder().addComponents(editButton, renameButton, deleteButton, manageButton);
+          
+          // إنشاء select menu للترتيب بالمواقع المحدثة
+          const positionOptions = updatedOrderedKeys.map((key, index) => ({
+            label: `${index + 1}. ${key}`,
+            value: index.toString(),
+            default: index === updatedIndex,
+            description: index === updatedIndex ? '(الموضع الحالي)' : `نقل إلى الموضع ${index + 1}`
+          }));
+
+          const positionSelect = new StringSelectMenuBuilder()
+            .setCustomId(`reorder_${responsibilityName}`)
+            .setPlaceholder('اختر الموضع الجديد للمسؤولية')
+            .addOptions(positionOptions);
+
+          const buttonsRow2 = new ActionRowBuilder().addComponents(backButton);
+          const selectRow = new ActionRowBuilder().addComponents(positionSelect);
+
+          const respList = responsibility.responsibles && responsibility.responsibles.length > 0
+            ? responsibility.responsibles.map(r => `<@${r}>`).join(', ')
+            : '**لا يوجد مسؤولين معينين**';
+
+          const desc = responsibility.description && responsibility.description.toLowerCase() !== 'لا'
+            ? responsibility.description
+            : '**لا يوجد شرح**';
+
+          const embedEdit = colorManager.createEmbed()
+            .setTitle(`**تعديل المسؤولية : ${responsibilityName}**`)
+            .setDescription(`**المسؤولون :** ${respList}\n**الشرح :** ${desc}\n**الترتيب :** ${updatedIndex + 1} من ${updatedOrderedKeys.length}`);
+
+          await interaction.message.edit({ embeds: [embedEdit], components: [buttonsRow1, selectRow, buttonsRow2] });
+        }, 1000);
       } else if (interaction.customId && interaction.customId.startsWith('settings_manage_')) {
             const action = interaction.customId.replace('settings_manage_', '');
 
@@ -562,65 +799,74 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
                     return;
                 }
 
-                // إضافة مسؤولية جديدة
-                const modal = new ModalBuilder()
-                    .setCustomId('add_responsibility_modal')
-                    .setTitle('إضافة مسؤولية جديدة');
+                // إنشاء Select Menu لاختيار الأعضاء
+                const members = await message.guild.members.fetch();
+                const memberOptions = members
+                    .filter(m => !m.user.bot)
+                    .map(m => ({
+                        label: m.displayName || m.user.username,
+                        value: m.id
+                    }))
+                    .slice(0, 25);
 
-                const nameInput = new TextInputBuilder()
-                    .setCustomId('responsibility_name')
-                    .setLabel('اسم المسؤولية')
-                    .setStyle(TextInputStyle.Short)
-                    .setRequired(true)
-                    .setMaxLength(50);
-
-                const descInput = new TextInputBuilder()
-                    .setCustomId('responsibility_desc')
-                    .setLabel('وصف المسؤولية')
-                    .setStyle(TextInputStyle.Paragraph)
-                    .setRequired(false)
-                    .setMaxLength(500);
-
-                const nameRow = new ActionRowBuilder().addComponents(nameInput);
-                const descRow = new ActionRowBuilder().addComponents(descInput);
-                modal.addComponents(nameRow, descRow);
-
-                await interaction.showModal(modal);
-                return;
-            } else if (action === 'edit' || action === 'delete') {
-                // التأكد من وجود responsibilities
-                if (!responsibilities || typeof responsibilities !== 'object') {
-                    await interaction.reply({ content: '**خطأ في تحميل المسؤوليات!**', ephemeral: true });
+                if (memberOptions.length === 0) {
+                    await interaction.reply({ content: '**لا يوجد أعضاء متاحين!**', ephemeral: true });
                     return;
                 }
-
-                // إنشاء قائمة المسؤوليات
-                const responsibilityKeys = Object.keys(responsibilities);
-                if (responsibilityKeys.length === 0) {
-                    await interaction.reply({ content: '**لا توجد مسؤوليات لإدارتها.**', ephemeral: true });
-                    return;
-                }
-
-                const options = responsibilityKeys.map(key => {
-                    const resp = responsibilities[key];
-                    return {
-                        label: key,
-                        value: key,
-                        description: (resp && resp.description) ? resp.description.substring(0, 100) : 'لا يوجد وصف'
-                    };
-                });
 
                 const selectMenu = new StringSelectMenuBuilder()
-                    .setCustomId(`responsibility_${action}_select`)
-                    .setPlaceholder(`اختر مسؤولية ${action === 'edit' ? 'للتعديل' : 'للحذف'}`)
-                    .addOptions(options);
+                    .setCustomId('settings_select_members')
+                    .setPlaceholder('اختر الأعضاء')
+                    .addOptions(memberOptions)
+                    .setMinValues(1)
+                    .setMaxValues(Math.min(memberOptions.length, 25));
 
                 const row = new ActionRowBuilder().addComponents(selectMenu);
-                await interaction.reply({ content: `**اختر مسؤولية ${action === 'edit' ? 'للتعديل' : 'للحذف'}:**`, components: [row], ephemeral: true });
+                const embed = colorManager.createEmbed()
+                    .setTitle('**إضافة مسؤولين**')
+                    .setDescription('**اختر الأعضاء الذين تريد تعيينهم كمسؤولين**')
+                    .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400676711439273994/1320524603868712960.png?ex=688d8157&is=688c2fd7&hm=2f0fcafb0d4dd4fc905d6c5c350cfafe7d68e902b5668117f2e7903a62c8&');
+
+                await interaction.update({ embeds: [embed], components: [row] });
+            } else if (action === 'owners') {
+                // التحقق من أن المستخدم هو مالك السيرفر أو مالك البوت
+                if (!BOT_OWNERS.includes(interaction.user.id) && message.guild.ownerId !== interaction.user.id) {
+                    await interaction.reply({ content: '**ليس لديك صلاحية للوصول لهذا الخيار!**', ephemeral: true });
+                    return;
+                }
+
+                // عرض خيارات إدارة المالكين
+                const addButton = new ButtonBuilder()
+                    .setCustomId('settings_owners_add')
+                    .setLabel('إضافة مالك')
+                    .setStyle(ButtonStyle.Success);
+
+                const removeButton = new ButtonBuilder()
+                    .setCustomId('settings_owners_remove')
+                    .setLabel('إزالة مالك')
+                    .setStyle(ButtonStyle.Danger);
+
+                const listButton = new ButtonBuilder()
+                    .setCustomId('settings_owners_list')
+                    .setLabel('عرض المالكين')
+                    .setStyle(ButtonStyle.Primary);
+
+                const backButton = new ButtonBuilder()
+                    .setCustomId('back_to_menu')
+                    .setLabel('رجوع')
+                    .setStyle(ButtonStyle.Secondary);
+
+                const row = new ActionRowBuilder().addComponents(addButton, removeButton, listButton, backButton);
+                const embed = colorManager.createEmbed()
+                    .setTitle('**إدارة مالكي البوت**')
+                    .setDescription('**اختر الإجراء المطلوب**')
+                    .setThumbnail('https://cdn.discordapp.com/emojis/1186585722401063032.png?v=1');
+
+                await interaction.update({ embeds: [embed], components: [row] });
             }
-      } else if (interaction.customId === 'select_members_for_responsibility') {
+        } else if (interaction.customId === 'settings_select_members') {
             try {
-                const selectedMembers = interaction.values || [];
+                const selectedMembers = interaction.values;
 
                 // البحث عن اسم المسؤولية من العنوان
                 let responsibilityName = null;
@@ -676,7 +922,73 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
                 await safeReply(interaction, '**حدث خطأ أثناء تحديث المسؤولية.**');
             }
             return;
+        } else if (interaction.customId.startsWith('add_searched_members_')) {
+        const responsibilityName = interaction.customId.replace('add_searched_members_', '');
+        const selectedMemberIds = interaction.values;
+
+        if (!responsibilities[responsibilityName]) {
+          return await safeReply(interaction, '**المسؤولية غير موجودة!**');
         }
+
+        const currentResponsibles = responsibilities[responsibilityName].responsibles || [];
+        let addedCount = 0;
+        let alreadyExistsCount = 0;
+
+        for (const memberId of selectedMemberIds) {
+          if (!currentResponsibles.includes(memberId)) {
+            currentResponsibles.push(memberId);
+            addedCount++;
+
+            // إرسال رسالة ترحيب للمسؤول الجديد
+            try {
+              const member = await message.guild.members.fetch(memberId);
+              const welcomeEmbed = colorManager.createEmbed()
+                .setTitle('Resb')
+                .setDescription(`**تم تعيينك كمسؤول عن: ${responsibilityName}**`)
+                .addFields([
+                  { name: 'المسؤولية', value: responsibilityName, inline: true },
+                  { name: 'السيرفر', value: message.guild.name, inline: true },
+                  { name: 'تم التعيين بواسطة', value: interaction.user.tag, inline: true }
+                ])
+                .setTimestamp();
+
+              await member.send({ embeds: [welcomeEmbed] });
+            } catch (error) {
+              console.log(`لا يمكن إرسال رسالة للمستخدم ${memberId}: ${error.message}`);
+            }
+          } else {
+            alreadyExistsCount++;
+          }
+        }
+
+        responsibilities[responsibilityName].responsibles = currentResponsibles;
+        const saved = await saveResponsibilities();
+
+        if (!saved) {
+          return await safeReply(interaction, '**فشل في حفظ المسؤولين!**');
+        }
+
+        let resultMessage = '';
+        if (addedCount > 0) {
+          resultMessage += `**✅ تم إضافة ${addedCount} مسؤول بنجاح**\n`;
+        }
+        if (alreadyExistsCount > 0) {
+          resultMessage += `**ℹ️ ${alreadyExistsCount} عضو مضاف بالفعل**`;
+        }
+
+        await safeReply(interaction, resultMessage || '**تم تحديث المسؤولين**');
+
+        logEvent(client, message.guild, {
+          type: 'RESPONSIBILITY_MANAGEMENT',
+          title: 'تم إضافة مسؤولين جدد',
+          description: `تم إضافة ${addedCount} مسؤول للمسؤولية: ${responsibilityName}`,
+          user: interaction.user,
+          fields: [
+            { name: 'المسؤولية', value: responsibilityName, inline: true },
+            { name: 'عدد المضافين', value: addedCount.toString(), inline: true }
+          ]
+        });
+      }
     } catch (error) {
       console.error('خطأ في معالج إعدادات المسؤوليات:', error);
       await safeReply(interaction, '**حدث خطأ أثناء معالجة الطلب.**');
@@ -721,14 +1033,17 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
         );
 
         if (existingResponsibility) {
-          await safeReply(interaction, `**المسؤولية "${existingResponsibility}" موجودة بالفعل!**`);
+          await safeReply(interaction, `**المسؤولية "${existingResponsibility}" موجودة بالفعل!**\n**يرجى اختيار اسم آخر.**`);
           return;
         }
 
         // إضافة المسؤولية الجديدة للكائن المحمّل والكائن الرئيسي
+        const maxOrder = Math.max(-1, ...Object.values(currentResponsibilities).map(r => r.order ?? -1));
+        
         currentResponsibilities[name] = {
           description: (!desc || desc.toLowerCase() === 'لا') ? '' : desc,
-          responsibles: []
+          responsibles: [],
+          order: maxOrder + 1
         };
         
         responsibilities[name] = currentResponsibilities[name];
@@ -762,145 +1077,11 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
           ]
         });
 
-        await safeReply(interaction, `**✅ تم إنشاء المسؤولية: ${name}**\n\n**الآن يمكنك إضافة المسؤولين بالمنشن وعند الانتهاء اكتب تم**`);
-
-        // Create message collector for adding responsibles after creation
-        const messageFilter = m => m.author.id === interaction.user.id && m.channel.id === interaction.channel.id;
-        const addResponsiblesCollector = message.channel.createMessageCollector({
-          filter: messageFilter,
-          time: 300000 // 5 minutes
-        });
-
-        addResponsiblesCollector.on('collect', async (msg) => {
-          try {
-            await msg.delete().catch(() => {});
-
-            const content = msg.content.trim().toLowerCase();
-
-            // إنهاء الإضافة
-            if (content === 'تم' || content === 'done' || content === 'انتهى' || content === 'finish') {
-              addResponsiblesCollector.stop();
-              await interaction.followUp({
-                content: `**✅ تم الانتهاء من إعداد المسؤولية: ${name}**`,
-                ephemeral: true
-              });
-              setTimeout(async () => {
-                await updateMainMenu();
-              }, 1500);
-              return;
-            }
-
-            // استخراج المعرفات والمنشنات
-            const userIds = [];
-            const mentions = msg.content.match(/<@!?(\d+)>/g);
-            const rawIds = msg.content.match(/\b\d{17,19}\b/g);
-
-            if (mentions) {
-              mentions.forEach(mention => {
-                const id = mention.replace(/[<@!>]/g, '');
-                if (!userIds.includes(id)) userIds.push(id);
-              });
-            }
-
-            if (rawIds) {
-              rawIds.forEach(id => {
-                if (!userIds.includes(id)) userIds.push(id);
-              });
-            }
-
-            if (userIds.length === 0) {
-              await interaction.followUp({
-                content: '**يرجى منشن الأعضاء أو كتابة الـ ID بشكل صحيح**',
-                ephemeral: true
-              });
-              return;
-            }
-
-            let addedCount = 0;
-            let failedCount = 0;
-
-            for (const userId of userIds) {
-              try {
-                const member = await message.guild.members.fetch(userId);
-
-                if (!responsibilities[name].responsibles.includes(userId)) {
-                  responsibilities[name].responsibles.push(userId);
-                  addedCount++;
-
-                  // إرسال رسالة ترحيب للمسؤول الجديد
-                  try {
-                    const welcomeEmbed = colorManager.createEmbed()
-                      .setTitle(' Resb')
-                      .setDescription(`**تم تعيينك كمسؤول عن: ${name}**`)
-                      .addFields([
-                        { name: 'المسؤولية', value: name, inline: true },
-                        { name: 'السيرفر', value: message.guild.name, inline: true },
-                        { name: 'تم التعيين بواسطة', value: interaction.user.tag, inline: true }
-                      ])
-                      .setTimestamp();
-
-                    await member.send({ embeds: [welcomeEmbed] });
-                  } catch (dmError) {
-                    console.log(`لا يمكن إرسال رسالة للمستخدم ${userId}: ${dmError.message}`);
-                  }
-
-                  // تسجيل الحدث
-                  logEvent(client, message.guild, {
-                    type: 'RESPONSIBILITY_MANAGEMENT',
-                    title: 'تم إضافة مسؤول جديد',
-                    description: `تم إضافة مسؤول جديد للمسؤولية: ${name}`,
-                    user: interaction.user,
-                    fields: [
-                      { name: 'المسؤولية', value: name, inline: true },
-                      { name: 'المسؤول الجديد', value: `<@${userId}>`, inline: true }
-                    ]
-                  });
-                }
-              } catch (error) {
-                failedCount++;
-                console.log(`فشل في إضافة المستخدم ${userId}: ${error.message}`);
-              }
-            }
-
-            const saved = await saveResponsibilities();
-            if (!saved) {
-              await interaction.followUp({
-                content: '**فشل في حفظ المسؤولين!**',
-                ephemeral: true
-              });
-              return;
-            }
-
-            let resultMessage = '';
-            if (addedCount > 0) {
-              resultMessage += `**✅ تم إضافة ${addedCount} مسؤول**\n`;
-            }
-            if (failedCount > 0) {
-              resultMessage += `**❌ فشل في إضافة ${failedCount} مستخدم**\n`;
-            }
-            resultMessage += `**اكتب "تم" عندما تنتهي من الإضافة**`;
-
-            await interaction.followUp({
-              content: resultMessage,
-              ephemeral: true
-            });
-
-          } catch (error) {
-            console.error('خطأ في إضافة المسؤولين:', error);
-            await interaction.followUp({
-              content: '**حدث خطأ أثناء إضافة المسؤولين**',
-              ephemeral: true
-            });
-          }
-        });
-
-        addResponsiblesCollector.on('end', () => {
-          console.log('انتهى collector إضافة المسؤولين');
-        });
+        await safeReply(interaction, `**✅ تم إنشاء المسؤولية: ${name}**\n\n**يمكنك الآن اختيارها من القائمة الرئيسية لإضافة المسؤولين**`);
 
         setTimeout(async () => {
           await updateMainMenu();
-        }, 1500);
+        }, 2000);
 
       } else if (interaction.customId.startsWith('edit_desc_modal_')) {
         const responsibilityName = interaction.customId.replace('edit_desc_modal_', '');
@@ -934,6 +1115,127 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
         setTimeout(async () => {
           await updateMainMenu();
         }, 1500);
+      } else if (interaction.customId.startsWith('rename_modal_')) {
+        const oldName = interaction.customId.replace('rename_modal_', '');
+        const newName = interaction.fields.getTextInputValue('new_responsibility_name').trim();
+
+        if (!newName) {
+          await safeReply(interaction, '**يجب إدخال اسم جديد!**');
+          return;
+        }
+
+        if (!responsibilities[oldName]) {
+          return await safeReply(interaction, '**المسؤولية غير موجودة!**');
+        }
+
+        // إعادة تحميل المسؤوليات من الملف للتأكد من البيانات الحديثة
+        const fs = require('fs');
+        const path = require('path');
+        const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
+        
+        let currentResponsibilities = {};
+        try {
+          if (fs.existsSync(responsibilitiesPath)) {
+            const data = fs.readFileSync(responsibilitiesPath, 'utf8');
+            currentResponsibilities = JSON.parse(data);
+          }
+        } catch (error) {
+          console.error('خطأ في قراءة المسؤوليات:', error);
+          currentResponsibilities = {};
+        }
+
+        // التحقق من أن الاسم الجديد غير موجود (ما لم يكن نفس الاسم القديم)
+        const existingResponsibility = Object.keys(currentResponsibilities).find(
+          key => key.toLowerCase() === newName.toLowerCase() && key !== oldName
+        );
+
+        if (existingResponsibility) {
+          await safeReply(interaction, `**المسؤولية "${existingResponsibility}" موجودة بالفعل!**\n**يرجى اختيار اسم آخر.**`);
+          return;
+        }
+
+        // نسخ البيانات القديمة
+        const responsibilityData = { ...responsibilities[oldName] };
+        
+        // حذف المسؤولية القديمة
+        delete responsibilities[oldName];
+        
+        // إضافة المسؤولية بالاسم الجديد
+        responsibilities[newName] = responsibilityData;
+
+        const saved = await saveResponsibilities();
+        if (!saved) {
+          // استرجاع التغيير في حالة الفشل
+          responsibilities[oldName] = responsibilityData;
+          delete responsibilities[newName];
+          return await safeReply(interaction, '**فشل في تغيير اسم المسؤولية!**');
+        }
+
+        logEvent(client, message.guild, {
+          type: 'RESPONSIBILITY_MANAGEMENT',
+          title: 'Responsibility Renamed',
+          description: `Responsibility "${oldName}" has been renamed to "${newName}".`,
+          user: message.author,
+          fields: [
+            { name: 'Old Name', value: oldName },
+            { name: 'New Name', value: newName }
+          ]
+        });
+
+        await safeReply(interaction, `**✅ تم تغيير اسم المسؤولية من "${oldName}" إلى "${newName}"**`);
+
+        setTimeout(async () => {
+          await updateMainMenu();
+        }, 1500);
+      } else if (interaction.customId.startsWith('search_members_modal_')) {
+        const responsibilityName = interaction.customId.replace('search_members_modal_', '');
+        const searchQuery = interaction.fields.getTextInputValue('search_query').trim().toLowerCase();
+
+        if (!searchQuery) {
+          await safeReply(interaction, '**يجب إدخال نص للبحث!**');
+          return;
+        }
+
+        if (!responsibilities[responsibilityName]) {
+          return await safeReply(interaction, '**المسؤولية غير موجودة!**');
+        }
+
+        // البحث عن الأعضاء
+        const allMembers = await message.guild.members.fetch();
+        const matchedMembers = allMembers.filter(member => 
+          !member.user.bot && (
+            member.user.username.toLowerCase().includes(searchQuery) ||
+            member.user.displayName?.toLowerCase().includes(searchQuery) ||
+            member.displayName?.toLowerCase().includes(searchQuery) ||
+            member.user.tag.toLowerCase().includes(searchQuery)
+          )
+        );
+
+        if (matchedMembers.size === 0) {
+          await safeReply(interaction, `**لم يتم العثور على أي أعضاء تطابق البحث: "${searchQuery}"**`);
+          return;
+        }
+
+        // إنشاء Select Menu للأعضاء الذين تم العثور عليهم
+        const memberOptions = matchedMembers.map(member => ({
+          label: member.displayName || member.user.username,
+          description: `@${member.user.username}`,
+          value: member.id
+        })).slice(0, 25); // Discord limit
+
+        const selectMenu = new StringSelectMenuBuilder()
+          .setCustomId(`add_searched_members_${responsibilityName}`)
+          .setPlaceholder('اختر الأعضاء لإضافتهم')
+          .setMinValues(1)
+          .setMaxValues(Math.min(memberOptions.length, 25))
+          .addOptions(memberOptions);
+
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+        const embed = colorManager.createEmbed()
+          .setTitle(`**نتائج البحث: ${matchedMembers.size} عضو**`)
+          .setDescription(`**تم العثور على ${matchedMembers.size} عضو يطابق البحث "${searchQuery}"**\n\n**اختر الأعضاء الذين تريد إضافتهم للمسؤولية: ${responsibilityName}**`);
+
+        await safeReply(interaction, '', { embeds: [embed], components: [row] });
       }
     } catch (error) {
       console.error('خطأ في معالج المودال:', error);
