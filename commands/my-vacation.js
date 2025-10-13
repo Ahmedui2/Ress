@@ -32,13 +32,13 @@ function updateTimeRemaining(embed, activeVacation) {
         const seconds = totalSeconds % 60;
         
         if (days > 0) {
-            timeDisplay = `${days} يوم ${hours} ساعة ${minutes} دقيقة ${seconds} ثانية`;
+            timeDisplay = `${days}d ${hours}h ${minutes}m ${seconds}s`;
         } else if (hours > 0) {
-            timeDisplay = `${hours} ساعة ${minutes} دقيقة ${seconds} ثانية`;
+            timeDisplay = `${hours}h ${minutes}m ${seconds}s`;
         } else if (minutes > 0) {
-            timeDisplay = `${minutes} دقيقة ${seconds} ثانية`;
+            timeDisplay = `${minutes}m ${seconds}s`;
         } else {
-            timeDisplay = `${seconds} ثانية`;
+            timeDisplay = `${seconds}s`;
         }
     } else {
         timeDisplay = "انتهت الإجازة";
@@ -68,7 +68,10 @@ async function execute(message, args, { client, BOT_OWNERS }) {
         const hasAdminRole = authorMember.roles.cache.some(role => adminRoles.includes(role.id));
 
         if (!isOwner && !hasAdminRole) {
-            return message.reply({ content: '❌ يجب أن تكون مدير لفحص حالة إجازة المستخدمين الآخرين.', ephemeral: true });
+            const noPermissionEmbed = new EmbedBuilder()
+                .setDescription('❌ ** خوي.**')
+                .setColor(colorManager.getColor());
+            return message.reply({ embeds: [noPermissionEmbed] });
         }
     }
 
@@ -92,7 +95,7 @@ async function execute(message, args, { client, BOT_OWNERS }) {
             { name: "الحالة", value: "في إجازة", inline: true },
             { name: "الوقت المتبقي", value: remainingTime > 0 ? ms(remainingTime, { long: true }) : "انتهت", inline: true },
             { name: "معتمد من", value: activeVacation.approvedBy ? `<@${activeVacation.approvedBy}>` : 'غير معروف', inline: true },
-            { name: "الأدوار المسحوبة", value: activeVacation.removedRoles?.map(r => `<@&${r}>`).join(', ') || 'لا توجد', inline: false }
+            { name: "الرولات المسحوبة", value: activeVacation.removedRoles?.map(r => `<@&${r}>`).join(', ') || 'لا توجد', inline: false }
         )
         .setFooter({ text: `تاريخ البداية: ${new Date(activeVacation.startDate).toLocaleString('en-US', { 
             timeZone: 'Asia/Riyadh',
@@ -184,25 +187,10 @@ async function handleInteraction(interaction, context) {
         const row = new ActionRowBuilder().addComponents(confirmButton, cancelButton);
 
         await interaction.reply({
-            content: 'هل أنت متأكد من أنك تريد طلب إنهاء مبكر لإجازتك؟ هذا سيتطلب موافقة من المعتمدين الأصليين.',
+            content: 'هل أنت متأكد من أنك تريد طلب إنهاء مبكر لإجازتك؟.',
             components: [row],
             ephemeral: true
         });
-        
-        // تعطيل الزر الأصلي فقط بعد تأكيد الإرسال - نقل هذا للـ confirm handler
-        try {
-            const disabledButton = new ButtonBuilder()
-                .setCustomId(`vac_end_processing_${userId}`)
-                .setLabel("⏳ جاري المعالجة...")
-                .setStyle(ButtonStyle.Secondary)
-                .setDisabled(true);
-
-            const disabledRow = new ActionRowBuilder().addComponents(disabledButton);
-            const originalEmbed = interaction.message.embeds[0];
-            await interaction.message.edit({ embeds: [originalEmbed], components: [disabledRow] });
-        } catch (error) {
-            console.error('خطأ في تعطيل الزر:', error);
-        }
         
     }
 
@@ -266,7 +254,7 @@ async function handleInteraction(interaction, context) {
                 .setColor(colorManager.getColor('pending') || '#E67E22')
                 .setAuthor({ name: user.tag, iconURL: user.displayAvatarURL() })
                 .addFields(
-                    { name: "___المستخدم___", value: `${member}`, inline: true },
+                    { name: "___العضو___", value: `${member}`, inline: true },
                     { name: "___السبب الأصلي___", value: activeVacation.reason || 'غير محدد', inline: false },
                     { name: "___تاريخ انتهاء الإجازة الأصلي___", value: new Date(activeVacation.endDate).toLocaleString('en-US', { 
                         timeZone: 'Asia/Riyadh',
@@ -276,7 +264,7 @@ async function handleInteraction(interaction, context) {
                         hour: '2-digit', 
                         minute: '2-digit'
                     }), inline: true },
-                    { name: "___الأدوار المسحوبة___", value: activeVacation.removedRoles?.map(r => `<@&${r}>`).join(', ') || 'لا توجد', inline: false }
+                    { name: "___الرولات المسحوبة___", value: activeVacation.removedRoles?.map(r => `<@&${r}>`).join(', ') || 'لا توجد', inline: false }
                 )
                 .setTimestamp();
 
@@ -371,6 +359,21 @@ async function handleInteraction(interaction, context) {
                 content: '✅ **تم إرسال طلب إنهاء الإجازة المبكر للمعتمدين بنجاح.**',
                 components: [disabledRow]
             });
+
+            // تعطيل الزر الأصلي في رسالة اجازتي
+            try {
+                const disabledButton = new ButtonBuilder()
+                    .setCustomId(`vac_end_processing_${userId}`)
+                    .setLabel("⏳ تم إرسال الطلب")
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(true);
+
+                const disabledRowOriginal = new ActionRowBuilder().addComponents(disabledButton);
+                const originalEmbed = interaction.message.embeds[0];
+                await interaction.message.edit({ embeds: [originalEmbed], components: [disabledRowOriginal] });
+            } catch (error) {
+                console.error('خطأ في تعطيل الزر الأصلي:', error);
+            }
             
             // تعطيل الزر الأصلي في رسالة اجازتي
             setTimeout(async () => {

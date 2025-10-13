@@ -16,7 +16,9 @@ async function execute(message, args, { client, scheduleSave, BOT_OWNERS }) {
         return;
     }
 
-    const isOwner = BOT_OWNERS.includes(message.author.id) || message.guild.ownerId === message.author.id;
+    const owners = Array.isArray(BOT_OWNERS) ? BOT_OWNERS : [];
+
+    const isOwner = owners.includes(message.author.id) || message.guild.ownerId === message.author.id;
     if (!isOwner) {
         await message.react('❌');
         return;
@@ -30,7 +32,7 @@ async function sendLogSettings(channel, client) {
 
     const embed = colorManager.createEmbed()
         .setTitle('إعدادات نظام اللوق')
-        .setColor('#0099ff')
+        
         .setDescription('** Log system.**')
         .setThumbnail('https://cdn.discordapp.com/attachments/1393840634149736508/1398105756800389283/images__3_-removebg-preview.png?ex=688426f3&is=6882d573&hm=045681f140e43e60026fe068aaca3da588784bd5d8a60112ef19444fc48857e9&');
 
@@ -621,7 +623,7 @@ async function handleInteraction(interaction, client, scheduleSave, BOT_OWNERS) 
             const embed = colorManager.createEmbed()
                 .setTitle('إضافة رولات للوق')
                 .setDescription('**منشن الرولات أو اكتب الآي دي**')
-                .setColor('#00ff00')
+                
                 .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400645490118234132/download__8_-removebg-preview.png?ex=688d6443&is=688c12c3&hm=217945651e6a5f649ede7719b4572da60d009a8aa461a507b72e2f82ea59a4cd&');
 
             const row = new ActionRowBuilder().addComponents(
@@ -803,7 +805,7 @@ async function handleInteraction(interaction, client, scheduleSave, BOT_OWNERS) 
             const removeEmbed = colorManager.createEmbed()
                 .setTitle('Delete all')
                 .setDescription(rolesList)
-                .setColor('#ff4444')
+                
                 .setFooter({ text: `إجمالي الرولات : ${currentLogRoles.length}` });
 
             await interaction.reply({ 
@@ -890,7 +892,7 @@ async function handleInteraction(interaction, client, scheduleSave, BOT_OWNERS) 
                     const successEmbed = colorManager.createEmbed()
                         .setTitle('✅ ')
                         .setDescription(`**Comoletly Delete __${rolesToRemove.length}__**`)
-                        .setColor('#00ff44')
+                 
                         .setFooter({ text: `**By Ahmed **` });
 
                     // إرسال رسالة تأكيد مؤقتة

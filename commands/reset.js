@@ -201,7 +201,6 @@ async function handleTimeBasedReset(interaction, resetType, points, responsibili
     const confirmEmbed = colorManager.createEmbed()
         .setTitle(`**Sure ${getResetTypeName(resetType)}**`)
         .setDescription(`** هل انت متاكد من التصفير${getResetTypeName(resetType).toLowerCase()}؟**`)
-        .setColor('#ff9500')
         .addFields([
             { name: '** Type **', value: getResetTypeDescription(resetType), inline: false },
             { name: '**Points**', value: `${affectedPoints} نقطة`, inline: false }
@@ -1210,7 +1209,6 @@ async function handleClearBlockedUsers(interaction, points, responsibilities, cl
                     const resultEmbed = colorManager.createEmbed()
                         .setTitle('**✅ تم حذف جميع المحظورين**')
                         .setDescription(`**تم حذف جميع المستخدمين المحظورين بنجاح**`)
-                        .setColor('#00ff00')
                         .addFields([
                             { name: '**تم حذف**', value: `${blockedUsers.length} مستخدم`, inline: true }
                         ])
@@ -1267,105 +1265,654 @@ async function handleClearBlockedUsers(interaction, points, responsibilities, cl
 }
 
 async function handleResetAllStats(interaction, points, responsibilities, client) {
-    const confirmEmbed = colorManager.createEmbed()
-        .setTitle('**⚠️ تصفير جميع إحصائيات التفاعل**')
-        .setDescription(`**هل أنت متأكد من تصفير جميع الإحصائيات؟**\n\n**سيتم تصفير:**\n• جميع جلسات الفويس\n• جميع الرسائل\n• جميع التفاعلات\n• النشاط اليومي\n• الإحصائيات الإجمالية\n\n**⚠️ هذا الإجراء لا يمكن التراجع عنه!**`)
+    const statsEmbed = colorManager.createEmbed()
+        .setTitle('**⚠️ تصفير الإحصائيات**')
+        .setDescription(`**اختر طريقة التصفير:**`)
+        .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400670784019628163/download__11_-removebg-preview.png?ex=688d7bd2&is=688c2a52&hm=40d42fba69b5b3423b7821140751dbff0e640e95f1ffc9f65b44a038fe0c5764&');
+
+    const statsSelect = new StringSelectMenuBuilder()
+        .setCustomId('stats_reset_type_select')
+        .setPlaceholder('اختر نوع التصفير...')
+        .addOptions([
+            {
+                label: 'تصفير عضو معين',
+                value: 'reset_member',
+                description: 'اختيار عضو لتصفير إحصائياته',
+                emoji: '👤'
+            },
+            {
+                label: 'تصفير رول',
+                value: 'reset_role',
+                description: 'تصفير إحصائيات جميع أعضاء رول معين',
+                emoji: '🎭'
+            },
+            {
+                label: 'تصفير شيء معين للكل',
+                value: 'reset_specific_all',
+                description: 'تصفير نوع معين من الإحصائيات لجميع الأعضاء',
+                emoji: '📊'
+            },
+            {
+                label: 'تصفير الكل',
+                value: 'reset_all_completely',
+                description: 'تصفير جميع الإحصائيات لجميع الأعضاء',
+                emoji: '🗑️'
+            }
+        ]);
+
+    const components = [
+        new ActionRowBuilder().addComponents(statsSelect),
+        new ActionRowBuilder().addComponents([
+            new ButtonBuilder()
+                .setCustomId('back_to_main_reset')
+                .setLabel('رجوع')
+                .setStyle(ButtonStyle.Secondary)
+        ])
+    ];
+
+    await interaction.update({ embeds: [statsEmbed], components: components });
+
+    const statsFilter = i => i.user.id === interaction.user.id;
+    const statsCollector = interaction.message.createMessageComponentCollector({
+        filter: statsFilter,
+        time: 300000
+    });
+
+    statsCollector.on('collect', async statsInt => {
+        try {
+            if (statsInt.customId === 'back_to_main_reset') {
+                const currentPoints = readJSONFile(pointsPath, {});
+                const currentResponsibilities = readJSONFile(responsibilitiesPath, {});
+                const embed = createMainEmbed(currentPoints, currentResponsibilities);
+                const components = createMainComponents();
+                await statsInt.update({ embeds: [embed], components: components });
+                return;
+            }
+
+            if (statsInt.customId === 'stats_reset_type_select') {
+                const resetType = statsInt.values[0];
+                
+                switch (resetType) {
+                    case 'reset_member':
+                        await handleStatsMemberReset(statsInt, client);
+                        break;
+                    case 'reset_role':
+                        await handleStatsRoleReset(statsInt, client);
+                        break;
+                    case 'reset_specific_all':
+                        await handleStatsSpecificAllReset(statsInt, client);
+                        break;
+                    case 'reset_all_completely':
+                        await handleStatsCompleteReset(statsInt, client);
+                        break;
+                }
+            }
+        } catch (error) {
+            console.error('خطأ في معالج تصفير الإحصائيات:', error);
+            await handleInteractionError(statsInt, error);
+        }
+    });
+}
+
+// تصفير إحصائيات عضو معين
+async function handleStatsMemberReset(interaction, client) {
+    await interaction.deferUpdate();
+
+    const memberEmbed = colorManager.createEmbed()
+        .setTitle('**تصفير إحصائيات عضو**')
+        .setDescription(`**منشن العضو الذي تريد تصفير إحصائياته:**`)
+        .setFooter({ text: 'أرسل منشن العضو في الشات' })
+        .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400670548463456306/9908185.png?ex=688d7b99&is=688c2a19&hm=92e3397be8a05852507afb7133dccd47a7c4c2ebca8dbdc26911e65414545ae9&');
+
+    const backButton = new ActionRowBuilder().addComponents([
+        new ButtonBuilder()
+            .setCustomId('back_to_stats_reset')
+            .setLabel('رجوع')
+            .setStyle(ButtonStyle.Secondary)
+    ]);
+
+    await interaction.editReply({ embeds: [memberEmbed], components: [backButton] });
+
+    const messageFilter = m => m.author.id === interaction.user.id;
+    const messageCollector = interaction.channel.createMessageCollector({ 
+        filter: messageFilter, 
+        time: 60000, 
+        max: 1 
+    });
+
+    messageCollector.on('collect', async msg => {
+        const mentionedMember = msg.mentions.members.first();
         
+        if (!mentionedMember) {
+            await msg.reply({ content: '**❌ لم يتم العثور على العضو. حاول مرة أخرى.**', ephemeral: true });
+            return;
+        }
+
+        await msg.delete().catch(() => {});
+        await showMemberStatsOptions(interaction, mentionedMember, client);
+    });
+
+    const buttonCollector = interaction.message.createMessageComponentCollector({
+        filter: i => i.user.id === interaction.user.id,
+        time: 60000
+    });
+
+    buttonCollector.on('collect', async btnInt => {
+        if (btnInt.customId === 'back_to_stats_reset') {
+            await handleResetAllStats(btnInt, {}, {}, client);
+        }
+    });
+}
+
+// عرض خيارات تصفير للعضو
+async function showMemberStatsOptions(interaction, member, client) {
+    const { getDatabase } = require('../utils/database.js');
+    const db = getDatabase();
+    const userStats = await db.getUserStats(member.id);
+
+    const optionsEmbed = colorManager.createEmbed()
+        .setTitle(`**تصفير إحصائيات ${member.displayName}**`)
+        .setDescription(`**اختر ماذا تريد تصفيره:**`)
+        .addFields([
+            { name: '📊 الإحصائيات الحالية', value: `
+🎤 وقت الفويس: ${Math.floor((userStats.totalVoiceTime || 0) / 60)} دقيقة
+💬 الرسائل: ${userStats.totalMessages || 0}
+❤️ التفاعلات: ${userStats.totalReactions || 0}
+📅 أيام النشاط: ${userStats.activeDays || 0}
+            `, inline: false }
+        ])
+        .setThumbnail(member.user.displayAvatarURL({ format: 'png', size: 128 }));
+
+    const optionsSelect = new StringSelectMenuBuilder()
+        .setCustomId(`member_stats_reset_${member.id}`)
+        .setPlaceholder('اختر ماذا تريد تصفيره...')
+        .addOptions([
+            {
+                label: 'وقت الفويس فقط',
+                value: 'voice',
+                description: `تصفير ${Math.floor((userStats.totalVoiceTime || 0) / 60)} دقيقة`,
+                emoji: '🎤'
+            },
+            {
+                label: 'الرسائل فقط',
+                value: 'messages',
+                description: `تصفير ${userStats.totalMessages || 0} رسالة`,
+                emoji: '💬'
+            },
+            {
+                label: 'التفاعلات فقط',
+                value: 'reactions',
+                description: `تصفير ${userStats.totalReactions || 0} تفاعل`,
+                emoji: '❤️'
+            },
+            {
+                label: 'كل شيء',
+                value: 'all',
+                description: 'تصفير جميع إحصائيات هذا العضو',
+                emoji: '🗑️'
+            }
+        ]);
+
+    const components = [
+        new ActionRowBuilder().addComponents(optionsSelect),
+        new ActionRowBuilder().addComponents([
+            new ButtonBuilder()
+                .setCustomId('back_to_stats_reset')
+                .setLabel('رجوع')
+                .setStyle(ButtonStyle.Secondary)
+        ])
+    ];
+
+    await interaction.editReply({ embeds: [optionsEmbed], components: components });
+
+    const optionsCollector = interaction.message.createMessageComponentCollector({
+        filter: i => i.user.id === interaction.user.id,
+        time: 120000
+    });
+
+    optionsCollector.on('collect', async optInt => {
+        if (optInt.customId === 'back_to_stats_reset') {
+            await handleResetAllStats(optInt, {}, {}, client);
+            return;
+        }
+
+        if (optInt.customId.startsWith('member_stats_reset_')) {
+            await executeMemberStatsReset(optInt, member, optInt.values[0], client);
+        }
+    });
+}
+
+// تنفيذ تصفير إحصائيات العضو
+async function executeMemberStatsReset(interaction, member, resetType, client) {
+    await interaction.deferUpdate();
+
+    const { getDatabase } = require('../utils/database.js');
+    const db = getDatabase();
+    
+    let result;
+    const resetNames = {
+        'voice': 'وقت الفويس',
+        'messages': 'الرسائل',
+        'reactions': 'التفاعلات',
+        'all': 'جميع الإحصائيات'
+    };
+
+    switch (resetType) {
+        case 'voice':
+            result = await db.resetUserVoiceTime(member.id);
+            break;
+        case 'messages':
+            result = await db.resetUserMessages(member.id);
+            break;
+        case 'reactions':
+            result = await db.resetUserReactions(member.id);
+            break;
+        case 'all':
+            result = await db.resetUserAllStats(member.id);
+            break;
+    }
+
+    const resultEmbed = colorManager.createEmbed()
+        .setTitle('**✅ تم التصفير بنجاح**')
+        .setDescription(`**تم تصفير ${resetNames[resetType]} للعضو ${member.displayName}**`)
+        .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400672460558303252/images__10_-removebg-preview.png?ex=688d7d61&is=688c2be1&hm=d98e0873eeb313e329ff2c665c3e7a29e117a16f85e77e5815b78369615850aa&')
+        .setTimestamp();
+
+    const backButton = new ActionRowBuilder().addComponents([
+        new ButtonBuilder()
+            .setCustomId('back_to_main_reset')
+            .setLabel('القائمة الرئيسية')
+            .setStyle(ButtonStyle.Primary)
+    ]);
+
+    await interaction.editReply({ embeds: [resultEmbed], components: [backButton] });
+
+    logEvent(client, interaction.guild, {
+        type: 'ADMIN_ACTIONS',
+        title: 'تصفير إحصائيات عضو',
+        description: `تم تصفير ${resetNames[resetType]} للعضو ${member.displayName}`,
+        user: interaction.user
+    });
+}
+
+// تصفير إحصائيات رول
+async function handleStatsRoleReset(interaction, client) {
+    await interaction.deferUpdate();
+
+    const roles = interaction.guild.roles.cache
+        .filter(role => role.id !== interaction.guild.id && !role.managed)
+        .sort((a, b) => b.position - a.position)
+        .first(25);
+
+    if (roles.length === 0) {
+        await interaction.editReply({
+            content: '**❌ لا توجد رولات متاحة**',
+            components: []
+        });
+        return;
+    }
+
+    const roleEmbed = colorManager.createEmbed()
+        .setTitle('**تصفير إحصائيات رول**')
+        .setDescription(`**اختر الرول الذي تريد تصفير إحصائيات أعضائه:**`)
+        .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400670548463456306/9908185.png?ex=688d7b99&is=688c2a19&hm=92e3397be8a05852507afb7133dccd47a7c4c2ebca8dbdc26911e65414545ae9&');
+
+    const roleSelect = new StringSelectMenuBuilder()
+        .setCustomId('select_role_for_stats_reset')
+        .setPlaceholder('اختر الرول...')
+        .addOptions(roles.map(role => ({
+            label: role.name,
+            value: role.id,
+            description: `${role.members.size} عضو`,
+            emoji: '🎭'
+        })));
+
+    const components = [
+        new ActionRowBuilder().addComponents(roleSelect),
+        new ActionRowBuilder().addComponents([
+            new ButtonBuilder()
+                .setCustomId('back_to_stats_reset')
+                .setLabel('رجوع')
+                .setStyle(ButtonStyle.Secondary)
+        ])
+    ];
+
+    await interaction.editReply({ embeds: [roleEmbed], components: components });
+
+    const roleCollector = interaction.message.createMessageComponentCollector({
+        filter: i => i.user.id === interaction.user.id,
+        time: 120000
+    });
+
+    roleCollector.on('collect', async roleInt => {
+        if (roleInt.customId === 'back_to_stats_reset') {
+            await handleResetAllStats(roleInt, {}, {}, client);
+            return;
+        }
+
+        if (roleInt.customId === 'select_role_for_stats_reset') {
+            const roleId = roleInt.values[0];
+            const role = interaction.guild.roles.cache.get(roleId);
+            await confirmRoleStatsReset(roleInt, role, client);
+        }
+    });
+}
+
+// تأكيد تصفير إحصائيات الرول
+async function confirmRoleStatsReset(interaction, role, client) {
+    const confirmEmbed = colorManager.createEmbed()
+        .setTitle('**⚠️ تأكيد تصفير إحصائيات الرول**')
+        .setDescription(`**هل أنت متأكد من تصفير إحصائيات جميع أعضاء رول ${role}؟**\n\n**عدد الأعضاء:** ${role.members.size}\n\n**⚠️ سيتم تصفير جميع إحصائيات هؤلاء الأعضاء!**`)
         .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400670784019628163/download__11_-removebg-preview.png?ex=688d7bd2&is=688c2a52&hm=40d42fba69b5b3423b7821140751dbff0e640e95f1ffc9f65b44a038fe0c5764&');
 
     const confirmButtons = new ActionRowBuilder().addComponents([
         new ButtonBuilder()
-            .setCustomId('confirm_reset_all_stats')
-            .setLabel('✅ تأكيد التصفير')
+            .setCustomId(`confirm_role_stats_reset_${role.id}`)
+            .setLabel('✅ تأكيد')
             .setStyle(ButtonStyle.Danger),
         new ButtonBuilder()
-            .setCustomId('back_to_main_reset')
+            .setCustomId('back_to_stats_reset')
             .setLabel('❌ إلغاء')
             .setStyle(ButtonStyle.Secondary)
     ]);
 
     await interaction.update({ embeds: [confirmEmbed], components: [confirmButtons] });
 
-    const confirmFilter = i => i.user.id === interaction.user.id;
     const confirmCollector = interaction.message.createMessageComponentCollector({
-        filter: confirmFilter,
+        filter: i => i.user.id === interaction.user.id,
+        time: 60000
+    });
+
+    confirmCollector.on('collect', async confirmInt => {
+        if (confirmInt.customId === 'back_to_stats_reset') {
+            await handleResetAllStats(confirmInt, {}, {}, client);
+            return;
+        }
+
+        if (confirmInt.customId.startsWith('confirm_role_stats_reset_')) {
+            await executeRoleStatsReset(confirmInt, role, client);
+        }
+    });
+}
+
+// تنفيذ تصفير إحصائيات الرول
+async function executeRoleStatsReset(interaction, role, client) {
+    await interaction.deferUpdate();
+
+    const { getDatabase } = require('../utils/database.js');
+    const db = getDatabase();
+    
+    let resetCount = 0;
+    for (const [memberId, member] of role.members) {
+        await db.resetUserAllStats(memberId);
+        resetCount++;
+    }
+
+    const resultEmbed = colorManager.createEmbed()
+        .setTitle('**✅ تم تصفير إحصائيات الرول**')
+        .setDescription(`**تم تصفير إحصائيات جميع أعضاء رول ${role.name}**`)
+        .addFields([
+            { name: '**عدد الأعضاء**', value: `${resetCount}`, inline: true }
+        ])
+        .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400672460558303252/images__10_-removebg-preview.png?ex=688d7d61&is=688c2be1&hm=d98e0873eeb313e329ff2c665c3e7a29e117a16f85e77e5815b78369615850aa&')
+        .setTimestamp();
+
+    const backButton = new ActionRowBuilder().addComponents([
+        new ButtonBuilder()
+            .setCustomId('back_to_main_reset')
+            .setLabel('القائمة الرئيسية')
+            .setStyle(ButtonStyle.Primary)
+    ]);
+
+    await interaction.editReply({ embeds: [resultEmbed], components: [backButton] });
+
+    logEvent(client, interaction.guild, {
+        type: 'ADMIN_ACTIONS',
+        title: 'تصفير إحصائيات رول',
+        description: `تم تصفير إحصائيات ${resetCount} عضو من رول ${role.name}`,
+        user: interaction.user
+    });
+}
+
+// تصفير شيء معين للكل
+async function handleStatsSpecificAllReset(interaction, client) {
+    const specificEmbed = colorManager.createEmbed()
+        .setTitle('**تصفير شيء معين للكل**')
+        .setDescription(`**اختر نوع الإحصائيات الذي تريد تصفيره لجميع الأعضاء:**`)
+        .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400670548463456306/9908185.png?ex=688d7b99&is=688c2a19&hm=92e3397be8a05852507afb7133dccd47a7c4c2ebca8dbdc26911e65414545ae9&');
+
+    const specificSelect = new StringSelectMenuBuilder()
+        .setCustomId('select_specific_stats_type')
+        .setPlaceholder('اختر نوع الإحصائيات...')
+        .addOptions([
+            {
+                label: 'وقت الفويس للكل',
+                value: 'voice_all',
+                description: 'تصفير وقت الفويس لجميع الأعضاء',
+                emoji: '🎤'
+            },
+            {
+                label: 'الرسائل للكل',
+                value: 'messages_all',
+                description: 'تصفير الرسائل لجميع الأعضاء',
+                emoji: '💬'
+            },
+            {
+                label: 'التفاعلات للكل',
+                value: 'reactions_all',
+                description: 'تصفير التفاعلات لجميع الأعضاء',
+                emoji: '❤️'
+            },
+            {
+                label: 'النشاط اليومي للكل',
+                value: 'activity_all',
+                description: 'تصفير النشاط اليومي لجميع الأعضاء',
+                emoji: '📅'
+            }
+        ]);
+
+    const components = [
+        new ActionRowBuilder().addComponents(specificSelect),
+        new ActionRowBuilder().addComponents([
+            new ButtonBuilder()
+                .setCustomId('back_to_stats_reset')
+                .setLabel('رجوع')
+                .setStyle(ButtonStyle.Secondary)
+        ])
+    ];
+
+    await interaction.update({ embeds: [specificEmbed], components: components });
+
+    const specificCollector = interaction.message.createMessageComponentCollector({
+        filter: i => i.user.id === interaction.user.id,
+        time: 120000
+    });
+
+    specificCollector.on('collect', async specInt => {
+        if (specInt.customId === 'back_to_stats_reset') {
+            await handleResetAllStats(specInt, {}, {}, client);
+            return;
+        }
+
+        if (specInt.customId === 'select_specific_stats_type') {
+            await confirmSpecificStatsReset(specInt, specInt.values[0], client);
+        }
+    });
+}
+
+// تأكيد تصفير شيء معين للكل
+async function confirmSpecificStatsReset(interaction, resetType, client) {
+    const typeNames = {
+        'voice_all': 'وقت الفويس',
+        'messages_all': 'الرسائل',
+        'reactions_all': 'التفاعلات',
+        'activity_all': 'النشاط اليومي'
+    };
+
+    const confirmEmbed = colorManager.createEmbed()
+        .setTitle('**⚠️ تأكيد التصفير**')
+        .setDescription(`**هل أنت متأكد من تصفير ${typeNames[resetType]} لجميع الأعضاء؟**\n\n**⚠️ هذا الإجراء لا يمكن التراجع عنه!**`)
+        .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400670784019628163/download__11_-removebg-preview.png?ex=688d7bd2&is=688c2a52&hm=40d42fba69b5b3423b7821140751dbff0e640e95f1ffc9f65b44a038fe0c5764&');
+
+    const confirmButtons = new ActionRowBuilder().addComponents([
+        new ButtonBuilder()
+            .setCustomId(`confirm_specific_reset_${resetType}`)
+            .setLabel('✅ تأكيد')
+            .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+            .setCustomId('back_to_stats_reset')
+            .setLabel('❌ إلغاء')
+            .setStyle(ButtonStyle.Secondary)
+    ]);
+
+    await interaction.update({ embeds: [confirmEmbed], components: [confirmButtons] });
+
+    const confirmCollector = interaction.message.createMessageComponentCollector({
+        filter: i => i.user.id === interaction.user.id,
+        time: 60000
+    });
+
+    confirmCollector.on('collect', async confirmInt => {
+        if (confirmInt.customId === 'back_to_stats_reset') {
+            await handleResetAllStats(confirmInt, {}, {}, client);
+            return;
+        }
+
+        if (confirmInt.customId.startsWith('confirm_specific_reset_')) {
+            await executeSpecificStatsReset(confirmInt, resetType, client);
+        }
+    });
+}
+
+// تنفيذ تصفير شيء معين للكل
+async function executeSpecificStatsReset(interaction, resetType, client) {
+    await interaction.deferUpdate();
+
+    const { getDatabase } = require('../utils/database.js');
+    const db = getDatabase();
+    
+    let result;
+    const typeNames = {
+        'voice_all': 'وقت الفويس',
+        'messages_all': 'الرسائل',
+        'reactions_all': 'التفاعلات',
+        'activity_all': 'النشاط اليومي'
+    };
+
+    switch (resetType) {
+        case 'voice_all':
+            result = await db.resetAllVoiceTime();
+            break;
+        case 'messages_all':
+            result = await db.resetAllMessages();
+            break;
+        case 'reactions_all':
+            result = await db.resetAllReactions();
+            break;
+        case 'activity_all':
+            result = await db.resetAllActivity();
+            break;
+    }
+
+    const resultEmbed = colorManager.createEmbed()
+        .setTitle('**✅ تم التصفير بنجاح**')
+        .setDescription(`**تم تصفير ${typeNames[resetType]} لجميع الأعضاء**`)
+        .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400672460558303252/images__10_-removebg-preview.png?ex=688d7d61&is=688c2be1&hm=d98e0873eeb313e329ff2c665c3e7a29e117a16f85e77e5815b78369615850aa&')
+        .setTimestamp();
+
+    const backButton = new ActionRowBuilder().addComponents([
+        new ButtonBuilder()
+            .setCustomId('back_to_main_reset')
+            .setLabel('القائمة الرئيسية')
+            .setStyle(ButtonStyle.Primary)
+    ]);
+
+    await interaction.editReply({ embeds: [resultEmbed], components: [backButton] });
+
+    logEvent(client, interaction.guild, {
+        type: 'ADMIN_ACTIONS',
+        title: 'تصفير إحصائيات معينة للكل',
+        description: `تم تصفير ${typeNames[resetType]} لجميع الأعضاء`,
+        user: interaction.user
+    });
+}
+
+// تصفير كامل للكل
+async function handleStatsCompleteReset(interaction, client) {
+    const confirmEmbed = colorManager.createEmbed()
+        .setTitle('**⚠️ تصفير جميع الإحصائيات**')
+        .setDescription(`**هل أنت متأكد من تصفير جميع الإحصائيات لجميع الأعضاء؟**\n\n**سيتم تصفير:**\n• جميع جلسات الفويس\n• جميع الرسائل\n• جميع التفاعلات\n• النشاط اليومي\n• الإحصائيات الإجمالية\n\n**⚠️ هذا الإجراء لا يمكن التراجع عنه!**`)
+        .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400670784019628163/download__11_-removebg-preview.png?ex=688d7bd2&is=688c2a52&hm=40d42fba69b5b3423b7821140751dbff0e640e95f1ffc9f65b44a038fe0c5764&');
+
+    const confirmButtons = new ActionRowBuilder().addComponents([
+        new ButtonBuilder()
+            .setCustomId('confirm_complete_stats_reset')
+            .setLabel('✅ تأكيد التصفير الكامل')
+            .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+            .setCustomId('back_to_stats_reset')
+            .setLabel('❌ إلغاء')
+            .setStyle(ButtonStyle.Secondary)
+    ]);
+
+    await interaction.update({ embeds: [confirmEmbed], components: [confirmButtons] });
+
+    const confirmCollector = interaction.message.createMessageComponentCollector({
+        filter: i => i.user.id === interaction.user.id,
         time: 90000
     });
 
     confirmCollector.on('collect', async confirmInt => {
-        try {
-            if (confirmInt.customId === 'back_to_main_reset') {
-                const currentPoints = readJSONFile(pointsPath, {});
-                const currentResponsibilities = readJSONFile(responsibilitiesPath, {});
-                const embed = createMainEmbed(currentPoints, currentResponsibilities);
-                const components = createMainComponents();
-                await confirmInt.update({ embeds: [embed], components: components });
-                return;
-            }
-
-            if (confirmInt.customId === 'confirm_reset_all_stats') {
-                await confirmInt.deferUpdate();
-
-                const { getDatabase } = require('../utils/database.js');
-                const db = getDatabase();
-                const result = await db.resetAllStats();
-
-                if (result.success) {
-                    const resultEmbed = colorManager.createEmbed()
-                        .setTitle('**✅ تم تصفير جميع الإحصائيات بنجاح**')
-                        .setDescription(`**تم تصفير جميع إحصائيات التفاعل من قاعدة البيانات**`)
-                        .addFields([
-                            { name: '**السجلات المحذوفة**', value: `${result.deletedRecords}`, inline: true },
-                            { name: '**السجلات المحدثة**', value: `${result.updatedRecords}`, inline: true },
-                            { name: '**التفاصيل**', value: `جلسات فويس: ${result.details.voiceSessions}\nنشاط يومي: ${result.details.dailyActivity}`, inline: false }
-                        ])
-                        .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400672460558303252/images__10_-removebg-preview.png?ex=688d7d61&is=688c2be1&hm=d98e0873eeb313e329ff2c665c3e7a29e117a16f85e77e5815b78369615850aa&')
-                        .setTimestamp();
-
-                    const backButton = new ActionRowBuilder().addComponents([
-                        new ButtonBuilder()
-                            .setCustomId('back_to_main_reset')
-                            .setLabel('العودة للقائمة الرئيسية')
-                            .setStyle(ButtonStyle.Primary)
-                    ]);
-
-                    await confirmInt.editReply({ embeds: [resultEmbed], components: [backButton] });
-
-                    logEvent(client, interaction.guild, {
-                        type: 'ADMIN_ACTIONS',
-                        title: 'تصفير جميع الإحصائيات',
-                        description: `تم تصفير جميع إحصائيات التفاعل من قاعدة البيانات`,
-                        user: interaction.user,
-                        fields: [
-                            { name: 'السجلات المحذوفة', value: `${result.deletedRecords}`, inline: true },
-                            { name: 'السجلات المحدثة', value: `${result.updatedRecords}`, inline: true }
-                        ]
-                    });
-
-                } else {
-                    const errorEmbed = colorManager.createEmbed()
-                        .setDescription(`**❌ فشل في تصفير الإحصائيات**\n**${result.error || 'خطأ غير معروف'}**`)
-                        .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400390888416608286/download__3_-removebg-preview.png?ex=688d1fe5&is=688bce65&hm=55055a587668561ce27baf0665663f801e14662d4bf849351564a563b1e53b41&');
-
-                    await confirmInt.editReply({ embeds: [errorEmbed], components: [] });
-                }
-            }
-        } catch (error) {
-            console.error('خطأ في تصفير الإحصائيات:', error);
-            await handleInteractionError(confirmInt, error);
+        if (confirmInt.customId === 'back_to_stats_reset') {
+            await handleResetAllStats(confirmInt, {}, {}, client);
+            return;
         }
-    });
 
-    confirmCollector.on('end', async (collected, reason) => {
-        if (reason === 'time') {
-            try {
-                const timeoutEmbed = colorManager.createEmbed()
-                    .setDescription('**⏰ انتهت مهلة الانتظار**')
-                    .setThumbnail(client.user.displayAvatarURL({ format: 'png', size: 128 }));
+        if (confirmInt.customId === 'confirm_complete_stats_reset') {
+            await confirmInt.deferUpdate();
 
-                await interaction.editReply({ embeds: [timeoutEmbed], components: [] });
-            } catch (error) {
-                console.error('خطأ في timeout:', error);
+            const { getDatabase } = require('../utils/database.js');
+            const db = getDatabase();
+            const result = await db.resetAllStats();
+
+            if (result.success) {
+                const resultEmbed = colorManager.createEmbed()
+                    .setTitle('**✅ تم تصفير جميع الإحصائيات بنجاح**')
+                    .setDescription(`**تم تصفير جميع إحصائيات التفاعل من قاعدة البيانات**`)
+                    .addFields([
+                        { name: '**السجلات المحذوفة**', value: `${result.deletedRecords}`, inline: true },
+                        { name: '**السجلات المحدثة**', value: `${result.updatedRecords}`, inline: true },
+                        { name: '**التفاصيل**', value: `جلسات فويس: ${result.details.voiceSessions}\nنشاط يومي: ${result.details.dailyActivity}`, inline: false }
+                    ])
+                    .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400672460558303252/images__10_-removebg-preview.png?ex=688d7d61&is=688c2be1&hm=d98e0873eeb313e329ff2c665c3e7a29e117a16f85e77e5815b78369615850aa&')
+                    .setTimestamp();
+
+                const backButton = new ActionRowBuilder().addComponents([
+                    new ButtonBuilder()
+                        .setCustomId('back_to_main_reset')
+                        .setLabel('العودة للقائمة الرئيسية')
+                        .setStyle(ButtonStyle.Primary)
+                ]);
+
+                await confirmInt.editReply({ embeds: [resultEmbed], components: [backButton] });
+
+                logEvent(client, interaction.guild, {
+                    type: 'ADMIN_ACTIONS',
+                    title: 'تصفير جميع الإحصائيات',
+                    description: `تم تصفير جميع إحصائيات التفاعل من قاعدة البيانات`,
+                    user: interaction.user,
+                    fields: [
+                        { name: 'السجلات المحذوفة', value: `${result.deletedRecords}`, inline: true },
+                        { name: 'السجلات المحدثة', value: `${result.updatedRecords}`, inline: true }
+                    ]
+                });
+
+            } else {
+                const errorEmbed = colorManager.createEmbed()
+                    .setDescription(`**❌ فشل في تصفير الإحصائيات**\n**${result.error || 'خطأ غير معروف'}**`)
+                    .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400390888416608286/download__3_-removebg-preview.png?ex=688d1fe5&is=688bce65&hm=55055a587668561ce27baf0665663f801e14662d4bf849351564a563b1e53b41&');
+
+                await confirmInt.editReply({ embeds: [errorEmbed], components: [] });
             }
         }
     });
@@ -1788,7 +2335,6 @@ async function handleDirectReset(message, args, points, responsibilities, saveDa
                 const respResetEmbed = colorManager.createEmbed()
                     .setTitle('**✅ Reseted**')
                     .setDescription(`**تم تصفير ${respCount} مسؤولية بنجاح**`)
-                    .setColor('#00ff00')
                     .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400672460558303252/images__10_-removebg-preview.png?ex=688d7d61&is=688c2be1&hm=d98e0873eeb313e329ff2c665c3e7a29e117a16f85e77e5815b78369615850aa&');
 
                 await message.channel.send({ embeds: [respResetEmbed] });

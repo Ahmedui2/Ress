@@ -132,7 +132,7 @@ function formatTimeLeft(milliseconds) {
 
 module.exports = {
     name: 'admin-apply',
-    aliases: ['إدارة', 'ادارة'],
+    aliases: ['إدارة', 'ادارة' ,'admin'],
     description: 'تقديم شخص للحصول على صلاحيات إدارية',
 
     async execute(interaction) {
@@ -184,7 +184,7 @@ module.exports = {
 
             if (!mentionMatch) {
                 await interaction.reply({
-                    content: '** الامر يتم استخدام : ادارة @العضو **'
+                    content: '** ادارة @العضو**'
                 });
                 return;
             }
@@ -467,8 +467,8 @@ async function handleAdminApplicationInteraction(interaction) {
                         .addFields([
                             { name: '**انضمام السيرفر**', value: `**${userStats.joinedServerFormatted}**`, inline: false },
                             { name: '**إنشاء الحساب**', value: `**${userStats.accountCreatedFormatted}**`, inline: false },
-                            { name: '**المدة في السيرفر**', value: `**${userStats.timeInServerFormatted}`, inline: true },
-                            { name: '**عمر الحساب**', value: `${userStats.accountAgeFormatted}`, inline: true },
+                            { name: '**المدة في السيرفر**', value: `**${userStats.timeInServerFormatted}**`, inline: true },
+                            { name: '**عمر الحساب**', value: `**${userStats.accountAgeFormatted}**`, inline: true },
                             { name: ' **آخر نشاط**', value: `**${userStats.lastActivity}**`, inline: true }
                         ])
 ;

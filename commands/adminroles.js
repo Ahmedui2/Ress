@@ -10,48 +10,37 @@ const name = 'adminroles';
 // مسار ملف رولات المشرفين
 const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
 
-// دالة لقراءة رولات المشرفين من ملف JSON
-function loadAdminRoles(client) {
+// دالة لقراءة رولات المشرفين
+function loadAdminRoles() {
   try {
     if (fs.existsSync(adminRolesPath)) {
       const data = fs.readFileSync(adminRolesPath, 'utf8');
       const adminRoles = JSON.parse(data);
       return Array.isArray(adminRoles) ? adminRoles : [];
     }
-    console.log('📄 ملف adminRoles غير موجود، سيتم إنشاؤه');
     return [];
   } catch (error) {
-    console.error('خطأ في قراءة adminRoles من الملف:', error);
+    console.error('خطأ في قراءة adminRoles:', error);
     return [];
   }
 }
 
-// دالة لحفظ رولات المشرفين في ملف JSON
-function saveAdminRoles(adminRoles, client) {
+// دالة لحفظ رولات المشرفين
+function saveAdminRoles(adminRoles) {
   try {
     const finalAdminRoles = Array.isArray(adminRoles) ? adminRoles : [];
-    
-    // التأكد من وجود مجلد البيانات
-    const dataDir = path.dirname(adminRolesPath);
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
-    
-    // حفظ الرولات في ملف JSON
-    fs.writeFileSync(adminRolesPath, JSON.stringify(finalAdminRoles, null, 2), 'utf8');
-    
-    console.log('✅ تم حفظ رولات المشرفين في ملف JSON');
-    console.log('📝 الرولات المحفوظة:', finalAdminRoles);
+    fs.writeFileSync(adminRolesPath, JSON.stringify(finalAdminRoles, null, 2));
+    console.log('✅ تم حفظ رولات المشرفين في JSON');
     return true;
   } catch (error) {
-    console.error('خطأ في حفظ adminRoles في الملف:', error);
+    console.error('خطأ في حفظ adminRoles:', error);
     return false;
   }
 }
 
 async function execute(message, args, { saveData, BOT_OWNERS, client }) {
   // فحص البلوك أولاً
-  if (isUserBlocked(message.author.id, client)) {
+  if (isUserBlocked(message.author.id)) {
     const blockedEmbed = colorManager.createEmbed()
       .setDescription('**🚫 أنت محظور من استخدام أوامر البوت**\n**للاستفسار، تواصل مع إدارة السيرفر**')
       .setThumbnail(client.user.displayAvatarURL({ format: 'png', size: 128 }));
@@ -60,7 +49,10 @@ async function execute(message, args, { saveData, BOT_OWNERS, client }) {
     return;
   }
 
-  // المالكين محدثين من قاعدة البيانات تلقائياً - لا حاجة لإعادة تحميل
+  // إعادة تحميل المالكين من الملف للتأكد من أحدث البيانات
+  if (global.reloadBotOwners) {
+    global.reloadBotOwners();
+  }
   
   // معالجات قوية للسيرفرات الكبيرة
   const MAX_CONCURRENT_OPERATIONS = 10;
@@ -125,14 +117,14 @@ async function execute(message, args, { saveData, BOT_OWNERS, client }) {
   }
 
   // تحميل رولات المشرفين من الملف مباشرة
-  let ADMIN_ROLES = loadAdminRoles(client);
+  let ADMIN_ROLES = loadAdminRoles();
 
   // إنشاء الإيمبد الرئيسي
   function createMainEmbed() {
     return colorManager.createEmbed()
       .setTitle('Admin roles')
       .setDescription(`**الرولات الحالية :**\n${ADMIN_ROLES.length > 0 ? ADMIN_ROLES.map((r, i) => `${i + 1}. <@&${r}>`).join('\n') : 'No roles.'}`)
-      .setColor('#0099ff')
+      
       .setThumbnail('https://cdn.discordapp.com/emojis/1320524597367410788.png?v=1')
       .setFooter({ text: 'By Ahmed' });
   }
@@ -187,14 +179,11 @@ async function execute(message, args, { saveData, BOT_OWNERS, client }) {
         }
 
         // إعادة تحميل رولات المشرفين في كل تفاعل
-        ADMIN_ROLES = loadAdminRoles(client);
+        ADMIN_ROLES = loadAdminRoles();
 
       if (interaction.customId === 'adminroles_add') {
         // Send message asking for roles with mention or ID
-        await interaction.reply({
-          content: '**منشن الرول او الآي دي **',
-          ephemeral: true
-        });
+        await safeReply(interaction, '**منشن الرول او الآي دي **');
 
         // Create message collector
         const messageFilter = m => m.author.id === interaction.user.id;
@@ -239,7 +228,7 @@ async function execute(message, args, { saveData, BOT_OWNERS, client }) {
 
             // حفظ التغييرات في JSON
             if (addedRoles.length > 0) {
-              saveAdminRoles(ADMIN_ROLES, client);
+              saveAdminRoles(ADMIN_ROLES);
 
               // تحديث الكاش
               if (global.updateAdminRolesCache) {
@@ -295,7 +284,7 @@ async function execute(message, args, { saveData, BOT_OWNERS, client }) {
 
       } else if (interaction.customId === 'adminroles_remove') {
         if (ADMIN_ROLES.length === 0) {
-          return interaction.reply({ content: '** No roles to delete it **', ephemeral: true });
+          return safeReply(interaction, '** No roles to delete it **');
         }
 
         // Create numbered list of roles for removal
@@ -313,10 +302,7 @@ async function execute(message, args, { saveData, BOT_OWNERS, client }) {
 
         rolesList += '\n **تأكد من المسافات بين الارقام**';
 
-        await interaction.reply({
-          content: rolesList,
-          ephemeral: true
-        });
+        await safeReply(interaction, rolesList);
 
         // Create message collector for numbers
         const messageFilter = m => m.author.id === interaction.user.id;
@@ -351,7 +337,7 @@ async function execute(message, args, { saveData, BOT_OWNERS, client }) {
 
             // حفظ التغييرات في JSON
             if (removedRoles.length > 0) {
-              saveAdminRoles(ADMIN_ROLES, client);
+              saveAdminRoles(ADMIN_ROLES);
 
               // تحديث الكاش
               if (global.updateAdminRolesCache) {
@@ -401,7 +387,7 @@ async function execute(message, args, { saveData, BOT_OWNERS, client }) {
 
       } else if (interaction.customId === 'adminroles_list') {
         if (ADMIN_ROLES.length === 0) {
-          return interaction.reply({ content: '**لا توجد رولات محددة حالياً**', ephemeral: true });
+          return safeReply(interaction, '**لا توجد رولات محددة حالياً**');
         }
 
         // Create select menu with roles
@@ -443,7 +429,7 @@ async function execute(message, args, { saveData, BOT_OWNERS, client }) {
         const listEmbed = colorManager.createEmbed()
           .setTitle('choose role to show list')
           .setDescription(`**عدد الرولات:** ${ADMIN_ROLES.length}`)
-          .setColor('#0099ff')
+         
           .setFooter({ text: 'By Ahmed.' })
           .setThumbnail('https://cdn.discordapp.com/emojis/1365249109149089813.png?v=1');
         await interaction.update({ embeds: [listEmbed], components: [selectRow, backRow] });
@@ -464,7 +450,7 @@ async function execute(message, args, { saveData, BOT_OWNERS, client }) {
           const memberEmbed = colorManager.createEmbed()
             .setTitle(`Members : ${role.name}`)
             .setDescription(members.length > 0 ? members.join('\n') : '**لا يوجد أعضاء في هذا الرول**')
-            .setColor(role.color || '#000000')
+            
             .setThumbnail('https://cdn.discordapp.com/emojis/1320524607467425924.png?v=1')
             .setFooter({ text: ` Members count : ${members.length}` });
 

@@ -1,4 +1,3 @@
-
 const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
 const { Coordinates, CalculationMethod, PrayerTimes, Prayer, Qibla } = require('adhan');
 const moment = require('moment-timezone');
@@ -24,6 +23,9 @@ const PRAYER_NAMES = {
 
 // الصلوات المطلوب التذكير بها فقط
 const REMINDER_PRAYERS = ['dhuhr', 'asr', 'maghrib', 'isha', 'fajr'];
+
+// تخزين آخر تذكير تم إرساله لكل صلاة ولمنع التكرار
+let lastReminderSent = {};
 
 // قراءة إعدادات التذكير
 function readPrayerConfig() {
@@ -58,16 +60,16 @@ function savePrayerConfig(config) {
 function getPrayerTimes() {
     // إحداثيات مكة المكرمة
     const coordinates = new Coordinates(21.3891, 39.8579);
-    
+
     // استخدام طريقة الحساب السعودية (أم القرى)
     const params = CalculationMethod.UmmAlQura();
-    
+
     // الحصول على التاريخ الحالي في توقيت مكة المكرمة (نفس توقيت الرياض)
     const today = moment().tz('Asia/Riyadh').toDate();
-    
+
     // حساب مواقيت الصلاة
     const prayerTimes = new PrayerTimes(coordinates, today, params);
-    
+
     return {
         fajr: moment(prayerTimes.fajr).tz('Asia/Riyadh'), // توقيت مكة المكرمة
         sunrise: moment(prayerTimes.sunrise).tz('Asia/Riyadh'),
@@ -86,23 +88,22 @@ async function sendPrayerReminder(client, channelId, prayerName) {
 
         const prayerTimes = getPrayerTimes();
         const currentTime = moment().tz('Asia/Riyadh');
-        
+
         const embed = colorManager.createEmbed()
-            .setTitle(`حان وقت صلاة ${PRAYER_NAMES[prayerName]}`)
-            .setDescription(`**حان الآن وقت صلاة ${PRAYER_NAMES[prayerName]}**\n\n**الوقت الحالي:** ${currentTime.format('HH:mm')}\n**حسب توقيت مكة المكرمة**`)
-            .setColor('#00ff00')
-            .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400677612304470086/images__5_-removebg-preview.png?ex=688d822e&is=688c30ae&hm=1ea7a63bb89b38bcd76c0f5668984d7fc919214096a3d3ee92f5d948497fcb51&')
+            .setTitle(`${PRAYER_NAMES[prayerName]}`)
+            .setDescription(`**حان الآن وقت صلاة ${PRAYER_NAMES[prayerName]}**\n\n**اللهم إنا نسألك الهداية و الحفاظ على الصلاة و الثبات يارب العالمين**`)
+            .setThumbnail('https://cdn.discordapp.com/emojis/1303973825591115846.png?v=1')
             .addFields([
-                { name: 'التاريخ', value: currentTime.format('DD/MM/YYYY'), inline: true },
-                { name: 'الوقت', value: currentTime.format('HH:mm'), inline: true },
+                { name: 'التاريخ', value: currentTime.format('MM/DD/YYYY'), inline: true },
+                { name: 'الوقت', value: formatTimeArabic(currentTime), inline: true },
                 { name: 'المدينة', value: 'مكة المكرمة', inline: true }
             ])
-            .setFooter({ text: 'تذكير الصلاة - حافظوا على الصلوات' })
+            .setFooter({ text: ' By Ahmed. - حافظوا على صلاتكم' })
             .setTimestamp();
 
         await channel.send({ content: '@everyone', embeds: [embed] });
         console.log(`✅ تم إرسال تذكير صلاة ${PRAYER_NAMES[prayerName]} في القناة ${channelId}`);
-        
+
     } catch (error) {
         console.error(`خطأ في إرسال تذكير صلاة ${prayerName}:`, error);
     }
@@ -113,21 +114,39 @@ function checkPrayerTimes(client) {
     const config = readPrayerConfig();
     const currentTime = moment().tz('Asia/Riyadh');
     const prayerTimes = getPrayerTimes();
-    
+
     // فحص كل صلاة من الصلوات المطلوبة
     for (const prayerName of REMINDER_PRAYERS) {
         const prayerTime = prayerTimes[prayerName];
-        
-        // التحقق من أن الوقت الحالي قريب من وقت الصلاة (في نفس الدقيقة)
-        if (Math.abs(currentTime.diff(prayerTime, 'minutes')) <= 0) {
-            console.log(`⏰ حان وقت صلاة ${PRAYER_NAMES[prayerName]} - ${prayerTime.format('HH:mm')}`);
-            
+
+        // إنشاء مفتاح فريد لكل صلاة بناءً على التاريخ والوقت
+        const prayerKey = `${prayerName}_${prayerTime.format('YYYY-MM-DD_HH:mm')}`;
+
+        // التحقق من أن الوقت الحالي يطابق وقت الصلاة تماماً (في نفس الدقيقة)
+        const timeDiff = currentTime.diff(prayerTime, 'minutes');
+
+        // التأكد من أن الوقت الحالي يطابق وقت الصلاة ولم يتم إرسال تذكير مسبق
+        if (timeDiff >= 0 && timeDiff <= 0 && !lastReminderSent[prayerKey]) {
+            console.log(`⏰ حان وقت صلاة ${PRAYER_NAMES[prayerName]} - ${formatTimeArabic(prayerTime)}`);
+
+            // وضع علامة على أن التذكير تم إرساله
+            lastReminderSent[prayerKey] = true;
+
             // إرسال التذكير لجميع الخوادم المفعلة
             for (const [guildId, guildConfig] of Object.entries(config.guilds)) {
                 if (guildConfig.enabled && guildConfig.channelId) {
                     sendPrayerReminder(client, guildConfig.channelId, prayerName);
                 }
             }
+
+            // تنظيف المفاتيح القديمة كل ساعة لتوفير الذاكرة
+            setTimeout(() => {
+                const keys = Object.keys(lastReminderSent);
+                if (keys.length > 100) { // إذا تراكمت أكثر من 100 مفتاح
+                    const oldKeys = keys.slice(0, 50); // احذف أول 50 مفتاح
+                    oldKeys.forEach(key => delete lastReminderSent[key]);
+                }
+            }, 3600000); // كل ساعة
         }
     }
 }
@@ -135,7 +154,7 @@ function checkPrayerTimes(client) {
 // بدء نظام فحص مواقيت الصلاة
 function startPrayerReminderSystem(client) {
     console.log('🕌 بدء نظام تذكير الصلاة...');
-    
+
     // فحص كل دقيقة
     setInterval(() => {
         try {
@@ -144,31 +163,41 @@ function startPrayerReminderSystem(client) {
             console.error('خطأ في فحص مواقيت الصلاة:', error);
         }
     }, 60000); // كل دقيقة
-    
+
     console.log('✅ تم تشغيل نظام تذكير الصلاة بنجاح');
+}
+
+// تحويل الوقت إلى تنسيق 12 ساعة باللغة العربية
+function formatTimeArabic(momentTime) {
+    const hour = momentTime.hour();
+    const minute = momentTime.minute();
+    const period = hour < 12 ? 'صباحاً' : 'مساءاً';
+    const hour12 = hour === 0 ? 12 : (hour > 12 ? hour - 12 : hour);
+
+    return `${hour12}:${minute.toString().padStart(2, '0')} ${period}`;
 }
 
 // عرض مواقيت الصلاة الحالية
 function showTodayPrayerTimes() {
     const prayerTimes = getPrayerTimes();
     const currentTime = moment().tz('Asia/Riyadh');
-    
+
     const embed = colorManager.createEmbed()
         .setTitle('مواقيت الصلاة اليوم - مكة المكرمة')
-        .setDescription(`**التاريخ:** ${currentTime.format('DD/MM/YYYY')}\n**الوقت الحالي:** ${currentTime.format('HH:mm')}`)
+        .setDescription(`**التاريخ:** ${currentTime.format('MM/DD/YYYY')}\n**الوقت الحالي:** ${formatTimeArabic(currentTime)}`)
         .addFields([
-            { name: 'الفجر', value: prayerTimes.fajr.format('HH:mm'), inline: true },
-            { name: 'الشروق', value: prayerTimes.sunrise.format('HH:mm'), inline: true },
-            { name: 'الظهر', value: prayerTimes.dhuhr.format('HH:mm'), inline: true },
-            { name: 'العصر', value: prayerTimes.asr.format('HH:mm'), inline: true },
-            { name: 'المغرب', value: prayerTimes.maghrib.format('HH:mm'), inline: true },
-            { name: 'العشاء', value: prayerTimes.isha.format('HH:mm'), inline: true }
+            { name: 'الفجر', value: formatTimeArabic(prayerTimes.fajr), inline: true },
+            { name: 'الشروق', value: formatTimeArabic(prayerTimes.sunrise), inline: true },
+            { name: 'الظهر', value: formatTimeArabic(prayerTimes.dhuhr), inline: true },
+            { name: 'العصر', value: formatTimeArabic(prayerTimes.asr), inline: true },
+            { name: 'المغرب', value: formatTimeArabic(prayerTimes.maghrib), inline: true },
+            { name: 'العشاء', value: formatTimeArabic(prayerTimes.isha), inline: true }
         ])
-        .setColor('#00ff00')
+
         .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400677612304470086/images__5_-removebg-preview.png?ex=688d822e&is=688c30ae&hm=1ea7a63bb89b38bcd76c0f5668984d7fc919214096a3d3ee92f5d948497fcb51&')
         .setFooter({ text: 'مواقيت الصلاة حسب توقيت مكة المكرمة' })
         .setTimestamp();
-    
+
     return embed;
 }
 
@@ -194,26 +223,26 @@ async function execute(message, args, { client, BOT_OWNERS }) {
 
     if (subCommand === 'setup' || !subCommand) {
         // إعداد التذكير - طلب منشن القناة
-        await message.channel.send('**🕌 منشن الروم الذي تريد إرسال تذكيرات الصلاة فيه:**');
-        
+        await message.channel.send('**🕌 منشن الروم الذي تريد إرسال تذكيرات الصلاة فيه :**');
+
         // انتظار منشن القناة
         const channelCollector = message.channel.createMessageCollector({
             filter: m => m.author.id === message.author.id && m.mentions.channels.size > 0,
             time: 60000,
             max: 1
         });
-        
+
         channelCollector.on('collect', async (msg) => {
             const targetChannel = msg.mentions.channels.first();
-            
+
             if (targetChannel.guild.id !== message.guild.id) {
-                return msg.channel.send('❌ **يجب اختيار قناة من نفس السيرفر!**');
+                return msg.channel.send('❌ **يجب اختيار روم من نفس السيرفر!**');
             }
-            
+
             // حفظ الإعدادات
             const config = readPrayerConfig();
             if (!config.guilds) config.guilds = {};
-            
+
             config.guilds[message.guild.id] = {
                 enabled: true,
                 channelId: targetChannel.id,
@@ -221,67 +250,66 @@ async function execute(message, args, { client, BOT_OWNERS }) {
                 setupBy: message.author.id,
                 setupAt: new Date().toISOString()
             };
-            
+
             if (savePrayerConfig(config)) {
                 const successEmbed = colorManager.createEmbed()
                     .setTitle('✅ تم إعداد تذكير الصلاة بنجاح')
-                    .setDescription(`**القناة:** ${targetChannel}\n**المواقيت:** حسب توقيت مكة المكرمة\n**الصلوات:** الفجر، الظهر، العصر، المغرب، العشاء`)
+                    .setDescription(`**الروم :** ${targetChannel}\n**المواقيت :** حسب توقيت مكة المكرمة\n**الصلوات:** الفجر، الظهر، العصر، المغرب، العشاء`)
                     .addFields([
-                        { name: '📋 ملاحظة', value: 'سيتم إرسال التذكيرات تلقائياً في مواعيد الصلاة', inline: false }
-                    ])
-                    .setColor('#00ff00');
-                    
+                        { name: 'ملاحظة', value: 'سيتم إرسال التذكيرات تلقائياً في مواعيد الصلاة', inline: false }
+                    ]);
+
                 await msg.channel.send({ embeds: [successEmbed] });
-                
+
                 // عرض مواقيت اليوم
                 const timesEmbed = showTodayPrayerTimes();
                 await msg.channel.send({ embeds: [timesEmbed] });
-                
+
             } else {
                 await msg.channel.send('❌ **حدث خطأ في حفظ الإعدادات!**');
             }
         });
-        
+
         channelCollector.on('end', (collected) => {
             if (collected.size === 0) {
                 message.channel.send('⏰ **انتهت مهلة الانتظار!**');
             }
         });
-        
+
     } else if (subCommand === 'times' || subCommand === 'مواقيت') {
         // عرض مواقيت الصلاة
         const embed = showTodayPrayerTimes();
         await message.channel.send({ embeds: [embed] });
-        
+
     } else if (subCommand === 'status') {
         // عرض حالة التذكير
         const config = readPrayerConfig();
         const guildConfig = config.guilds?.[message.guild.id];
-        
+
         if (!guildConfig || !guildConfig.enabled) {
             return message.channel.send('❌ **تذكير الصلاة غير مفعل في هذا السيرفر!**');
         }
-        
+
         const channel = await client.channels.fetch(guildConfig.channelId).catch(() => null);
         const statusEmbed = colorManager.createEmbed()
-            .setTitle('📊 حالة تذكير الصلاة')
+            .setTitle('حالة تذكير الصلاة')
             .addFields([
-                { name: '✅ الحالة', value: 'مفعل', inline: true },
-                { name: '📍 القناة', value: channel ? `${channel}` : 'قناة محذوفة', inline: true },
+                { name: 'الحالة', value: 'مفعل', inline: true },
+                { name: 'الروم', value: channel ? `${channel}` : 'قناة محذوفة', inline: true },
                 { name: 'المدينة', value: 'مكة المكرمة', inline: true },
-                { name: '👤 تم الإعداد بواسطة', value: `<@${guildConfig.setupBy}>`, inline: true },
-                { name: '📅 تاريخ الإعداد', value: new Date(guildConfig.setupAt).toLocaleDateString('ar-SA'), inline: true }
+                { name: 'تم الإعداد بواسطة', value: `<@${guildConfig.setupBy}>`, inline: true },
+                { name: 'تاريخ الإعداد', value: new Date(guildConfig.setupAt).toLocaleDateString('en-SA', { timeZone: 'Asia/Riyadh' }), inline: true }
             ])
-            .setColor('#00ff00');
-            
+
+
         await message.channel.send({ embeds: [statusEmbed] });
-        
+
     } else if (subCommand === 'disable' || subCommand === 'تعطيل') {
         // تعطيل التذكير
         const config = readPrayerConfig();
         if (config.guilds && config.guilds[message.guild.id]) {
             config.guilds[message.guild.id].enabled = false;
-            
+
             if (savePrayerConfig(config)) {
                 await message.channel.send('✅ **تم تعطيل تذكير الصلاة!**');
             } else {
@@ -290,13 +318,13 @@ async function execute(message, args, { client, BOT_OWNERS }) {
         } else {
             await message.channel.send('❌ **تذكير الصلاة غير مفعل أساساً!**');
         }
-        
+
     } else if (subCommand === 'enable' || subCommand === 'تفعيل') {
         // تفعيل التذكير
         const config = readPrayerConfig();
         if (config.guilds && config.guilds[message.guild.id] && config.guilds[message.guild.id].channelId) {
             config.guilds[message.guild.id].enabled = true;
-            
+
             if (savePrayerConfig(config)) {
                 await message.channel.send('✅ **تم تفعيل تذكير الصلاة!**');
             } else {
@@ -305,7 +333,7 @@ async function execute(message, args, { client, BOT_OWNERS }) {
         } else {
             await message.channel.send('❌ **يجب إعداد التذكير أولاً باستخدام الأمر بدون معاملات!**');
         }
-        
+
     } else {
         // عرض المساعدة
         const helpEmbed = colorManager.createEmbed()
@@ -318,9 +346,8 @@ async function execute(message, args, { client, BOT_OWNERS }) {
                 { name: '✅ تفعيل', value: '`prayer-reminder enable`', inline: false },
                 { name: '❌ تعطيل', value: '`prayer-reminder disable`', inline: false }
             ])
-            .setColor('#007fff')
             .setFooter({ text: 'مواقيت الصلاة حسب توقيت مكة المكرمة' });
-            
+
         await message.channel.send({ embeds: [helpEmbed] });
     }
 }

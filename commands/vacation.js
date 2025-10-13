@@ -29,13 +29,13 @@ async function execute(message, args, { BOT_OWNERS }) {
     const replyEmbed = new EmbedBuilder().setColor(colorManager.getColor() || '#0099ff');
 
     if (!isOwner && !hasAdminRole) {
-        replyEmbed.setDescription('❌ **هذا الأمر للمدراء المُحددين فقط.**');
+        replyEmbed.setDescription('❌ **خوي.**');
         return message.reply({ embeds: [replyEmbed], ephemeral: true });
     }
 
     const settings = vacationManager.getSettings();
     if (!settings || !settings.approverType || !settings.notificationMethod) {
-        replyEmbed.setDescription('⚠️ The vacation system has not been fully configured yet. Please ask the bot owner to use `set-vacation`.');
+        replyEmbed.setDescription('⚠️ نظام الاجازات باقي محد سواه.');
         return message.reply({ embeds: [replyEmbed], ephemeral: true });
     }
 
@@ -66,7 +66,7 @@ async function execute(message, args, { BOT_OWNERS }) {
         return message.reply({ embeds: [replyEmbed], ephemeral: true });
     }
 
-    replyEmbed.setDescription("Click the button below to open the vacation request form.");
+    replyEmbed.setDescription("** اضغط عالزر وقدم اجازتك للمسؤولين **.");
     const requestButton = new ButtonBuilder()
         .setCustomId(`vac_request_start_${member.id}`)
         .setLabel("Request Vacation")
@@ -176,9 +176,9 @@ async function handleInteraction(interaction, context) {
                 let errorMessage = 'لا يمكن العثور على أي معتمدين صالحين بناءً على الإعدادات الحالية.';
 
                 if (settings.approverType === 'responsibility') {
-                    errorMessage += ' يرجى التأكد من وجود مسؤولين في المسؤولية المحددة وأنهم متصلون بالخادم.';
+                    errorMessage += ' يرجى التأكد من وجود مسؤولين في المسؤولية المحددة وأنهم موجودين.';
                 } else if (settings.approverType === 'role') {
-                    errorMessage += ' يرجى التأكد من وجود أعضاء في الأدوار المحددة.';
+                    errorMessage += ' يرجى التأكد من وجود أعضاء في لرولات المحددة.';
                 }
 
                 return interaction.reply({ content: errorMessage, ephemeral: true });
@@ -207,10 +207,10 @@ async function handleInteraction(interaction, context) {
                 .setColor(colorManager.getColor('pending') || '#E67E22')
                 .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
                 .addFields(
-                    { name: "___المستخدم___", value: `${member}`, inline: true },
+                    { name: "___العضو___", value: `${member}`, inline: true },
                     { name: "___المدة___", value: `**${ms(durationMs, { long: true })}**`, inline: true },
                     { name: "___السبب___", value: reason, inline: false },
-                    { name: "___الأدوار المراد إزالتها___", value: rolesDisplay, inline: false }
+                    { name: "___الرولات المراد إزالتها___", value: rolesDisplay, inline: false }
                 )
                 .setTimestamp();
 

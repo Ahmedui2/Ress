@@ -92,14 +92,14 @@ async function createPermanentMenu(client, channelId) {
             .setTitle('Down Management System')
             .setDescription('استخدم القائمة أدناه لإدارة الداون والرولات الإدارية')
             .addFields([
-                { name: 'سحب رول', value: 'سحب رول إداري من عضو لمدة محددة أو نهائياً', inline: false },
-                { name: 'سجلات العضو', value: 'عرض تاريخ الداون لعضو معين', inline: false },
-                { name: 'تعديل المدة', value: 'تعديل مدة داون حالي', inline: false },
-                { name: 'الداونات النشطة', value: 'عرض جميع الداونات الجارية', inline: false },
-                { name: 'إدارة داونات العضو', value: 'إنهاء أو مراجعة داونات عضو معين', inline: false }
+                { name: 'Down', value: 'سحب رول إداري من عضو لمدة محددة أو نهائياً', inline: false },
+                { name: 'Record', value: 'عرض تاريخ الداون لعضو معين', inline: false },
+                { name: 'Change', value: 'تعديل مدة داون حالي', inline: false },
+                { name: 'Active', value: 'عرض جميع الداونات الجارية', inline: false },
+                { name: 'Finish', value: 'إنهاء أو مراجعة داونات عضو معين', inline: false }
             ])
             .setThumbnail(client?.user?.displayAvatarURL() || 'https://cdn.discordapp.com/attachments/1373799493111386243/1400677612304470086/images__5_-removebg-preview.png?ex=688d822e&is=688c30ae&hm=1ea7a63bb89b38bcd76c0f5668984d7fc919214096a3d3ee92f5d948497fcb51&')
-            .setFooter({ text: 'نظام الداون التفاعلي • يتم التحديث تلقائياً' })
+            .setFooter({ text: 'Down System' })
             .setTimestamp();
 
         const menuSelect = new StringSelectMenuBuilder()
@@ -107,27 +107,27 @@ async function createPermanentMenu(client, channelId) {
             .setPlaceholder('اختر الإجراء المطلوب...')
             .addOptions([
                 {
-                    label: 'سحب رول',
+                    label: 'Down',
                     value: 'remove_role',
                     description: 'سحب رول إداري من عضو لمدة محددة أو نهائياً'
                 },
                 {
-                    label: 'سجلات العضو',
+                    label: 'Record',
                     value: 'user_records',
                     description: 'عرض تاريخ الداون لعضو معين'
                 },
                 {
-                    label: 'تعديل المدة',
+                    label: 'Change',
                     value: 'modify_duration',
                     description: 'تعديل مدة داون حالي'
                 },
                 {
-                    label: 'الداونات النشطة',
+                    label: 'Active',
                     value: 'active_downs',
                     description: 'عرض جميع الداونات الجارية ووقت انتهائها'
                 },
                 {
-                    label: 'إدارة داونات العضو',
+                    label: 'Finish',
                     value: 'user_downs',
                     description: 'إنهاء أو مراجعة داونات عضو معين'
                 }
@@ -135,7 +135,7 @@ async function createPermanentMenu(client, channelId) {
 
         const settingsButton = new ButtonBuilder()
             .setCustomId('down_settings_button')
-            .setLabel('الإعدادات')
+            .setLabel('Settings')
             .setStyle(ButtonStyle.Secondary);
 
         const menuRow = new ActionRowBuilder().addComponents(menuSelect);
@@ -193,11 +193,11 @@ async function execute(message, args, context) {
         const settings = readJson(settingsPath, {});
 
         const noPermEmbed = colorManager.createEmbed()
-            .setDescription(' **هذا الأمر مخصص للمالكين فقط!**\n\n**للاستخدام العادي:** توجه للمنيو التفاعلي في القناة المحددة.');
+            .setDescription(' **هذا الأمر مخصص للمالكين فقط!**\n\n**للاستخدام العادي:** توجه للمنيو التفاعلي في الروم المحددة.');
 
         if (settings.menuChannel) {
             noPermEmbed.addFields([
-                { name: ' قناة المنيو', value: `<#${settings.menuChannel}>`, inline: true }
+                { name: ' روم المنيو', value: `<#${settings.menuChannel}>`, inline: true }
             ]);
         }
 
@@ -254,7 +254,7 @@ async function execute(message, args, context) {
                 inline: true
             },
             {
-                name: 'قناة السجلات',
+                name: 'روم السجلات',
                 value: settings.logChannel ? `<#${settings.logChannel}>` : 'غير محدد',
                 inline: true
             },
@@ -325,7 +325,7 @@ async function handleInteraction(interaction, context) {
         const hasPermission = await downManager.hasPermission(interaction, BOT_OWNERS);
         if (!hasPermission) {
             return interaction.reply({
-                content: ' **ليس لديك صلاحية لاستخدام هذا النظام!**',
+                content: ' **لا تسوي خوي!**',
                 ephemeral: true
             });
         }
@@ -385,7 +385,7 @@ async function handleSetupStep(interaction, context) {
 
             const channelSelect = new ChannelSelectMenuBuilder()
                 .setCustomId('down_setup_log_channel')
-                .setPlaceholder(' اختر قناة السجلات...')
+                .setPlaceholder(' اختر روم السجلات...')
                 .setChannelTypes([ChannelType.GuildText]);
 
             const channelRow = new ActionRowBuilder().addComponents(channelSelect);
@@ -424,7 +424,7 @@ async function handleSetupStep(interaction, context) {
             if (Object.keys(responsibilities).length === 0) {
                 const noRespEmbed = colorManager.createEmbed()
                     .setTitle('⚠️ لا توجد مسؤوليات')
-                    .setDescription('لا توجد مسؤوليات معرّفة في النظام!\n\nيرجى استخدام أمر `مسؤوليات` أولاً لإضافة مسؤوليات.')
+                    .setDescription('لا توجد مسؤوليات معرّفة في النظام!\n\nيرجى استخدام أمر `settings` أولاً لإضافة مسؤوليات.')
                     .addFields([
                         { name: '💡 نصيحة', value: 'يمكنك اختيار "المالكين فقط" أو "رولات محددة" بدلاً من ذلك', inline: false }
                     ]);
@@ -516,7 +516,7 @@ async function handleSetupStep(interaction, context) {
 
         const channelSelect = new ChannelSelectMenuBuilder()
             .setCustomId('down_setup_log_channel')
-            .setPlaceholder(' اختر قناة السجلات...')
+            .setPlaceholder(' اختر روم السجلات...')
             .setChannelTypes([ChannelType.GuildText]);
 
         const channelRow = new ActionRowBuilder().addComponents(channelSelect);
@@ -539,7 +539,7 @@ async function handleSetupStep(interaction, context) {
 
         const channelSelect = new ChannelSelectMenuBuilder()
             .setCustomId('down_setup_menu_channel')
-            .setPlaceholder(' اختر قناة المنيو التفاعلي...')
+            .setPlaceholder(' اختر روم المنيو التفاعلي...')
             .setChannelTypes([ChannelType.GuildText]);
 
         const channelRow = new ActionRowBuilder().addComponents(channelSelect);
@@ -565,12 +565,12 @@ async function handleSetupStep(interaction, context) {
             .setDescription('تم إعداد نظام الداون بنجاح وهو جاهز للاستخدام الآن')
             .addFields([
                 { name: ' المعتمدين', value: `${getPermissionTypeText(settings.allowedUsers.type)} (${settings.allowedUsers.targets.length})`, inline: true },
-                { name: ' قناة السجلات', value: `<#${settings.logChannel}>`, inline: true },
-                { name: ' قناة المنيو', value: `<#${settings.menuChannel}>`, inline: true },
+                { name: ' روم السجلات', value: `<#${settings.logChannel}>`, inline: true },
+                { name: ' روم المنيو', value: `<#${settings.menuChannel}>`, inline: true },
                 { name: ' حالة المنيو', value: success ? ' تم إرساله بنجاح' : ' فشل في الإرسال', inline: false }
             ])
             .setThumbnail(client?.user?.displayAvatarURL() || 'https://cdn.discordapp.com/attachments/1373799493111386243/1400677612304470086/images__5_-removebg-preview.png?ex=688d822e&is=688c30ae&hm=1ea7a63bb89b38bcd76c0f5668984d7fc919214096a3d3ee92f5d948497fcb51&')
-            .setFooter({ text: 'يمكن للمستخدمين الآن استخدام النظام من القناة المحددة' })
+            .setFooter({ text: 'يمكن للمستخدمين الآن استخدام النظام من روم المحددة' })
             .setTimestamp();
 
         if (!success) {
@@ -669,10 +669,10 @@ async function createSystemStats() {
         .setDescription('إحصائيات شاملة حول استخدام النظام')
         .addFields([
             { name: ' الداونات النشطة', value: `${activeCount} داون`, inline: true },
-            { name: '📈 إجمالي السجلات', value: `${totalHistory} سجل`, inline: true },
-            { name: '📅 اليوم', value: `${todayCount} داون جديد`, inline: true },
-            { name: '📆 هذا الأسبوع', value: `${weekCount} داون`, inline: true },
-            { name: '💾 حجم البيانات', value: `${(JSON.stringify(activeDowns).length / 1024).toFixed(1)} KB`, inline: true },
+            { name: ' إجمالي السجلات', value: `${totalHistory} سجل`, inline: true },
+            { name: ' اليوم', value: `${todayCount} داون جديد`, inline: true },
+            { name: ' هذا الأسبوع', value: `${weekCount} داون`, inline: true },
+            { name: 'حجم البيانات', value: `${(JSON.stringify(activeDowns).length / 1024).toFixed(1)} KB`, inline: true },
             { name: ' حالة النظام', value: ' يعمل بكفاءة', inline: true }
         ])
         .setTimestamp();
@@ -730,8 +730,8 @@ async function handleSettingsButton(interaction, context) {
         .setDescription('إدارة إعدادات النظام والتحكم في الصلاحيات')
         .addFields([
             { name: ' المعتمدين', value: `${getPermissionTypeText(settings.allowedUsers?.type)} (${settings.allowedUsers?.targets?.length || 0})`, inline: true },
-            { name: ' قناة السجلات', value: settings.logChannel ? `<#${settings.logChannel}>` : 'غير محدد', inline: true },
-            { name: ' قناة المنيو', value: settings.menuChannel ? `<#${settings.menuChannel}>` : 'غير محدد', inline: true }
+            { name: ' روم السجلات', value: settings.logChannel ? `<#${settings.logChannel}>` : 'غير محدد', inline: true },
+            { name: ' روم المنيو', value: settings.menuChannel ? `<#${settings.menuChannel}>` : 'غير محدد', inline: true }
         ]);
 
     const settingsSelect = new StringSelectMenuBuilder()
@@ -1153,11 +1153,11 @@ async function handleDownInteractions(interaction, context) {
                     .setDescription(`تم سحب الرول من العضو كما هو مطلوب`)
                     .addFields([
                         { name: ' العضو', value: `<@${userId}>`, inline: true },
-                        { name: '🏷️ الرول', value: `<@&${roleId}>`, inline: true },
+                        { name: 'الرول', value: `<@&${roleId}>`, inline: true },
                         { name: ' المدة', value: result.duration || 'نهائي', inline: true },
                         { name: ' السبب', value: reason, inline: false },
                         { name: ' بواسطة', value: `<@${interaction.user.id}>`, inline: true },
-                        { name: '📅 ينتهي في', value: result.endTime || 'نهائي', inline: true }
+                        { name: ' ينتهي في', value: result.endTime || 'نهائي', inline: true }
                     ])
                     .setTimestamp();
 
@@ -1169,11 +1169,11 @@ async function handleDownInteractions(interaction, context) {
                         .setTitle('Role Removed')
                         .setDescription(`تم سحب رول **${role.name}** منك من قبل الإدارة.`)
                         .addFields([
-                            { name: '🏷️ الرول المسحوب', value: `${role.name}`, inline: true },
+                            { name: ' الرول المسحوب', value: `${role.name}`, inline: true },
                             { name: ' سحب الرول', value: `${interaction.user.username}`, inline: true },
                             { name: ' المدة', value: result.duration || 'نهائي', inline: true },
                             { name: ' السبب', value: reason, inline: false },
-                            { name: '📅 ينتهي في', value: result.endTime || 'نهائي', inline: false }
+                            { name: ' ينتهي في', value: result.endTime || 'نهائي', inline: false }
                         ])
                         .setTimestamp();
 
@@ -1257,9 +1257,9 @@ async function handleDownInteractions(interaction, context) {
                     .setTitle('Down Duration Modified Successfully')
                     .addFields([
                         { name: ' العضو', value: `<@${userId}>`, inline: true },
-                        { name: '🏷️ الرول', value: `<@&${roleId}>`, inline: true },
+                        { name: ' الرول', value: `<@&${roleId}>`, inline: true },
                         { name: ' المدة الجديدة', value: result.newDuration || 'نهائي', inline: true },
-                        { name: '📅 ينتهي في', value: result.newEndTime || 'نهائي', inline: true },
+                        { name: 'ينتهي في', value: result.newEndTime || 'نهائي', inline: true },
                         { name: ' تم التعديل بواسطة', value: `<@${interaction.user.id}>`, inline: true }
                     ])
                     .setTimestamp();
@@ -1272,9 +1272,9 @@ async function handleDownInteractions(interaction, context) {
                         .setTitle('Down Duration Modified')
                         .setDescription(`تم تعديل مدة الداون الخاص بك للرول **${role.name}**.`)
                         .addFields([
-                            { name: '🏷️ الرول', value: role.name, inline: true },
+                            { name: ' الرول', value: role.name, inline: true },
                             { name: ' المدة الجديدة', value: result.newDuration || 'نهائي', inline: true },
-                            { name: '📅 ينتهي في', value: result.newEndTime || 'نهائي', inline: true },
+                            { name: ' ينتهي في', value: result.newEndTime || 'نهائي', inline: true },
                             { name: ' تم التعديل بواسطة', value: interaction.user.username, inline: true }
                         ])
                         .setTimestamp();
@@ -1363,7 +1363,7 @@ async function handleDownInteractions(interaction, context) {
                     .setTitle('Down Ended Successfully')
                     .addFields([
                         { name: ' العضو', value: `<@${userId}>`, inline: true },
-                        { name: '🏷️ الرول', value: `<@&${roleId}>`, inline: true },
+                        { name: ' الرول', value: `<@&${roleId}>`, inline: true },
                         { name: ' سبب الإنهاء', value: endReason, inline: false },
                         { name: ' تم الإنهاء بواسطة', value: `<@${interaction.user.id}>`, inline: true }
                     ])
@@ -1377,7 +1377,7 @@ async function handleDownInteractions(interaction, context) {
                         .setTitle('Down Ended')
                         .setDescription(`تم إنهاء الداون الخاص بك وإعادة الرول **${role.name}**.`)
                         .addFields([
-                            { name: '🏷️ الرول المُعاد', value: role.name, inline: true },
+                            { name: ' الرول المُعاد', value: role.name, inline: true },
                             { name: ' تم الإنهاء بواسطة', value: interaction.user.username, inline: true },
                             { name: ' سبب الإنهاء', value: endReason, inline: false }
                         ])
@@ -1503,7 +1503,7 @@ async function handleDownInteractions(interaction, context) {
         saveJson(settingsPath, settings);
 
         await interaction.update({
-            content: ' **تم تغيير قناة السجلات بنجاح.**',
+            content: ' **تم تغيير روم السجلات بنجاح.**',
             components: []
         });
         return;
@@ -1519,8 +1519,8 @@ async function handleDownInteractions(interaction, context) {
         // Re-send the menu to the new channel
         const success = await createPermanentMenu(context.client, settings.menuChannel);
         const messageContent = success ?
-            ` **تم تغيير قناة المنيو بنجاح و إرسال المنيو إلى** <#${settings.menuChannel}>` :
-            ` **تم تغيير قناة المنيو بنجاح، ولكن فشل إرسال المنيو إلى** <#${settings.menuChannel}>`;
+            ` **تم تغيير روم المنيو بنجاح و إرسال المنيو إلى** <#${settings.menuChannel}>` :
+            ` **تم تغيير روم المنيو بنجاح، ولكن فشل إرسال المنيو إلى** <#${settings.menuChannel}>`;
 
         await interaction.update({
             content: messageContent,
@@ -1538,7 +1538,7 @@ async function handleDownInteractions(interaction, context) {
                 const settings = readJson(settingsPath, {});
                 if (!settings.menuChannel) {
                     await interaction.reply({
-                        content: ' **لم يتم تحديد قناة المنيو! يرجى إعداد النظام أولاً.**',
+                        content: ' **لم يتم تحديد روم المنيو! يرجى إعداد النظام أولاً.**',
                         ephemeral: true
                     });
                     return;
@@ -1723,7 +1723,7 @@ async function handleDownInteractions(interaction, context) {
                                `**السبب:** ${record.reason || 'غير محدد'}\n` +
                                `**بواسطة:** <@${record.moderatorId}>\n` +
                                `**التاريخ:** <t:${Math.floor(record.timestamp / 1000)}:F>` +
-                               (record.isActive && record.endTime ? `\n**⏰ ينتهي في:** <t:${Math.floor(record.endTime / 1000)}:R>` : ''),
+                               (record.isActive && record.endTime ? `\n** ينتهي في:** <t:${Math.floor(record.endTime / 1000)}:R>` : ''),
                         inline: false
                     }
                 ]);
@@ -1817,7 +1817,7 @@ async function handleDownInteractions(interaction, context) {
                                `**السبب:** ${record.reason || 'غير محدد'}\n` +
                                `**بواسطة:** <@${record.moderatorId}>\n` +
                                `**التاريخ:** <t:${Math.floor(record.timestamp / 1000)}:F>` +
-                               (record.isActive && record.endTime ? `\n**⏰ ينتهي في:** <t:${Math.floor(record.endTime / 1000)}:R>` : ''),
+                               (record.isActive && record.endTime ? `\n**ينتهي في:** <t:${Math.floor(record.endTime / 1000)}:R>` : ''),
                         inline: false
                     }
                 ]);
@@ -1922,8 +1922,8 @@ async function handleEditSettings(interaction, context) {
         .setDescription('اختر ما تريد تعديله من إعدادات النظام')
         .addFields([
             { name: ' المعتمدين الحاليين', value: `${getPermissionTypeText(settings.allowedUsers?.type)} (${settings.allowedUsers?.targets?.length || 0})`, inline: true },
-            { name: ' قناة السجلات', value: settings.logChannel ? `<#${settings.logChannel}>` : 'غير محدد', inline: true },
-            { name: ' قناة المنيو', value: settings.menuChannel ? `<#${settings.menuChannel}>` : 'غير محدد', inline: true }
+            { name: ' روم السجلات', value: settings.logChannel ? `<#${settings.logChannel}>` : 'غير محدد', inline: true },
+            { name: ' روم المنيو', value: settings.menuChannel ? `<#${settings.menuChannel}>` : 'غير محدد', inline: true }
         ]);
 
     const editSelect = new StringSelectMenuBuilder()
@@ -1988,13 +1988,13 @@ async function handleEditPermissions(interaction, context) {
 async function handleEditLogChannel(interaction, context) {
     const channelSelect = new ChannelSelectMenuBuilder()
         .setCustomId('down_edit_log_channel_select')
-        .setPlaceholder(' اختر قناة السجلات الجديدة...')
+        .setPlaceholder(' اختر روم السجلات الجديدة...')
         .setChannelTypes([ChannelType.GuildText]);
 
     const channelRow = new ActionRowBuilder().addComponents(channelSelect);
 
     await interaction.update({
-        content: ' **اختر قناة السجلات الجديدة:**',
+        content: ' **اختر روم السجلات الجديدة:**',
         components: [channelRow]
     });
 }
@@ -2008,7 +2008,7 @@ async function handleEditMenuChannel(interaction, context) {
     const channelRow = new ActionRowBuilder().addComponents(channelSelect);
 
     await interaction.update({
-        content: ' **اختر قناة المنيو الجديدة:**',
+        content: ' **اختر روم المنيو الجديدة:**',
         components: [channelRow]
     });
 }
@@ -2026,8 +2026,8 @@ async function handleResetSystem(interaction, context) {
         .setTitle('Reset Confirmation')
         .setDescription('هل أنت متأكد من أنك تريد إعادة تعيين جميع إعدادات النظام؟')
         .addFields([
-            { name: '🔄 سيتم حذف:', value: '• جميع الإعدادات\n• الداونات النشطة\n• السجلات', inline: false },
-            { name: '⚠️ تحذير:', value: 'هذا الإجراء لا يمكن التراجع عنه!', inline: false }
+            { name: 'سيحذف:', value: '• جميع الإعدادات\n• الداونات النشطة\n• السجلات', inline: false },
+            { name: 'تحذير:', value: 'لا يوجد باكب', inline: false }
         ])
 ;
 

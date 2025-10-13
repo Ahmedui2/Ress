@@ -4,7 +4,7 @@ const { isUserBlocked } = require('./block.js');
 const { getDatabase } = require('../utils/database.js');
 const moment = require('moment-timezone');
 
-const name = 'tops';
+const name = 'توب';
 
 function formatDuration(milliseconds, showSeconds = false) {
     if (!milliseconds || milliseconds <= 0) return 'لا يوجد';

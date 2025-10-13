@@ -2,8 +2,46 @@ const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, 
 const colorManager = require('../utils/colorManager');
 const { logEvent } = require('../utils/logs_system');
 const { isUserBlocked } = require('./block.js');
+const fs = require('fs');
+const path = require('path');
 
 const name = 'vip';
+
+const botStatusPath = path.join(__dirname, '..', 'data', 'botStatus.json');
+
+function loadBotStatus() {
+    try {
+        if (fs.existsSync(botStatusPath)) {
+            const data = fs.readFileSync(botStatusPath, 'utf8');
+            return JSON.parse(data);
+        }
+        return {
+            status: 'online',
+            activityText: null,
+            activityType: null,
+            streamUrl: null
+        };
+    } catch (error) {
+        console.error('خطأ في تحميل حالة البوت:', error);
+        return {
+            status: 'online',
+            activityText: null,
+            activityType: null,
+            streamUrl: null
+        };
+    }
+}
+
+function saveBotStatus(statusData) {
+    try {
+        fs.writeFileSync(botStatusPath, JSON.stringify(statusData, null, 2), 'utf8');
+        console.log('✅ تم حفظ حالة البوت بنجاح');
+        return true;
+    } catch (error) {
+        console.error('خطأ في حفظ حالة البوت:', error);
+        return false;
+    }
+}
 
 async function execute(message, args, { responsibilities, BOT_OWNERS, client, saveData }) {
     // فحص البلوك أولاً
@@ -25,39 +63,9 @@ async function execute(message, args, { responsibilities, BOT_OWNERS, client, sa
     const owners = BOT_OWNERS.length;
 
     // قراءة البرفكس الحالي من ملف التكوين
-    const fs = require('fs');
-    const path = require('path');
     const botConfigFile = path.join(__dirname, '..', 'data', 'botConfig.json');
     let currentPrefix = null;
     let currentActivityText = null;
-    const streamUrl = 'https://www.twitch.tv/example';
-
-    // تحميل الحالة المحفوظة عند بدء التشغيل
-    function restoreBotStatus(client) {
-        try {
-            const savedStatus = loadBotStatus();
-
-            if (savedStatus.activityText && savedStatus.status !== 'offline') {
-                if (savedStatus.activityType === ActivityType.Streaming) {
-                    client.user.setActivity(savedStatus.activityText, {
-                        type: ActivityType.Streaming,
-                        url: savedStatus.streamUrl || streamUrl
-                    });
-                } else if (savedStatus.activityType === ActivityType.Watching) {
-                    client.user.setActivity(savedStatus.activityText, { type: ActivityType.Watching });
-                } else if (savedStatus.activityType === ActivityType.Listening) {
-                    client.user.setActivity(savedStatus.activityText, { type: ActivityType.Listening });
-                }
-            }
-
-            client.user.setStatus(savedStatus.status);
-            currentActivityText = savedStatus.activityText;
-
-            console.log(`✅ تم استعادة حالة البوت: ${savedStatus.status} - ${savedStatus.activityText || 'بدون نشاط'}`);
-        } catch (error) {
-            console.error('خطأ في استعادة حالة البوت:', error);
-        }
-    }
 
     if (fs.existsSync(botConfigFile)) {
         try {
@@ -186,10 +194,10 @@ async function execute(message, args, { responsibilities, BOT_OWNERS, client, sa
                             return interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
                         }
 
-                        await msg.delete().catch(() => { });
-
                         try {
                             await client.user.setAvatar(avatarUrl);
+
+                            await msg.delete().catch(() => { });
 
                             // تحديث ألوان الـ embeds تلقائياً
                             setTimeout(async () => {
@@ -214,6 +222,7 @@ async function execute(message, args, { responsibilities, BOT_OWNERS, client, sa
 
                         } catch (error) {
                             console.error('Error changing bot avatar:', error);
+                            await msg.delete().catch(() => { });
                             const errorEmbed = colorManager.createEmbed()
                                 .setDescription('**❌ حدث خطأ أثناء تغيير الأفتار ! تأكد من صحة الرابط.**')
                                 .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400390888416608286/download__3_-removebg-preview.png?ex=688d1fe5&is=688bce65&hm=55055a587668561ce27baf0665663f801e14662d4bf849351564a563b1e53b41&');
@@ -268,10 +277,10 @@ async function execute(message, args, { responsibilities, BOT_OWNERS, client, sa
                             return interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
                         }
 
-                        await msg.delete().catch(() => { });
-
                         try {
                             await client.user.setBanner(bannerUrl);
+
+                            await msg.delete().catch(() => { });
 
                             logEvent(client, message.guild, {
                                 type: 'ADMIN_ACTIONS',
@@ -291,6 +300,7 @@ async function execute(message, args, { responsibilities, BOT_OWNERS, client, sa
 
                         } catch (error) {
                             console.error('Error changing bot banner:', error);
+                            await msg.delete().catch(() => { });
                             const errorEmbed = colorManager.createEmbed()
                                 .setDescription('**❌ حدث خطأ أثناء تغيير البنر ! تأكد من صحة الرابط.**')
                                 .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400390888416608286/download__3_-removebg-preview.png?ex=688d1fe5&is=688bce65&hm=55055a587668561ce27baf0665663f801e14662d4bf849351564a563b1e53b41&');
@@ -604,6 +614,13 @@ async function execute(message, args, { responsibilities, BOT_OWNERS, client, sa
 
                     await client.user.setPresence(presenceOptions);
 
+                    saveBotStatus({
+                        status: presenceOptions.status || 'online',
+                        activityText: activityText,
+                        activityType: activityTypes[activityType],
+                        streamUrl: activityType === 'streaming' ? presenceOptions.activities[0].url : null
+                    });
+
                     const activityLabels = {
                         'playing': 'يلعب',
                         'watching': 'يشاهد',
@@ -724,4 +741,29 @@ async function execute(message, args, { responsibilities, BOT_OWNERS, client, sa
     });
 }
 
-module.exports = { name, execute };
+function restoreBotStatus(client) {
+    try {
+        const savedStatus = loadBotStatus();
+
+        if (savedStatus.activityText && savedStatus.status !== 'offline') {
+            if (savedStatus.activityType === ActivityType.Streaming) {
+                client.user.setActivity(savedStatus.activityText, {
+                    type: ActivityType.Streaming,
+                    url: savedStatus.streamUrl || 'https://www.twitch.tv/example'
+                });
+            } else if (savedStatus.activityType === ActivityType.Watching) {
+                client.user.setActivity(savedStatus.activityText, { type: ActivityType.Watching });
+            } else if (savedStatus.activityType === ActivityType.Listening) {
+                client.user.setActivity(savedStatus.activityText, { type: ActivityType.Listening });
+            }
+        }
+
+        client.user.setStatus(savedStatus.status);
+
+        console.log(`✅ تم استعادة حالة البوت: ${savedStatus.status} - ${savedStatus.activityText || 'بدون نشاط'}`);
+    } catch (error) {
+        console.error('خطأ في استعادة حالة البوت:', error);
+    }
+}
+
+module.exports = { name, execute, restoreBotStatus };

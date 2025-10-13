@@ -17,11 +17,11 @@ function formatDuration(milliseconds) {
     const minutes = totalMinutes % 60;
 
     const parts = [];
-    if (days > 0) parts.push(`${days} يوم`);
-    if (hours > 0) parts.push(`${hours} ساعة`);
-    if (minutes > 0) parts.push(`${minutes} دقيقة`);
+    if (days > 0) parts.push(`${days}d`);
+    if (hours > 0) parts.push(`${hours}h`);
+    if (minutes > 0) parts.push(`${minutes}m`);
 
-    return parts.length > 0 ? parts.join(' و ') : 'أقل من دقيقة';
+    return parts.length > 0 ? parts.join(' and ') : 'أقل من دقيقة';
 }
 
 async function execute(message, args, { client }) {
@@ -98,13 +98,13 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
             .setThumbnail(user.displayAvatarURL({ dynamic: true }))
             .addFields(
                 { 
-                    name: '🎤 **الفويس**', 
+                    name: '🎤 **Voice**', 
                     value: `**الوقت :** ${formatDuration(stats.voiceTime || 0)}\n**أكثر روم :** ${voiceChannelMention}\n**الجوينات :** ${stats.voiceJoins || 0}`, 
                     inline: false 
                 },
                 { 
-                    name: '💬 **الشات**', 
-                    value: `**الرسائل :** ${stats.messages || 0}\n**الاكس بي :** ${xp} XP\n**أكثر روم :** ${messageChannelMention}\n**الرياكتات :** ${stats.reactions || 0}\n**أيام التفاعل :** ${activeDays || 0}${period === 'weekly' ? ' من 7' : ''}`, 
+                    name: '💬 **Chat**', 
+                    value: `**الرسائل :** ${stats.messages || 0}\n**الاكس بي :** ${xp}xp\n**أكثر روم :** ${messageChannelMention}\n**الرياكتات :** ${stats.reactions || 0}\n**أيام التفاعل :** ${activeDays || 0}${period === 'weekly' ? ' من 7' : ''}`, 
                     inline: false 
                 }
             )
@@ -177,13 +177,13 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
                     .setThumbnail(user.displayAvatarURL({ dynamic: true }))
                     .addFields(
                         { 
-                            name: '🎤 **الفويس**', 
+                            name: '🎤 **Voice**', 
                             value: `**الوقت :** ${formatDuration(stats.voiceTime || 0)}\n**أكثر روم :** ${voiceChannelMention}\n**الجوينات :** ${stats.voiceJoins || 0}`, 
                             inline: false 
                         },
                         { 
-                            name: '💬 **الشات**', 
-                            value: `**الرسائل :** ${stats.messages || 0}\n**الاكس بي :** ${xp} XP\n**أكثر روم :** ${messageChannelMention}\n**الرياكتات :** ${stats.reactions || 0}\n**أيام التفاعل :** ${activeDays || 0}${newPeriod === 'weekly' ? ' من 7' : ''}`, 
+                            name: '💬 **Chat**', 
+                            value: `**الرسائل :** ${stats.messages || 0}\n**الاكس بي :** ${xp}xp\n**أكثر روم :** ${messageChannelMention}\n**الرياكتات :** ${stats.reactions || 0}\n**أيام التفاعل :** ${activeDays || 0}${newPeriod === 'weekly' ? ' من 7' : ''}`, 
                             inline: false 
                         }
                     )

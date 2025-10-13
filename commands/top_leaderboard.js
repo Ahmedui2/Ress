@@ -136,7 +136,7 @@ async function execute(message, args, { points, responsibilities, client }) {
             const embed = colorManager.createEmbed()
                 .setTitle(`🏅 **أفضل المسؤولين - ${typeNames[currentType]}${titleSuffix}**`)
                 .setDescription('**لا توجد نقاط في هذه الفترة.**')
-                .setColor('#ff9900')
+               
                 .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400670537776369765/images__4_-removebg-preview_1.png?ex=688d7b97&is=688c2a17&hm=be9c1a81b818961ab6b6de9d14a2cbefe4f323a47d84c6a012ef9d0165e162e7&')
                 .setFooter({ text: 'الصفحة 1 من 1' });
             return embed;
@@ -153,7 +153,7 @@ async function execute(message, args, { points, responsibilities, client }) {
         const embed = colorManager.createEmbed()
             .setTitle(`🏅 **أفضل المسؤولين - ${typeNames[currentType]}${titleSuffix}**`)
             .setDescription(desc)
-            .setColor('#0099ff')
+            
             .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400670503437598861/download__10_-removebg-preview.png?ex=688d7b8f&is=688c2a0f&hm=bb6f36937f98326d082768a35c61e39f96dd0c7268d0f938c82a53d3d7a81ed8&')
             .setFooter({ text: `الصفحة ${page + 1} من ${Math.ceil(sorted.length / pageSize)}` });
         return embed;

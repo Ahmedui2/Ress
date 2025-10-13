@@ -104,10 +104,8 @@ async function execute(message, args, { client, BOT_OWNERS, ADMIN_ROLES }) {
 
     const member = await message.guild.members.fetch(message.author.id);
     const hasAdministrator = member.permissions.has('Administrator');
-    const isOwner = message.guild.ownerId === message.author.id;
-    const isBotOwner = BOT_OWNERS && BOT_OWNERS.includes(message.author.id);
 
-    if (!hasAdministrator && !isOwner && !isBotOwner) {
+    if (!hasAdministrator) {
         await message.react('❌');
         return;
     }
@@ -240,8 +238,8 @@ async function showRoleActivity(message, role, client) {
                 
                 embed.addFields([{
                     name: `**#${globalRank} - ${member.displayName}**`,
-                    value: `> **🔊 Last Voice:** ${lastVoiceInfo}\n` +
-                           `> **💬 Last Text:** ${lastMessageInfo}`,
+                    value: `> **🔊 Last Voice :** ${lastVoiceInfo}\n` +
+                           `> **💬 Last Text :** ${lastMessageInfo}`,
                     inline: false
                 }]);
             });
@@ -323,7 +321,10 @@ async function showRoleActivity(message, role, client) {
                     });
                 } else if (interaction.customId === 'rooms_notify') {
                     await interaction.deferUpdate();
-                    
+                                        
+
+                    collector.stop();
+
                     let successCount = 0;
                     let failCount = 0;
 
@@ -331,7 +332,7 @@ async function showRoleActivity(message, role, client) {
                         try {
                             const dmEmbed = colorManager.createEmbed()
                                 .setTitle('**تنبيه من إدارة السيرفر**')
-                                .setDescription(`**🔔 الرجاء التفاعل في الرومات**\n\n**السيرفر:** ${message.guild.name}\n**الرول:** ${role.name}`)
+                                .setDescription(`**🔔 الرجاء التفاعل في الرومات**\n\n**السيرفر :** ${message.guild.name}\n**الرول :** ___${role.name}___`)
                                 .setThumbnail(message.guild.iconURL({ dynamic: true }))
                                 .setFooter({ text: 'By Ahmed.' })
                                 .setTimestamp();

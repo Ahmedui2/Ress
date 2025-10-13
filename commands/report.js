@@ -306,14 +306,14 @@ async function handleInteraction(interaction, context) {
 
                 // Create report embed with link to original message
                 const reportEmbed = new EmbedBuilder()
-                    .setTitle('📋 تقرير مهمة جديد')
-                    .setDescription(`**المسؤولية:** ${reportData.responsibilityName}\n**من قِبل:** <@${reportData.claimerId}> (${reportData.displayName})\n**السبب:** ${reportData.reason}`)
+                    .setTitle('New report')
+                    .setDescription(`**المسؤولية :** ${reportData.responsibilityName}\n**من قِبل :** <@${reportData.claimerId}> (${reportData.displayName})\n**السبب:** ${reportData.reason}`)
                     .addFields([
-                        { name: '📝 التقرير', value: reportText, inline: false }
+                        { name: ' التقرير', value: reportText, inline: false }
                     ])
                     .setColor(colorManager.getColor(client))
                     .setTimestamp()
-                    .setFooter({ text: `Report ID: ${reportId}` });
+                    .setFooter({ text: `Report ID : ${reportId}` });
 
                 // إضافة رابط الرسالة الأصلية إذا كان متوفراً
                 if (reportData.originalMessageId && reportData.originalChannelId && reportData.originalMessageId !== 'unknown' && reportGuildId) {
@@ -441,7 +441,7 @@ async function handleInteraction(interaction, context) {
 
             const modal = new ModalBuilder()
                 .setCustomId(`report_submit_${reportId}`)
-                .setTitle('كتابة تقرير المهمة');
+                .setTitle('Report');
 
             // الحصول على الإعدادات الصحيحة بناءً على معرف السيرفر
             const reportGuildId = reportData.guildId || interaction.guildId;
@@ -894,14 +894,14 @@ async function handleInteraction(interaction, context) {
                     const user = await client.users.fetch(reportData.claimerId);
                     const notificationEmbed = colorManager.createEmbed()
                         .setTitle(isApprove ? '✅ تمت الموافقة على تقريرك' : '❌ تم رفض تقريرك')
-                        .setDescription(`**المسؤولية:** ${reportData.responsibilityName}\n**السبب:** ${reportData.reason}\n**التقرير:** ${reportData.reportText || 'غير متوفر'}`)
+                        .setDescription(`**المسؤولية :** ${reportData.responsibilityName}\n**السبب :** ${reportData.reason}\n**التقرير :** ${reportData.reportText || 'غير متوفر'}`)
                         .setColor(isApprove ? '#00ff00' : '#ff0000')
                         .setFooter({ text: `${isApprove ? 'تمت الموافقة' : 'تم الرفض'} بواسطة ${interaction.user.tag}` })
                         .setTimestamp();
 
                     if (isApprove && config.pointsOnReport) {
                         notificationEmbed.addFields([
-                            { name: '🎁 النقاط', value: 'تم منحك نقطة للمهمة', inline: false }
+                            { name: ' النقاط', value: '✅️', inline: false }
                         ]);
                     }
 

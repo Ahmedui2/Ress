@@ -10,12 +10,18 @@ const name = 'setroom';
 // مسار ملف إعدادات الغرف
 const roomConfigPath = path.join(__dirname, '..', 'data', 'roomConfig.json');
 const roomRequestsPath = path.join(__dirname, '..', 'data', 'roomRequests.json');
+const setupEmbedMessagesPath = path.join(__dirname, '..', 'data', 'setupEmbedMessages.json');
 
 // تخزين الجدولات النشطة
 const activeSchedules = new Map();
 
 // مسار ملف الجدولات
 const schedulesPath = path.join(__dirname, '..', 'data', 'roomSchedules.json');
+const activeRooms = new Map();
+// مسار ملف الرومات النشطة
+const activeRoomsPath = path.join(__dirname, '..', 'data', 'activeRooms.json');
+// تخزين جدولات حذف الرومات
+const roomDeletionJobs = new Map();
 
 // حفظ الجدولات
 function saveSchedules() {
@@ -33,9 +39,110 @@ function saveSchedules() {
     } catch (error) {
         console.error('خطأ في حفظ الجدولات:', error);
         return false;
+        }
+}
+// حفظ الرومات النشطة
+function saveActiveRooms() {
+    try {
+        const roomsData = Array.from(activeRooms.entries()).map(([channelId, data]) => ({
+            channelId,
+            ...data
+        }));
+        fs.writeFileSync(activeRoomsPath, JSON.stringify(roomsData, null, 2), 'utf8');
+        return true;
+    } catch (error) {
+        console.error('خطأ في حفظ الرومات النشطة:', error);
+        return false;
     }
 }
-
+// تحميل الرومات النشطة
+function loadActiveRooms() {
+    try {
+        if (fs.existsSync(activeRoomsPath)) {
+            const roomsData = JSON.parse(fs.readFileSync(activeRoomsPath, 'utf8'));
+            const roomsMap = new Map();
+            roomsData.forEach(room => {
+                roomsMap.set(room.channelId, {
+                    guildId: room.guildId,
+                    createdAt: room.createdAt,
+                    emojis: room.emojis || [],
+                    requestId: room.requestId
+                });
+            });
+            return roomsMap;
+        }
+        return new Map();
+    } catch (error) {
+        console.error('خطأ في تحميل الرومات النشطة:', error);
+        return new Map();
+    }
+}
+async function deleteRoom(channelId, client) {
+    try {
+        const channel = await client.channels.fetch(channelId).catch(() => null);
+        if (!channel) {
+            console.log(`⚠️ الروم ${channelId} غير موجود (ربما تم حذفه مسبقاً)`);
+            activeRooms.delete(channelId);
+            saveActiveRooms();
+            return;
+        }
+        await channel.delete('انتهت مدة الروم (24 ساعة)');
+        console.log(`🗑️ تم حذف الروم: ${channel.name}`);
+        
+        activeRooms.delete(channelId);
+        roomEmbedMessages.delete(channelId);
+        saveActiveRooms();
+    } catch (error) {
+        console.error(`❌ خطأ في حذف الروم ${channelId}:`, error);
+    }
+}
+// جدولة حذف روم بعد 24 ساعة
+function scheduleRoomDeletion(channelId, client) {
+    const deletionTime = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 ساعة
+    
+    const job = schedule.scheduleJob(deletionTime, async () => {
+        console.log(`⏰ حان موعد حذف الروم: ${channelId}`);
+        await deleteRoom(channelId, client);
+        roomDeletionJobs.delete(channelId);
+    });
+    
+    roomDeletionJobs.set(channelId, job);
+    console.log(`✅ تم جدولة حذف الروم ${channelId} بعد 24 ساعة`);
+}
+// فحص وحذف الرومات القديمة
+async function checkAndDeleteOldRooms(client) {
+    const now = Date.now();
+    const roomsToDelete = [];
+    
+    for (const [channelId, roomData] of activeRooms.entries()) {
+        const roomAge = now - roomData.createdAt;
+        const hoursSinceCreation = roomAge / (1000 * 60 * 60);
+        
+        if (hoursSinceCreation >= 24) {
+            roomsToDelete.push(channelId);
+        } else { const remainingTime = (24 * 60 * 60 * 1000) - roomAge;
+            const deletionTime = new Date(now + remainingTime);
+            
+            const job = schedule.scheduleJob(deletionTime, async () => {
+                console.log(`⏰ حان موعد حذف الروم: ${channelId}`);
+                await deleteRoom(channelId, client);
+                roomDeletionJobs.delete(channelId);
+            });
+            
+            roomDeletionJobs.set(channelId, job);
+            console.log(`✅ تم إعادة جدولة حذف الروم ${channelId} بعد ${Math.round(remainingTime / (1000 * 60))} دقيقة`);
+        }
+    }
+    
+    // حذف الرومات القديمة
+    for (const channelId of roomsToDelete) {
+        await deleteRoom(channelId, client);
+    }
+    
+    if (roomsToDelete.length > 0) {
+        console.log(`🗑️ تم حذف ${roomsToDelete.length} روم قديم`);
+    }
+}
 // تحميل واستعادة الجدولات
 function restoreSchedules(client) {
     try {
@@ -65,14 +172,94 @@ function restoreSchedules(client) {
     }
 }
 
+// فحص واستعادة الإيمبد المحذوف
+async function checkAndRestoreSetupEmbed(client) {
+    try {
+        setupEmbedMessages = loadSetupEmbedMessages();
+        const config = loadRoomConfig();
+        
+        for (const [guildId, guildConfig] of Object.entries(config)) {
+            if (!guildConfig.embedChannelId || !guildConfig.imageUrl) {
+                console.log(`⚠️ تخطي السيرفر ${guildId} - لا توجد قناة إيمبد أو صورة محددة`);
+                continue;
+            }
+
+            const setupData = setupEmbedMessages.get(guildId);
+            
+            try {
+                const embedChannel = await client.channels.fetch(guildConfig.embedChannelId);
+                
+                let needsNewMessage = false;
+                
+                if (!setupData || !setupData.messageId) {
+                    console.log(`📝 لا توجد رسالة محفوظة للسيرفر ${guildId} - سيتم إنشاء رسالة جديدة`);
+                    needsNewMessage = true;
+                } else {
+                    try {
+                        await embedChannel.messages.fetch(setupData.messageId);
+                        console.log(`✅ رسالة الإيمبد موجودة في السيرفر ${guildId}`);
+                    } catch (fetchError) {
+                        if (fetchError.code === 10008) {
+                            console.log(`🔄 رسالة الإيمبد محذوفة في السيرفر ${guildId} - إعادة الإرسال...`);
+                            needsNewMessage = true;
+                        }
+                    }
+                }
+
+                if (needsNewMessage) {
+                    const finalEmbed = colorManager.createEmbed()
+                        .setTitle('**Rooms**')
+                        .setDescription('**اختر نوع الروم التي تريد طلبها :**')
+                        .setImage(guildConfig.imageUrl)
+                        .setFooter({ text: 'Rooms system' });
+
+                    const menu = new ActionRowBuilder().addComponents(
+                        new StringSelectMenuBuilder()
+                            .setCustomId('room_type_menu')
+                            .setPlaceholder('اختر نوع الروم')
+                            .addOptions([
+                                {
+                                    label: 'روم تعزيه',
+                                    description: 'طلب روم عزاء',
+                                    value: 'condolence',
+                                },
+                                {
+                                    label: 'روم ميلاد',
+                                    description: 'طلب روم hbd',
+                                    value: 'birthday',
+                                }
+                            ])
+                    );
+
+                    const newMessage = await embedChannel.send({ embeds: [finalEmbed], components: [menu] });
+
+                    setupEmbedMessages.set(guildId, {
+                        messageId: newMessage.id,
+                        channelId: embedChannel.id,
+                        imageUrl: guildConfig.imageUrl
+                    });
+                    
+                    saveSetupEmbedMessages(setupEmbedMessages);
+
+                    console.log(`✅ تم إرسال إيمبد الروم في السيرفر ${guildId}`);
+                }
+            } catch (channelError) {
+                console.error(`❌ خطأ في فحص/استعادة الإيمبد للسيرفر ${guildId}:`, channelError);
+            }
+        }
+    } catch (error) {
+        console.error('❌ خطأ عام في فحص واستعادة الإيمبد:', error);
+    }
+}
+
 // تخزين انتظار الإيموجي
 const awaitingEmojis = new Map();
 
 // تخزين رسائل الإمبد في الغرف للحماية من الحذف
 const roomEmbedMessages = new Map();
 
-// تخزين رسائل إيمبد السيتب للحماية من الحذف
-const setupEmbedMessages = new Map();
+// تخزين رسائل إيمبد السيتب للحماية من الحذف - يتم تحميلها من الملف
+let setupEmbedMessages = loadSetupEmbedMessages();
 
 // قراءة وحفظ الإعدادات
 function loadRoomConfig() {
@@ -115,6 +302,41 @@ function saveRoomRequests(requests) {
         return true;
     } catch (error) {
         console.error('خطأ في حفظ طلبات الغرف:', error);
+        return false;
+    }
+}
+
+function loadSetupEmbedMessages() {
+    try {
+        if (fs.existsSync(setupEmbedMessagesPath)) {
+            const data = JSON.parse(fs.readFileSync(setupEmbedMessagesPath, 'utf8'));
+            const embedMap = new Map();
+            for (const [guildId, embedData] of Object.entries(data)) {
+                embedMap.set(guildId, embedData);
+            }
+            return embedMap;
+        }
+        return new Map();
+    } catch (error) {
+        console.error('خطأ في قراءة setupEmbedMessages:', error);
+        return new Map();
+    }
+}
+
+function saveSetupEmbedMessages(embedMap) {
+    try {
+        const data = {};
+        for (const [guildId, embedData] of embedMap.entries()) {
+            data[guildId] = {
+                messageId: embedData.messageId,
+                channelId: embedData.channelId,
+                imageUrl: embedData.imageUrl
+            };
+        }
+        fs.writeFileSync(setupEmbedMessagesPath, JSON.stringify(data, null, 2), 'utf8');
+        return true;
+    } catch (error) {
+        console.error('خطأ في حفظ setupEmbedMessages:', error);
         return false;
     }
 }
@@ -719,11 +941,16 @@ async function createRoom(request, client, guildConfig) {
         }
 
         // إعداد نظام الريآكت التلقائي
-        if (emojis.length > 0) {
-            setupAutoReact(channel.id, emojis, client);
-            console.log(`✅ تم إعداد نظام الريآكت التلقائي`);
-        }
-
+        activeRooms.set(channel.id, {
+            guildId: request.guildId,
+            createdAt: Date.now(),
+            emojis: emojis,
+            requestId: request.id
+        });
+        saveActiveRooms();
+        
+        // جدولة حذف الروم بعد 24 ساعة
+        scheduleRoomDeletion(channel.id, client);
         console.log(`✅ تم إنشاء روم ${request.roomType} بنجاح: ${roomName}`);
         
         // إرسال إشعار لصاحب الطلب
@@ -767,31 +994,7 @@ async function createRoom(request, client, guildConfig) {
 }
 
 // إعداد نظام الريآكت التلقائي
-function setupAutoReact(channelId, reactions, client) {
-    const handler = async (message) => {
-        if (message.channel.id === channelId && !message.author.bot) {
-            for (const reaction of reactions) {
-                try {
-                    await message.react(reaction);
-                } catch (error) {
-                    // محاولة استخدام آيدي الإيموجي إذا فشل
-                    const emojiIdMatch = reaction.match(/<a?:\w+:(\d+)>/);
-                    if (emojiIdMatch) {
-                        try {
-                            await message.react(emojiIdMatch[1]);
-                        } catch (err) {
-                            console.error('فشل في إضافة الريآكت التلقائي بالآيدي:', err.message);
-                        }
-                    } else {
-                        console.error('خطأ في إضافة الريآكت التلقائي:', error.message);
-                    }
-                }
-            }
-        }
-    };
 
-    client.on('messageCreate', handler);
-}
 
 // تحليل الوقت
 function parseScheduleTime(timeString) {
@@ -917,6 +1120,26 @@ function registerHandlers(client) {
     // معالج رسائل الإيموجي
     client.on('messageCreate', async (message) => {
         await handleEmojiMessage(message, client);
+        if (message.author.bot) return;
+        
+        const roomData = activeRooms.get(message.channel.id);
+        if (roomData && roomData.emojis && roomData.emojis.length > 0) {
+            for (const reaction of roomData.emojis) {
+                try {
+                    await message.react(reaction);
+                } catch (error) {
+                    // محاولة استخدام آيدي الإيموجي إذا فشل
+                    const emojiIdMatch = reaction.match(/<a?:\w+:(\d+)>/);
+                    if (emojiIdMatch) {
+                        try {
+                            await message.react(emojiIdMatch[1]);
+                        } catch (err) {
+                            console.error('فشل في إضافة الريآكت التلقائي:', err.message);
+                        }
+                    }
+                }
+            }
+        }
     });
 
     // معالج حذف الرسائل - لإعادة إرسال الإمبد
@@ -1018,6 +1241,8 @@ function registerHandlers(client) {
                                 menu: menu,
                                 imageUrl: setupData.imageUrl
                             });
+                            
+                            saveSetupEmbedMessages(setupEmbedMessages);
 
                         } catch (error) {
                             console.error('❌ فشل في إعادة إرسال رسالة سيتب الروم:', error);
@@ -1159,6 +1384,8 @@ async function execute(message, args, { BOT_OWNERS, client }) {
                         menu: menu,
                         imageUrl: imageUrl
                     });
+                    
+                    saveSetupEmbedMessages(setupEmbedMessages);
 
                     // رسالة نجاح
                     const successEmbed = colorManager.createEmbed()
@@ -1195,5 +1422,6 @@ module.exports = {
     loadRoomRequests,
     saveRoomRequests,
     registerHandlers,
-    restoreSchedules
+    restoreSchedules,
+    checkAndRestoreSetupEmbed
 };

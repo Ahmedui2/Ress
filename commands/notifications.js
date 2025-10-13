@@ -302,6 +302,32 @@ async function handleInteraction(interaction, context) {
                     ephemeral: true 
                 });
 
+            } else if (selectedValue === 'view_settings') {
+                // عرض الإعدادات الحالية
+                const config = loadNotificationsConfig();
+                
+                // بناء نص الإعدادات
+                let settingsText = `**⏱️ الوقت الافتراضي:** ${config.settings.reminderDelay} دقيقة\n\n`;
+                settingsText += `**📋 أوقات المسؤوليات المخصصة:**\n`;
+                
+                if (config.settings.customResponsibilityTime && Object.keys(config.settings.customResponsibilityTime).length > 0) {
+                    for (const [respName, time] of Object.entries(config.settings.customResponsibilityTime)) {
+                        settingsText += `• ${respName}: ${time} دقيقة\n`;
+                    }
+                } else {
+                    settingsText += `لا توجد أوقات مخصصة - يتم استخدام الوقت الافتراضي\n`;
+                }
+                
+                settingsText += `\n**🔔 حالة النظام:** ${config.settings.enabled ? '🟢 مفعل' : '🔴 معطل'}`;
+
+                const settingsEmbed = colorManager.createEmbed()
+                    .setTitle('⚙️ إعدادات نظام التنبيهات')
+                    .setDescription(settingsText)
+                    .setColor(colorManager.getColor())
+                    .setTimestamp();
+
+                await interaction.reply({ embeds: [settingsEmbed], ephemeral: true });
+
             } else if (selectedValue === 'change_global_time') {
                 const modal = new ModalBuilder()
                     .setCustomId('change_global_time_modal')

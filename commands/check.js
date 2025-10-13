@@ -22,9 +22,8 @@ async function execute(message, args, { client, BOT_OWNERS, ADMIN_ROLES }) {
 
     const member = await message.guild.members.fetch(message.author.id);
     const hasAdministrator = member.permissions.has('Administrator');
-    const isOwner = BOT_OWNERS.includes(message.author.id) || message.guild.ownerId === message.author.id;
 
-    if (!hasAdministrator && !isOwner) {
+    if (!hasAdministrator) {
         await message.react('❌');
         return;
     }
@@ -435,7 +434,9 @@ async function showRoleActivityStats(message, role, client) {
                         if (selectedColors.includes('red')) {
                             selectedUserIds.push(...redUsers.map(u => u.userId));
                         }
+selectedUserIds = [...new Set(selectedUserIds)];
 
+                        collector.stop();
                         const sender = selectInteraction.user;
                         const date = moment().tz('Asia/Riyadh').format('YYYY-MM-DD HH:mm');
                         const failedUsers = [];
