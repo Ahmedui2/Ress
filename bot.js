@@ -1393,6 +1393,62 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
             }
         }
 
+        // 4. حماية رولات المسؤوليات - إزالة تلقائية من غير المسؤولين
+        const responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
+        
+        for (const [roleId, role] of addedRoles) {
+            // البحث عن المسؤولية التي تحتوي هذا الرول
+            let foundResp = null;
+            for (const [respName, resp] of Object.entries(responsibilities)) {
+                if (resp.roles && resp.roles.includes(roleId)) {
+                    foundResp = { name: respName, data: resp };
+                    break;
+                }
+            }
+
+            if (foundResp) {
+                // التحقق من أن المستخدم مسؤول في هذه المسؤولية
+                const isResponsible = foundResp.data.responsibles && foundResp.data.responsibles.includes(userId);
+                
+                if (!isResponsible) {
+                    // شخص غير مسؤول حصل على رول المسؤولية - يجب إزالته
+                    console.log(`🚨 محاولة أخذ رول مسؤولية من غير مسؤول: ${role.name} للعضو ${newMember.displayName}`);
+                    
+                    try {
+                        await newMember.roles.remove(role, 'منع رول مسؤولية - العضو ليس مسؤولاً');
+                        
+                        // فحص ثانوي بعد 10 ثوانٍ
+                        setTimeout(async () => {
+                            try {
+                                const updatedMember = await newMember.guild.members.fetch(userId);
+                                if (updatedMember.roles.cache.has(roleId)) {
+                                    await updatedMember.roles.remove(role, 'فحص ثانوي - منع رول مسؤولية');
+                                    console.log(`🔒 تم إزالة رول المسؤولية مرة أخرى: ${role.name}`);
+                                }
+                            } catch (secondCheckError) {
+                                console.error('خطأ في الفحص الثانوي لرول المسؤولية:', secondCheckError);
+                            }
+                        }, 10000);
+                        
+                        logEvent(client, newMember.guild, {
+                            type: 'SECURITY_ACTIONS',
+                            title: 'منع رول مسؤولية من غير مسؤول',
+                            description: 'تم منع عضو غير مسؤول من الحصول على رول مسؤولية',
+                            user: newMember.user,
+                            fields: [
+                                { name: '👤 العضو', value: `<@${userId}>`, inline: true },
+                                { name: '🏷️ الرول', value: `<@&${roleId}> (${role.name})`, inline: true },
+                                { name: '📂 المسؤولية', value: foundResp.name, inline: true },
+                                { name: '⚠️ السبب', value: 'العضو ليس مسؤولاً في هذه المسؤولية', inline: false }
+                            ]
+                        });
+                    } catch (removeError) {
+                        console.error(`خطأ في إزالة رول المسؤولية:`, removeError);
+                    }
+                }
+            }
+        }
+
     } catch (error) {
         console.error('خطأ في نظام الحماية:', error);
     }
