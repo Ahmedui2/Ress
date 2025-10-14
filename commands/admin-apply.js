@@ -759,63 +759,63 @@ async function handleAdminApplicationInteraction(interaction) {
                 components: []
             });
 
-            // إرسال إشعار مفصل للمرشح
-            try {
-                const approvalDate = new Date().toLocaleString('en-US', {
-                    timeZone: 'Asia/Riyadh',
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric',
-                    weekday: 'long',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit',
-                    hour12: true
-                });
-
-                const notificationEmbed = colorManager.createEmbed()
-                    .setTitle('تم قبول طلبك للإدارة')
-                    .setDescription(`**قبلك مسؤول الإدارة :** ${interaction.member.displayName}\n\n**رولك الذي عُطي :** ${addedRoles.length > 0 ? addedRoles.map(r => r.name).join(', ') : 'لا يوجد'}\n\n**تاريخ الموافقة:** ${new Date().toLocaleDateString('en-US')}`)
-                    .setTimestamp();
-
-                if (addedRoles.length > 0) {
-                    notificationEmbed.addFields([
-                        { name: '**اارولات الإدارية الجديدة**', value: `**${addedRoles.map(r => `\`${r.name}\``).join(' • ')}**`, inline: false }
-                    ]);
-                }
-
-                notificationEmbed.addFields([
-                    { name: '**تذكير مهم**', value: ' راجع روم القوانين وكل المعلومات التي تحتاجها كإداري', inline: false }
-                ]);
-
-                await candidate.user.send({ embeds: [notificationEmbed] });
-                console.log(`📧 تم إرسال إشعار مفصل للمرشح ${candidate.displayName}`);
-            } catch (dmError) {
-                console.log(`⚠️ تعذر إرسال إشعار خاص للمرشح ${candidate.displayName}:`, dmError.message);
-
-                // محاولة إرسال في القناة العامة كبديل
+            // إرسال إشعار مفصل للمرشح فقط إذا تم إضافة رول واحد على الأقل
+            if (addedRoles.length > 0) {
                 try {
-                    const publicNotification = `**تهانينا ${candidate}!** تم قبول طلبك للحصول على إدارة! (تم الإرسال هنا لأن رسائلك الخاصة مغلقة)`;
-                    await interaction.followUp({
-                        content: publicNotification,
-                        flags: 64
+                    const approvalDate = new Date().toLocaleString('en-US', {
+                        timeZone: 'Asia/Riyadh',
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                        weekday: 'long',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: true
                     });
-                } catch (publicError) {
-                    console.log(`⚠️ فشل أيضاً في الإرسال في القناة العامة:`, publicError.message);
+
+                    const notificationEmbed = colorManager.createEmbed()
+                        .setTitle('تم قبول طلبك للإدارة')
+                        .setDescription(`**قبلك مسؤول الإدارة :** ${interaction.member.displayName}\n\n**رولك الذي عُطي :** ${addedRoles.map(r => r.name).join(', ')}\n\n**تاريخ الموافقة:** ${new Date().toLocaleDateString('en-US')}`)
+                        .setTimestamp();
+
+                    notificationEmbed.addFields([
+                        { name: '**اارولات الإدارية الجديدة**', value: `**${addedRoles.map(r => `\`${r.name}\``).join(' • ')}**`, inline: false },
+                        { name: '**تذكير مهم**', value: ' راجع روم القوانين وكل المعلومات التي تحتاجها كإداري', inline: false }
+                    ]);
+
+                    await candidate.user.send({ embeds: [notificationEmbed] });
+                    console.log(`📧 تم إرسال إشعار مفصل للمرشح ${candidate.displayName}`);
+                } catch (dmError) {
+                    console.log(`⚠️ تعذر إرسال إشعار خاص للمرشح ${candidate.displayName}:`, dmError.message);
+
+                    // محاولة إرسال في القناة العامة كبديل
+                    try {
+                        const publicNotification = `**تهانينا ${candidate}!** تم قبول طلبك للحصول على إدارة! (تم الإرسال هنا لأن رسائلك الخاصة مغلقة)`;
+                        await interaction.followUp({
+                            content: publicNotification,
+                            flags: 64
+                        });
+                    } catch (publicError) {
+                        console.log(`⚠️ فشل أيضاً في الإرسال في القناة العامة:`, publicError.message);
+                    }
                 }
-            }
 
-            // حذف الطلب من الطلبات المعلقة بعد نجاح العملية
-            delete settings.pendingApplications[applicationId];
-            const saveResult = saveAdminApplicationSettings(settings);
+                // حذف الطلب من الطلبات المعلقة فقط بعد نجاح إضافة رول واحد على الأقل
+                delete settings.pendingApplications[applicationId];
+                const saveResult = saveAdminApplicationSettings(settings);
 
-            if (!saveResult) {
-                console.error('❌ فشل في حفظ إعدادات التقديم بعد الموافقة');
+                if (!saveResult) {
+                    console.error('❌ فشل في حفظ إعدادات التقديم بعد الموافقة');
+                } else {
+                    console.log('✅ تم حفظ إعدادات التقديم بنجاح وحذف الطلب');
+                }
+
+                console.log(`✅ تمت الموافقة على طلب إداري: ${application.candidateId} (${candidate.displayName}) بواسطة ${interaction.user.id} - أدوار مضافة: ${addedRoles.length}`);
             } else {
-                console.log('✅ تم حفظ إعدادات التقديم بنجاح');
+                // إذا فشلت جميع الأدوار، لا نحذف الطلب
+                console.log(`⚠️ فشلت جميع الأدوار في الإضافة، الطلب لا يزال موجوداً: ${applicationId}`);
             }
-
-            console.log(`✅ تمت الموافقة على طلب إداري: ${application.candidateId} (${candidate.displayName}) بواسطة ${interaction.user.id} - أدوار مضافة: ${addedRoles.length}`);
 
             return true;
         }
@@ -839,8 +839,10 @@ async function handleAdminApplicationInteraction(interaction) {
 
         if (!application) {
             console.log('لم يتم العثور على الطلب:', applicationId);
-            await interaction.editReply({
-                content: '**لم يتم العثور على طلب التقديم أو تم معالجته مسبقاً.**'
+            
+            await interaction.reply({
+                content: '**❌ لم يتم العثور على طلب التقديم أو تم معالجته مسبقاً.**',
+                ephemeral: true
             });
             return true;
         }
@@ -849,8 +851,9 @@ async function handleAdminApplicationInteraction(interaction) {
 
         // التحقق من صلاحية المعتمد
         if (!canApproveApplication(interaction.member, settings)) {
-            await interaction.editReply({
-                content: '**ليس لديك صلاحية للموافقة على طلبات التقديم الإداري.**'
+            await interaction.reply({
+                content: '❌ ** لا تسوي خوي **.',
+                ephemeral: true
             });
             return true;
         }
@@ -859,9 +862,20 @@ async function handleAdminApplicationInteraction(interaction) {
         const candidate = await interaction.guild.members.fetch(application.candidateId).catch(() => null);
 
         if (!candidate) {
-            await interaction.editReply({
-                content: '**لم يتم العثور على العضو في السيرفر.**'
+            // حذف الطلب إذا كان العضو غير موجود وتحديث الرسالة
+            delete settings.pendingApplications[applicationId];
+            saveAdminApplicationSettings(settings);
+            
+            const errorEmbed = colorManager.createEmbed()
+                .setTitle('❌ خطأ')
+                .setDescription('**لم يتم العثور على العضو في السيرفر. تم حذف الطلب.**')
+                .setTimestamp();
+            
+            await interaction.update({
+                embeds: [errorEmbed],
+                components: []
             });
+            
             return true;
         }
 
@@ -870,8 +884,9 @@ async function handleAdminApplicationInteraction(interaction) {
             const adminRoles = loadAdminRoles();
 
             if (adminRoles.length === 0) {
-                await interaction.editReply({
-                    content: '**لا توجد رولات إدارية محددة في النظام. استخدم أمر adminroles لتحديدها.**'
+                await interaction.reply({
+                    content: '**❌ لا توجد رولات إدارية محددة في النظام. استخدم أمر adminroles لتحديدها.**',
+                    ephemeral: true
                 });
                 return true;
             }
@@ -896,8 +911,9 @@ async function handleAdminApplicationInteraction(interaction) {
             });
 
             if (availableRoles.length === 0) {
-                await interaction.editReply({
-                    content: '**لا توجد رولات متاحة يمكنك منحها للعضو (بناءً على رتبتك في السيرفر).**'
+                await interaction.reply({
+                    content: '**❌ لا توجد رولات متاحة يمكنك منحها للعضو (بناءً على رتبتك في السيرفر).**',
+                    ephemeral: true
                 });
                 return true;
             }
