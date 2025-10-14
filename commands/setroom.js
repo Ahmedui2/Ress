@@ -332,6 +332,19 @@ function restoreSchedules(client) {
     }
 }
 
+// نظام فحص دوري مستمر - يعمل كل 5 دقائق
+function startContinuousSetupEmbedCheck(client) {
+    setInterval(async () => {
+        try {
+            await checkAndRestoreSetupEmbed(client);
+        } catch (error) {
+            console.error('❌ خطأ في الفحص الدوري المستمر:', error);
+        }
+    }, 5 * 60 * 1000); // كل 5 دقائق
+    
+    console.log('✅ تم تشغيل نظام الفحص الدوري المستمر (كل 5 دقائق)');
+}
+
 // فحص واستعادة الإيمبد المحذوف
 async function checkAndRestoreSetupEmbed(client) {
     try {
@@ -340,7 +353,6 @@ async function checkAndRestoreSetupEmbed(client) {
         
         for (const [guildId, guildConfig] of Object.entries(config)) {
             if (!guildConfig.embedChannelId || !guildConfig.imageUrl) {
-                console.log(`⚠️ تخطي السيرفر ${guildId} - لا توجد قناة إيمبد أو صورة محددة`);
                 continue;
             }
 
@@ -357,7 +369,7 @@ async function checkAndRestoreSetupEmbed(client) {
                 } else {
                     try {
                         await embedChannel.messages.fetch(setupData.messageId);
-                        console.log(`✅ رسالة الإيمبد موجودة في السيرفر ${guildId}`);
+                        // رسالة موجودة - لا حاجة للطباعة في كل مرة
                     } catch (fetchError) {
                         if (fetchError.code === 10008) {
                             console.log(`🔄 رسالة الإيمبد محذوفة في السيرفر ${guildId} - إعادة الإرسال...`);
@@ -392,7 +404,7 @@ async function checkAndRestoreSetupEmbed(client) {
                     );
 
                     const newMessage = await embedChannel.send({ embeds: [finalEmbed], components: [menu] });
-                    console.log(`📤 تم إرسال setup embed في السيرفر ${guildId} - جاري التحقق...`);
+                    console.log(`📤 تم إرسال setup embed في السيرفر ${guildId}`);
 
                     setupEmbedMessages.set(guildId, {
                         messageId: newMessage.id,
@@ -402,24 +414,15 @@ async function checkAndRestoreSetupEmbed(client) {
                     
                     saveSetupEmbedMessages(setupEmbedMessages);
 
-                    // فحص فوري للتأكد من الإرسال (بعد ثانية واحدة)
+                    // فحص فوري بعد ثانية واحدة
                     setTimeout(async () => {
                         const isVerified = await verifySetupEmbed(guildId, newMessage.id, embedChannel.id, client, 1);
-                        if (isVerified) {
-                            console.log(`✅ [فحص فوري] تأكيد نجاح إرسال setup embed في ${embedChannel.name}`);
-                        } else {
-                            console.error(`⚠️ [فحص فوري] فشل التحقق من setup embed - سيتم المحاولة مجدداً`);
-                            await resendSetupEmbed(guildId, client);
+                        if (!isVerified) {
+                            console.error(`⚠️ فشل التحقق الفوري - سيتم المحاولة في الفحص التالي`);
                         }
                     }, 1000);
 
-                    // جدولة فحص بعد 3 دقائق
-                    scheduleSetupEmbedThreeMinuteCheck(guildId, newMessage.id, embedChannel.id, client);
-
-                    // جدولة فحوصات دورية كل 10 دقائق لمدة ساعة
-                    scheduleSetupEmbedPeriodicChecks(guildId, newMessage.id, embedChannel.id, client);
-
-                    console.log(`✅ تم إرسال setup embed مع نظام الفحص في السيرفر ${guildId}`);
+                    console.log(`✅ تم إرسال setup embed في السيرفر ${guildId}`);
                 }
             } catch (channelError) {
                 console.error(`❌ خطأ في فحص/استعادة الإيمبد للسيرفر ${guildId}:`, channelError);
@@ -1619,5 +1622,6 @@ module.exports = {
     saveRoomRequests,
     registerHandlers,
     restoreSchedules,
-    checkAndRestoreSetupEmbed
+    checkAndRestoreSetupEmbed,
+    startContinuousSetupEmbedCheck
 };

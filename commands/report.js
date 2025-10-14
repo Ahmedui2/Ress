@@ -80,7 +80,7 @@ function createMainEmbed(client, guildId) {
     }
 
     return new EmbedBuilder()
-        .setTitle('⚙️ إعدادات نظام التقارير')
+        .setTitle('Report System')
         .setDescription('التحكم الكامل بإعدادات نظام التقارير والموافقة عليها.')
         .setColor(colorManager.getColor(client))
         .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400661744682139690/download__1_-removebg-preview.png?ex=688d7366&is=688c21e6&hm=5635fe92ec3d4896d9ca065b9bb8ee11a5923b9e5d75fe94b753046e7e8b24eb&')
@@ -142,7 +142,7 @@ function createResponsibilitySelectMenu(responsibilities, customId, placeholder)
 
 function createTemplateManagementEmbed(client, responsibilities, config) {
     const embed = new EmbedBuilder()
-        .setTitle('📝 إدارة قوالب التقارير')
+        .setTitle(' إدارة قوالب التقارير')
         .setDescription('إدارة القوالب المخصصة لكل مسؤولية')
         .setColor(colorManager.getColor(client))
         .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400661744682139690/download__1_-removebg-preview.png?ex=688d7366&is=688c21e6&hm=5635fe92ec3d4896d9ca065b9bb8ee11a5923b9e5d75fe94b753046e7e8b24eb&');
@@ -545,26 +545,107 @@ async function handleInteraction(interaction, context) {
                     break;
 
                 case 'report_manage_resps':
-                    responseContent = 'اختر الإجراء المطلوب للمسؤوليات:';
-                    newComponents = [
-                        new ActionRowBuilder().addComponents(
-                            new ButtonBuilder()
-                                .setCustomId('report_select_req_report')
-                                .setLabel('تحديد إلزامية التقرير')
-                                .setStyle(ButtonStyle.Primary),
-                            new ButtonBuilder()
-                                .setCustomId('report_select_req_approval')
-                                .setLabel('تحديد إلزامية الموافقة')
-                                .setStyle(ButtonStyle.Primary)
-                        ),
-                        new ActionRowBuilder().addComponents(
-                            new ButtonBuilder()
-                                .setCustomId('report_back_to_main')
-                                .setLabel('➡️ العودة')
-                                .setStyle(ButtonStyle.Secondary)
-                        )
-                    ];
-                    break;
+                    // إنشاء embed منظم يعرض حالة المسؤوليات
+                    const respsEmbed = colorManager.createEmbed()
+                        .setTitle('Res settings')
+                        .setDescription('** Res status:**')
+                        .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400661744682139690/download__1_-removebg-preview.png?ex=688d7366&is=688c21e6&hm=5635fe92ec3d4896d9ca065b9bb8ee11a5923b9e5d75fe94b753046e7e8b24eb&')
+                        .setTimestamp();
+
+                    const requiredReport = config.requiredFor || [];
+                    const requiredApproval = config.approvalRequiredFor || [];
+                    
+                    // تصنيف المسؤوليات
+                    const both = [];
+                    const reportOnly = [];
+                    const approvalOnly = [];
+                    const neither = [];
+
+                    for (const respName of Object.keys(responsibilities)) {
+                        const hasReport = requiredReport.includes(respName);
+                        const hasApproval = requiredApproval.includes(respName);
+
+                        if (hasReport && hasApproval) {
+                            both.push(respName);
+                        } else if (hasReport) {
+                            reportOnly.push(respName);
+                        } else if (hasApproval) {
+                            approvalOnly.push(respName);
+                        } else {
+                            neither.push(respName);
+                        }
+                    }
+
+                    // إضافة الحقول
+                    if (both.length > 0) {
+                        respsEmbed.addFields([
+                            { 
+                                name: '✅ **إلزامية التقرير والموافقة**', 
+                                value: both.map(r => `• ${r}`).join('\n'), 
+                                inline: false 
+                            }
+                        ]);
+                    }
+
+                    if (reportOnly.length > 0) {
+                        respsEmbed.addFields([
+                            { 
+                                name: ' **إلزامية التقرير فقط**', 
+                                value: reportOnly.map(r => `• ${r}`).join('\n'), 
+                                inline: false 
+                            }
+                        ]);
+                    }
+
+                    if (approvalOnly.length > 0) {
+                        respsEmbed.addFields([
+                            { 
+                                name: '✔️ **إلزامية الموافقة فقط**', 
+                                value: approvalOnly.map(r => `• ${r}`).join('\n'), 
+                                inline: false 
+                            }
+                        ]);
+                    }
+
+                    if (neither.length > 0) {
+                        respsEmbed.addFields([
+                            { 
+                                name: ' **بدون إلزامية**', 
+                                value: neither.map(r => `• ${r}`).join('\n'), 
+                                inline: false 
+                            }
+                        ]);
+                    }
+
+                    if (Object.keys(responsibilities).length === 0) {
+                        respsEmbed.addFields([
+                            { name: '⚠️ لا توجد مسؤوليات', value: 'يجب إنشاء مسؤوليات أولاً', inline: false }
+                        ]);
+                    }
+
+                    await interaction.update({
+                        content: '',
+                        embeds: [respsEmbed],
+                        components: [
+                            new ActionRowBuilder().addComponents(
+                                new ButtonBuilder()
+                                    .setCustomId('report_select_req_report')
+                                    .setLabel('تحديد إلزامية التقرير')
+                                    .setStyle(ButtonStyle.Primary),
+                                new ButtonBuilder()
+                                    .setCustomId('report_select_req_approval')
+                                    .setLabel('تحديد إلزامية الموافقة')
+                                    .setStyle(ButtonStyle.Primary)
+                            ),
+                            new ActionRowBuilder().addComponents(
+                                new ButtonBuilder()
+                                    .setCustomId('report_back_to_main')
+                                    .setLabel('➡️ العودة')
+                                    .setStyle(ButtonStyle.Secondary)
+                            )
+                        ]
+                    });
+                    return;
 
                 case 'report_select_req_report':
                     // إعادة تحميل المسؤوليات للتأكد من أحدث البيانات
@@ -578,15 +659,31 @@ async function handleInteraction(interaction, context) {
                         console.error('[Report] ❌ خطأ في قراءة المسؤوليات:', error);
                     }
 
-                    responseContent = 'اختر المسؤوليات التي تتطلب تقرير:';
+                    const reportOptions = Object.keys(reqReportResps).slice(0, 25).map(respName => ({
+                        label: respName,
+                        value: respName,
+                        description: config.requiredFor?.includes(respName) ? '✅ مفعل حالياً' : 'غير مفعل',
+                        default: config.requiredFor?.includes(respName) || false
+                    }));
+
+                    if (reportOptions.length === 0) {
+                        reportOptions.push({
+                            label: 'لا توجد مسؤوليات',
+                            value: 'none',
+                            description: 'يجب إنشاء مسؤوليات أولاً'
+                        });
+                    }
+
+                    const reportSelectMenu = new StringSelectMenuBuilder()
+                        .setCustomId('report_confirm_req_report')
+                        .setPlaceholder('اختر المسؤوليات المطلوب تقرير لها...')
+                        .setMinValues(0)
+                        .setMaxValues(Math.min(reportOptions.length, 25))
+                        .addOptions(reportOptions);
+
+                    responseContent = ' **اختر المسؤوليات التي تتطلب تقرير:**';
                     newComponents = [
-                        new ActionRowBuilder().addComponents(
-                            createResponsibilitySelectMenu(
-                                reqReportResps, 
-                                'report_confirm_req_report', 
-                                'اختر المسؤوليات المطلوب تقرير لها'
-                            )
-                        ),
+                        new ActionRowBuilder().addComponents(reportSelectMenu),
                         new ActionRowBuilder().addComponents(
                             new ButtonBuilder()
                                 .setCustomId('report_manage_resps')
@@ -608,15 +705,31 @@ async function handleInteraction(interaction, context) {
                         console.error('[Report] ❌ خطأ في قراءة المسؤوليات:', error);
                     }
 
-                    responseContent = 'اختر المسؤوليات التي تتطلب موافقة على التقرير:';
+                    const approvalOptions = Object.keys(reqApprovalResps).slice(0, 25).map(respName => ({
+                        label: respName,
+                        value: respName,
+                        description: config.approvalRequiredFor?.includes(respName) ? '✅ مفعل حالياً' : 'غير مفعل',
+                        default: config.approvalRequiredFor?.includes(respName) || false
+                    }));
+
+                    if (approvalOptions.length === 0) {
+                        approvalOptions.push({
+                            label: 'لا توجد مسؤوليات',
+                            value: 'none',
+                            description: 'يجب إنشاء مسؤوليات أولاً'
+                        });
+                    }
+
+                    const approvalSelectMenu = new StringSelectMenuBuilder()
+                        .setCustomId('report_confirm_req_approval')
+                        .setPlaceholder('اختر المسؤوليات المطلوب موافقة تقريرها...')
+                        .setMinValues(0)
+                        .setMaxValues(Math.min(approvalOptions.length, 25))
+                        .addOptions(approvalOptions);
+
+                    responseContent = '✔️ **اختر المسؤوليات التي تتطلب موافقة على التقرير من مسؤول المسؤوليات :**\n';
                     newComponents = [
-                        new ActionRowBuilder().addComponents(
-                            createResponsibilitySelectMenu(
-                                reqApprovalResps, 
-                                'report_confirm_req_approval', 
-                                'اختر المسؤوليات المطلوب موافقة تقريرها'
-                            )
-                        ),
+                        new ActionRowBuilder().addComponents(approvalSelectMenu),
                         new ActionRowBuilder().addComponents(
                             new ButtonBuilder()
                                 .setCustomId('report_manage_resps')
@@ -645,6 +758,10 @@ async function handleInteraction(interaction, context) {
                         ),
                         new ActionRowBuilder().addComponents(
                             new ButtonBuilder()
+                                .setCustomId('report_view_templates')
+                                .setLabel('رؤية القوالب الحالية')
+                                .setStyle(ButtonStyle.Secondary),
+                            new ButtonBuilder()
                                 .setCustomId('report_template_delete_all')
                                 .setLabel('حذف جميع القوالب')
                                 .setStyle(ButtonStyle.Danger),
@@ -655,6 +772,41 @@ async function handleInteraction(interaction, context) {
                         )
                     ];
                     break;
+
+                case 'report_view_templates':
+                    // عرض القوالب الحالية
+                    const templatesEmbed = colorManager.createEmbed()
+                        .setTitle('Templates')
+                        .setDescription('قوالب التقارير المحددة لكل مسؤولية')
+                        .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400661744682139690/download__1_-removebg-preview.png?ex=688d7366&is=688c21e6&hm=5635fe92ec3d4896d9ca065b9bb8ee11a5923b9e5d75fe94b753046e7e8b24eb&')
+                        .setTimestamp();
+
+                    if (Object.keys(config.templates || {}).length === 0) {
+                        templatesEmbed.addFields([
+                            { name: '⚠️ لا توجد قوالب', value: 'لم يتم تحديد أي قوالب بعد.', inline: false }
+                        ]);
+                    } else {
+                        for (const [respName, template] of Object.entries(config.templates)) {
+                            const truncatedTemplate = template.length > 150 ? template.substring(0, 150) + '...' : template;
+                            templatesEmbed.addFields([
+                                { name: `📌 ${respName}`, value: truncatedTemplate || 'قالب فارغ', inline: false }
+                            ]);
+                        }
+                    }
+
+                    await interaction.update({
+                        content: '',
+                        embeds: [templatesEmbed],
+                        components: [
+                            new ActionRowBuilder().addComponents(
+                                new ButtonBuilder()
+                                    .setCustomId('report_manage_templates')
+                                    .setLabel('➡️ العودة')
+                                    .setStyle(ButtonStyle.Secondary)
+                            )
+                        ]
+                    });
+                    return;
 
                 case 'report_template_select_resp':
                     // إعادة تحميل المسؤوليات من الملف للتأكد من أحدث البيانات
@@ -962,6 +1114,45 @@ async function handleInteraction(interaction, context) {
             // Handle other select menus
             if (interaction.isStringSelectMenu()) {
                 switch (customId) {
+                    case 'report_template_edit_select':
+                        // فتح Modal لتعديل قالب المسؤولية المحددة
+                        const selectedResp = interaction.values[0];
+                        
+                        if (selectedResp === 'none') {
+                            await interaction.reply({
+                                content: '❌ لا توجد مسؤوليات! يجب إنشاء مسؤوليات أولاً.',
+                                ephemeral: true
+                            });
+                            return;
+                        }
+
+                        const currentTemplate = config.templates[selectedResp] || '';
+                        
+                        const editModal = new ModalBuilder()
+                            .setCustomId(`report_template_save_modal_${selectedResp}`)
+                            .setTitle(`تعديل قالب: ${selectedResp}`);
+
+                        const templateInput = new TextInputBuilder()
+                            .setCustomId('template_text')
+                            .setLabel('القالب الجديد')
+                            .setStyle(TextInputStyle.Paragraph)
+                            .setPlaceholder('اكتب القالب الجديد للمسؤولية...')
+                            .setValue(currentTemplate)
+                            .setRequired(true);
+
+                        editModal.addComponents(new ActionRowBuilder().addComponents(templateInput));
+
+                        try {
+                            await interaction.showModal(editModal);
+                        } catch (error) {
+                            console.error('Error showing edit modal:', error);
+                            await interaction.reply({ 
+                                content: '❌ حدث خطأ في عرض نموذج التعديل.', 
+                                ephemeral: true 
+                            }).catch(() => {});
+                        }
+                        return;
+
                     case 'report_select_approver_type':
                         const approverType = interaction.values[0];
                         config.approverType = approverType;
