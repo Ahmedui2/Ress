@@ -270,6 +270,13 @@ try {
       console.log('✅ تم فحص واستعادة إيمبد الروم');
     }, 5000); // انتظار 5 ثواني لضمان جاهزية جميع القنوات
   }
+
+  // تشغيل نظام الفحص الدوري المستمر
+  if (setroomCommand.startContinuousSetupEmbedCheck) {
+    setTimeout(() => {
+      setroomCommand.startContinuousSetupEmbedCheck(client);
+    }, 10000); // بدء بعد 10 ثواني من تشغيل البوت
+  }
 } catch (error) {
   console.error('❌ خطأ في تسجيل معالجات setroom:', error);
 }
