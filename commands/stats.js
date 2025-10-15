@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
+const { createPaginatedResponsibilityStats, handlePaginationInteraction } = require('../utils/responsibilityPagination.js');
 
 
 const name = 'stats';
@@ -149,21 +150,11 @@ async function showMainStatsMenu(message, allData, client) {
         return;
     }
 
-    const options = responsibilityStats.map((resp, index) => ({
-        label: resp.name,
-        description: `${resp.totalPoints} نقطة - ${resp.membersCount} مسؤول - ${resp.activeMembersCount} Active`,
-        value: resp.name,
-        emoji: index === 0 ? '🏆' : index === 1 ? '🥈' : index === 2 ? '🥉' : '📊'
-    }));
+    const pagination = createPaginatedResponsibilityStats(responsibilityStats, 0);
+    
+    const sentMessage = await message.channel.send({ embeds: [embed], components: pagination.components });
 
-    const selectMenu = new StringSelectMenuBuilder()
-        .setCustomId('stats_select_responsibility')
-        .setPlaceholder('اختر مسؤولية لعرض إحصائياتها')
-        .addOptions(options);
-
-    const row = new ActionRowBuilder().addComponents(selectMenu);
-
-    const sentMessage = await message.channel.send({ embeds: [embed], components: [row] });
+    let currentPage = 0;
 
     // معالج التفاعلات
     const filter = i => i.user.id === message.author.id;
@@ -189,6 +180,21 @@ async function showMainStatsMenu(message, allData, client) {
 
             if (interaction.replied || interaction.deferred) {
                 console.log('تم تجاهل تفاعل متكرر في stats');
+                return;
+            }
+            
+            const paginationAction = handlePaginationInteraction(interaction, 'stats_select_responsibility');
+            if (paginationAction) {
+                if (paginationAction.action === 'next') {
+                    currentPage++;
+                } else if (paginationAction.action === 'prev') {
+                    currentPage--;
+                }
+                
+                const newPagination = createPaginatedResponsibilityStats(responsibilityStats, currentPage);
+                currentPage = newPagination.currentPage;
+                
+                await interaction.update({ embeds: [embed], components: newPagination.components });
                 return;
             }
             
@@ -602,21 +608,8 @@ async function showMainStatsMenuForInteraction(interaction, allData, client) {
         return;
     }
 
-    const options = responsibilityStats.map((resp, index) => ({
-        label: resp.name,
-        description: `${resp.totalPoints} نقطة - ${resp.membersCount} مسؤول - ${resp.activeMembersCount} Active`,
-        value: resp.name,
-        emoji: index === 0 ? '🏆' : index === 1 ? '🥈' : index === 2 ? '🥉' : '📊'
-    }));
-
-    const selectMenu = new StringSelectMenuBuilder()
-        .setCustomId('stats_select_responsibility')
-        .setPlaceholder('اختر مسؤولية لعرض إحصائياتها')
-        .addOptions(options);
-
-    const row = new ActionRowBuilder().addComponents(selectMenu);
-
-    await interaction.update({ embeds: [embed], components: [row] });
+    const pagination = createPaginatedResponsibilityStats(responsibilityStats, 0);
+    await interaction.update({ embeds: [embed], components: pagination.components });
 }
 
 module.exports = { name, execute };

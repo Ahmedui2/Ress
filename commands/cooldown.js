@@ -1,6 +1,7 @@
 const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionsBitField } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
+const { createPaginatedResponsibilityArray, handlePaginationInteraction } = require('../utils/responsibilityPagination.js');
 
 const name = 'cooldown';
 
@@ -583,25 +584,38 @@ async function handleInteraction(interaction, context) {
                 });
             }
 
-            // عرض نتائج البحث (حد أقصى 25)
-            const options = matchingResponsibilities.slice(0, 25).map(resp => ({
-                label: resp,
-                description: `تعيين cooldown لـ ${resp}`,
-                value: resp
-            }));
-
-            const selectMenu = new StringSelectMenuBuilder()
-                .setCustomId('cooldown_select_responsibility')
-                .setPlaceholder('اختر المسؤولية')
-                .addOptions(options);
-
-            const row = new ActionRowBuilder().addComponents(selectMenu);
-
+            const pagination = createPaginatedResponsibilityArray(matchingResponsibilities, 0, 'cooldown_select_responsibility', 'اختر المسؤولية');
+            
             await interaction.reply({
-                content: `**تم العثور على ${matchingResponsibilities.length} مسؤولية:\n(عرض أول 25)**`,
-                components: [row],
+                content: `**تم العثور على ${matchingResponsibilities.length} مسؤولية**`,
+                components: pagination.components,
                 ephemeral: true
             });
+            
+            if (pagination.hasMultiplePages) {
+                let currentPage = 0;
+                const filter = i => i.user.id === interaction.user.id;
+                const collector = interaction.channel.createMessageComponentCollector({ filter, time: 300000 });
+                
+                collector.on('collect', async i => {
+                    const paginationAction = handlePaginationInteraction(i, 'cooldown_select_responsibility');
+                    if (paginationAction) {
+                        if (paginationAction.action === 'next') {
+                            currentPage++;
+                        } else if (paginationAction.action === 'prev') {
+                            currentPage--;
+                        }
+                        
+                        const newPagination = createPaginatedResponsibilityArray(matchingResponsibilities, currentPage, 'cooldown_select_responsibility', 'اختر المسؤولية');
+                        currentPage = newPagination.currentPage;
+                        
+                        await i.update({
+                            content: `**تم العثور على ${matchingResponsibilities.length} مسؤولية**`,
+                            components: newPagination.components
+                        });
+                    }
+                });
+            }
 
         } else if (interaction.customId === 'cooldown_select_responsibility') {
             const selectedResp = interaction.values[0];

@@ -301,13 +301,14 @@ async function handleTimeBasedReset(interaction, resetType, points, responsibili
 }
 
 async function handleResponsibilityReset(interaction, points, responsibilities, client) {
-    const respOptions = Object.keys(responsibilities).slice(0, 25).map(resp => ({
-        label: resp,
-        value: resp,
+    const { createPaginatedResponsibilityArray, handlePaginationInteraction } = require('../utils/responsibilityPagination.js');
+    
+    const respList = Object.keys(responsibilities).map(resp => ({
+        name: resp,
         description: `${Object.keys(responsibilities[resp].responsibles || {}).length} مسؤولين - ${calculateResponsibilityPoints(points, resp)} نقطة`
     }));
 
-    if (respOptions.length === 0) {
+    if (respList.length === 0) {
         const embed = createMainEmbed(points, responsibilities);
         const components = createMainComponents();
         await interaction.update({
@@ -324,13 +325,10 @@ async function handleResponsibilityReset(interaction, points, responsibilities, 
     
         .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400670548463456306/9908185.png?ex=688d7b99&is=688c2a19&hm=92e3397be8a05852507afb7133dccd47a7c4c2ebca8dbdc26911e65414545ae9&');
 
-    const respSelect = new StringSelectMenuBuilder()
-        .setCustomId('select_responsibility_reset')
-        .setPlaceholder('اختر المسؤولية...')
-        .addOptions(respOptions);
-
+    const pagination = createPaginatedResponsibilityArray(respList, 0, 'select_responsibility_reset', 'اختر المسؤولية...');
+    
     const components = [
-        new ActionRowBuilder().addComponents(respSelect),
+        ...pagination.components,
         new ActionRowBuilder().addComponents([
             new ButtonBuilder()
                 .setCustomId('back_to_main_reset')
@@ -340,6 +338,35 @@ async function handleResponsibilityReset(interaction, points, responsibilities, 
     ];
 
     await interaction.update({ embeds: [respEmbed], components: components });
+    
+    if (pagination.hasMultiplePages) {
+        let currentPage = 0;
+        const paginationFilter = i => i.user.id === interaction.user.id && handlePaginationInteraction(i, 'select_responsibility_reset');
+        const paginationCollector = interaction.message.createMessageComponentCollector({ filter: paginationFilter, time: 300000 });
+        
+        paginationCollector.on('collect', async i => {
+            const paginationAction = handlePaginationInteraction(i, 'select_responsibility_reset');
+            if (paginationAction) {
+                if (paginationAction.action === 'next') currentPage++;
+                else if (paginationAction.action === 'prev') currentPage--;
+                
+                const newPagination = createPaginatedResponsibilityArray(respList, currentPage, 'select_responsibility_reset', 'اختر المسؤولية...');
+                currentPage = newPagination.currentPage;
+                
+                const updatedComponents = [
+                    ...newPagination.components,
+                    new ActionRowBuilder().addComponents([
+                        new ButtonBuilder()
+                            .setCustomId('back_to_main_reset')
+                            .setLabel('Back')
+                            .setStyle(ButtonStyle.Secondary)
+                    ])
+                ];
+                
+                await i.update({ embeds: [respEmbed], components: updatedComponents });
+            }
+        });
+    }
 
     const respFilter = i => i.user.id === interaction.user.id;
     const respCollector = interaction.message.createMessageComponentCollector({ 

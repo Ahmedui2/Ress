@@ -2,6 +2,7 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionsB
 const fs = require('fs');
 const path = require('path');
 const colorManager = require('../utils/colorManager.js');
+const { createPaginatedResponsibilityArray, handlePaginationInteraction } = require('../utils/responsibilityPagination.js');
 
 const vacationsPath = path.join(__dirname, '..', 'data', 'vacations.json');
 const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
@@ -167,13 +168,31 @@ module.exports = {
                  await interaction.update({ content: 'There are no responsibilities configured.', components: [] });
                  return;
             }
-            const options = respNames.slice(0, 25).map(r => ({ label: r, value: r }));
-            const respMenu = new StringSelectMenuBuilder()
-                .setCustomId('vac_resp_select')
-                .setPlaceholder('Select a responsibility')
-                .addOptions(options);
-            const row = new ActionRowBuilder().addComponents(respMenu);
-            await interaction.update({ content: 'Select the responsibility:', components: [row] });
+            
+            const pagination = createPaginatedResponsibilityArray(respNames, 0, 'vac_resp_select', 'Select a responsibility');
+            await interaction.update({ content: 'Select the responsibility:', components: pagination.components });
+            
+            if (pagination.hasMultiplePages) {
+                let currentPage = 0;
+                const filter = i => i.user.id === interaction.user.id;
+                const collector = interaction.channel.createMessageComponentCollector({ filter, time: 300000 });
+                
+                collector.on('collect', async i => {
+                    const paginationAction = handlePaginationInteraction(i, 'vac_resp_select');
+                    if (paginationAction) {
+                        if (paginationAction.action === 'next') {
+                            currentPage++;
+                        } else if (paginationAction.action === 'prev') {
+                            currentPage--;
+                        }
+                        
+                        const newPagination = createPaginatedResponsibilityArray(respNames, currentPage, 'vac_resp_select', 'Select a responsibility');
+                        currentPage = newPagination.currentPage;
+                        
+                        await i.update({ content: 'Select the responsibility:', components: newPagination.components });
+                    }
+                });
+            }
             return;
         }
 

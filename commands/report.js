@@ -114,16 +114,15 @@ function createMainButtons(guildId) {
     );
 }
 
-function createResponsibilitySelectMenu(responsibilities, customId, placeholder) {
+function createResponsibilitySelectMenu(responsibilities, customId, placeholder, currentPage = 0) {
     // التأكد من أن responsibilities كائن صحيح
     if (!responsibilities || typeof responsibilities !== 'object') {
         responsibilities = {};
     }
 
-    const options = Object.keys(responsibilities).map(respName => ({
-        label: respName,
-        value: respName,
-        description: `إدارة ${respName}`
+    const { createPaginatedResponsibilityMenu } = require('../utils/responsibilityPagination.js');
+    return createPaginatedResponsibilityMenu(responsibilities, currentPage, customId, placeholder);
+}ة ${respName}`
     }));
 
     if (options.length === 0) {

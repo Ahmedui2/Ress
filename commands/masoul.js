@@ -510,46 +510,76 @@ async function execute(message, args, { responsibilities, points, scheduleSave, 
     if (!ignored.includes(error?.code)) await safeReply(interaction, '**حدث خطأ أثناء معالجة الطلب.**');
   }
 
-  // اختصار: مسؤوليات
-  if (args[0] === 'مسؤوليات') {
-    await handleResponsibilitiesCommand(message, args.slice(1), responsibilities, client, BOT_OWNERS);
-    return;
-  }
-
-  // منشن مباشر = عرض مسؤولياته
-  if (message.mentions.users.size > 0) {
-    const isOwner = BOT_OWNERS.includes(message.author.id) || message.guild.ownerId === message.author.id;
-    if (!isOwner) { await message.react('❌'); return; }
-    const targetUser = message.mentions.users.first();
-    await showUserResponsibilities(message, targetUser, responsibilities, client);
-    return;
-  }
-
-  // صلاحيات
+  // تعريف الصلاحيات في البداية
   const CURRENT_ADMIN_ROLES = loadAdminRolesOnce();
   const member = await message.guild.members.fetch(message.author.id);
   const hasAdminRole = member.roles.cache.some(role => CURRENT_ADMIN_ROLES.includes(role.id));
   const hasAdministrator = member.permissions.has('Administrator');
   const isOwner = BOT_OWNERS.includes(message.author.id) || message.guild.ownerId === message.author.id;
 
+  // اختصار: مسؤوليات
+  if (args[0] === 'مسؤوليات') {
+    await handleResponsibilitiesCommand(message, args.slice(1), responsibilities, client, BOT_OWNERS);
+    return;
+  }
+
+  // أمر sg - للأونرات فقط
+  if (args[0] === 'sg') {
+    if (!isOwner) {
+      await message.react('❌');
+      return;
+    }
+    await handleSgCommand(message, responsibilities, client);
+    return;
+  }
+
+  // منشن مباشر = عرض مسؤولياته
+  if (message.mentions.users.size > 0) {
+    if (!isOwner) { await message.react('❌'); return; }
+    const targetUser = message.mentions.users.first();
+    await showUserResponsibilities(message, targetUser, responsibilities, client);
+    return;
+  }
+
   if (!hasAdminRole && !isOwner && !hasAdministrator) {
     await message.react('❌');
     return;
   }
 
-  // قائمة المسؤوليات
-  const options = Object.keys(responsibilities).map(key => ({ label: key, value: key }));
-  if (options.length === 0) {
+  // قائمة المسؤوليات مع pagination
+  const { createPaginatedResponsibilityMenu, handlePaginationInteraction } = require('../utils/responsibilityPagination.js');
+  
+  // إعادة تحميل المسؤوليات من الملف للتأكد من أحدث البيانات
+  let currentResponsibilities = {};
+  try {
+    const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
+    if (fs.existsSync(responsibilitiesPath)) {
+      const data = fs.readFileSync(responsibilitiesPath, 'utf8');
+      const allResponsibilities = JSON.parse(data);
+      
+      // تصفية المسؤوليات المخفية - عرض الظاهرة فقط
+      currentResponsibilities = {};
+      for (const [name, data] of Object.entries(allResponsibilities)) {
+        if (data.hidden !== true) {
+          currentResponsibilities[name] = data;
+        }
+      }
+    } else {
+      currentResponsibilities = responsibilities;
+    }
+  } catch (error) {
+    console.error('خطأ في إعادة تحميل المسؤوليات:', error);
+    currentResponsibilities = responsibilities;
+  }
+
+  if (Object.keys(currentResponsibilities).length === 0) {
     const errorEmbed = colorManager.createEmbed()
-      .setDescription('**لا توجد مسؤوليات معرفة حتى الآن.**')
+      .setDescription('**لا توجد مسؤوليات ظاهرة حتى الآن.**')
       .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400390888416608286/download__3_-removebg-preview.png?ex=688d1fe5&is=688bce65&hm=55055a587668561ce27baf0665663f801e14662d4bf849351564a563b1e53b41&');
     return message.channel.send({ embeds: [errorEmbed] });
   }
 
-  const selectMenu = new StringSelectMenuBuilder()
-    .setCustomId('masoul_select_responsibility')
-    .setPlaceholder('اختر مسؤولية')
-    .addOptions(options);
+  const pagination = createPaginatedResponsibilityMenu(currentResponsibilities, 0, 'masoul_select_responsibility', 'اختر مسؤولية');
 
   const cancelButton = new ButtonBuilder()
     .setCustomId('cancel_masoul_menu')
@@ -557,21 +587,58 @@ async function execute(message, args, { responsibilities, points, scheduleSave, 
     .setStyle(ButtonStyle.Danger)
     .setEmoji('❌');
 
-  const selectRow = new ActionRowBuilder().addComponents(selectMenu);
   const buttonRow = new ActionRowBuilder().addComponents(cancelButton);
 
   const sentMessage = await message.channel.send({
     content: '**اختر مسؤولية من القائمة:**',
-    components: [selectRow, buttonRow]
+    components: [...pagination.components, buttonRow]
   });
 
   const filter = i => i.user.id === message.author.id && i.message.id === sentMessage.id;
   const collector = message.channel.createMessageComponentCollector({ filter, time: 60000 });
 
+  let currentPage = 0;
+
   collector.on('collect', async interaction => {
     try {
       if (!interaction || !interaction.isRepliable()) return;
       if (interaction.replied || interaction.deferred) return;
+
+      // معالجة pagination
+      const paginationAction = handlePaginationInteraction(interaction, 'masoul_select_responsibility');
+      if (paginationAction) {
+        if (paginationAction.action === 'next') currentPage++;
+        else if (paginationAction.action === 'prev') currentPage--;
+        
+        // إعادة تحميل المسؤوليات قبل التنقل مع تصفية المخفية
+        let freshResponsibilities = {};
+        try {
+          const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
+          if (fs.existsSync(responsibilitiesPath)) {
+            const data = fs.readFileSync(responsibilitiesPath, 'utf8');
+            const allResponsibilities = JSON.parse(data);
+            
+            // تصفية المسؤوليات المخفية
+            freshResponsibilities = {};
+            for (const [name, data] of Object.entries(allResponsibilities)) {
+              if (data.hidden !== true) {
+                freshResponsibilities[name] = data;
+              }
+            }
+          } else {
+            freshResponsibilities = responsibilities;
+          }
+        } catch (error) {
+          console.error('خطأ في إعادة تحميل المسؤوليات للتنقل:', error);
+          freshResponsibilities = responsibilities;
+        }
+
+        const newPagination = createPaginatedResponsibilityMenu(freshResponsibilities, currentPage, 'masoul_select_responsibility', 'اختر مسؤولية');
+        currentPage = newPagination.currentPage;
+        
+        await interaction.update({ content: '**اختر مسؤولية من القائمة:**', components: [...newPagination.components, buttonRow] });
+        return;
+      }
 
       if (interaction.customId === 'cancel_masoul_menu') {
         collector.stop('cancelled');
@@ -677,16 +744,26 @@ async function execute(message, args, { responsibilities, points, scheduleSave, 
           ephemeral: true
         });
 
-        // تحديث القائمة الرئيسية بعد ثانيتين
+        // تحديث القائمة الرئيسية بعد ثانيتين مع pagination
         setTimeout(async () => {
           try {
-            const newOptions = Object.keys(responsibilities).map(key => ({ label: key, value: key }));
-            const newSelectMenu = new StringSelectMenuBuilder()
-              .setCustomId('masoul_select_responsibility')
-              .setPlaceholder('اختر مسؤولية')
-              .addOptions(newOptions);
-            const newRow = new ActionRowBuilder().addComponents(newSelectMenu);
-            await sentMessage.edit({ content: '**اختر مسؤولية من القائمة:**', components: [newRow, buttonRow] });
+            // إعادة تحميل المسؤوليات
+            let freshResponsibilities = {};
+            try {
+              const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
+              if (fs.existsSync(responsibilitiesPath)) {
+                const data = fs.readFileSync(responsibilitiesPath, 'utf8');
+                freshResponsibilities = JSON.parse(data);
+              } else {
+                freshResponsibilities = responsibilities;
+              }
+            } catch (error) {
+              console.error('خطأ في إعادة تحميل المسؤوليات:', error);
+              freshResponsibilities = responsibilities;
+            }
+
+            const newPagination = createPaginatedResponsibilityMenu(freshResponsibilities, currentPage, 'masoul_select_responsibility', 'اختر مسؤولية');
+            await sentMessage.edit({ content: '**اختر مسؤولية من القائمة:**', components: [...newPagination.components, buttonRow] });
           } catch (error) {
             if (DEBUG) console.error('Failed to update menu:', error);
           }
@@ -854,6 +931,148 @@ async function handleResponsibilitiesCommand(message, args, responsibilities, cl
   }
 
   await showUserResponsibilities(message, targetUser, responsibilities, client);
+}
+
+async function handleSgCommand(message, responsibilities, client) {
+  // قراءة المسؤوليات من الملف
+  let currentResponsibilities = {};
+  try {
+    const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
+    if (fs.existsSync(responsibilitiesPath)) {
+      const data = fs.readFileSync(responsibilitiesPath, 'utf8');
+      currentResponsibilities = JSON.parse(data);
+    }
+  } catch (error) {
+    console.error('خطأ في تحميل المسؤوليات:', error);
+    currentResponsibilities = responsibilities;
+  }
+
+  if (Object.keys(currentResponsibilities).length === 0) {
+    const errorEmbed = colorManager.createEmbed()
+      .setDescription('**لا توجد مسؤوليات معرفة حتى الآن.**')
+      .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400390888416608286/download__3_-removebg-preview.png?ex=688d1fe5&is=688bce65&hm=55055a587668561ce27baf0665663f801e14662d4bf849351564a563b1e53b41&');
+    return message.channel.send({ embeds: [errorEmbed] });
+  }
+
+  // إنشاء select menu متعدد الاختيارات
+  const respEntries = Object.entries(currentResponsibilities);
+  const visibleResponsibilities = respEntries.filter(([_, data]) => data.hidden !== true).map(([name]) => name);
+  
+  const options = respEntries.map(([name, data]) => ({
+    label: name.substring(0, 100),
+    value: name,
+    description: (data.hidden ? '❌ مخفية' : '✅ ظاهرة'),
+    default: data.hidden !== true
+  }));
+
+  const selectMenu = new StringSelectMenuBuilder()
+    .setCustomId('sg_multi_select')
+    .setPlaceholder('✅️ = ظاهرة')
+    .setMinValues(0)
+    .setMaxValues(options.length)
+    .addOptions(options);
+
+  const saveButton = new ButtonBuilder()
+    .setCustomId('sg_save_changes')
+    .setLabel('Save')
+    .setStyle(ButtonStyle.Success);
+
+  const cancelButton = new ButtonBuilder()
+    .setCustomId('sg_cancel')
+    .setLabel('Cancel')
+    .setStyle(ButtonStyle.Danger);
+
+  const selectRow = new ActionRowBuilder().addComponents(selectMenu);
+  const buttonRow = new ActionRowBuilder().addComponents(saveButton, cancelButton);
+
+  const instructionEmbed = colorManager.createEmbed()
+    .setTitle('Hide res system')
+    .setDescription('**اختر المسؤوليات التي تريد إظهارها في أمر مسؤول**\n\n✅ = المسؤوليات المحددة ستظهر\n❌ = غير المحددة ستختفي\n\n**اضغط على "save" بعد الانتهاء**')
+    .setThumbnail('https://cdn.discordapp.com/emojis/1303973825591115846.png?v=1')
+    .addFields({
+      name: 'المسؤوليات الظاهرة حالياً',
+      value: visibleResponsibilities.length > 0 ? visibleResponsibilities.join(', ') : 'لا يوجد'
+    });
+
+  const sentMessage = await message.channel.send({
+    embeds: [instructionEmbed],
+    components: [selectRow, buttonRow]
+  });
+
+  const filter = i => i.user.id === message.author.id && i.message.id === sentMessage.id;
+  const collector = message.channel.createMessageComponentCollector({ filter, time: 300000 });
+
+  let selectedResponsibilities = [...visibleResponsibilities];
+
+  collector.on('collect', async interaction => {
+    try {
+      if (!interaction || !interaction.isRepliable()) return;
+      if (interaction.replied || interaction.deferred) return;
+
+      if (interaction.customId === 'sg_multi_select') {
+        selectedResponsibilities = interaction.values;
+        
+        const updateEmbed = colorManager.createEmbed()
+          .setTitle(' Hide res system')
+          .setDescription('**اختر المسؤوليات التي تريد إظهارها في أمر مسؤول**\n\n✅ = المسؤوليات المحددة ستظهر\n❌ = غير المحددة ستختفي\n\n**اضغط على "save" بعد الانتهاء**')
+          .setThumbnail('https://cdn.discordapp.com/emojis/1303973825591115846.png?v=1')
+          .addFields({
+            name: 'المسؤوليات المختارة للظهور',
+            value: selectedResponsibilities.length > 0 ? selectedResponsibilities.join(', ') : 'لا يوجد'
+          });
+
+        await interaction.update({ embeds: [updateEmbed] });
+        return;
+      }
+
+      if (interaction.customId === 'sg_save_changes') {
+        const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
+        const data = fs.readFileSync(responsibilitiesPath, 'utf8');
+        const allResponsibilities = JSON.parse(data);
+
+        // تحديث حالة كل المسؤوليات
+        for (const [name, respData] of Object.entries(allResponsibilities)) {
+          if (selectedResponsibilities.includes(name)) {
+            respData.hidden = false;
+          } else {
+            respData.hidden = true;
+          }
+        }
+
+        // حفظ التغييرات
+        fs.writeFileSync(responsibilitiesPath, JSON.stringify(allResponsibilities, null, 2));
+
+        const visibleCount = selectedResponsibilities.length;
+        const hiddenCount = Object.keys(allResponsibilities).length - visibleCount;
+
+        const confirmEmbed = colorManager.createEmbed()
+          .setDescription(`**✅ تم حفظ التغييرات بنجاح**\n\n المسؤوليات الظاهرة : ${visibleCount}\n المسؤوليات المخفية : ${hiddenCount}`)
+          .setThumbnail('https://cdn.discordapp.com/emojis/1303973825591115846.png?v=1')
+          .addFields({
+            name: 'المسؤوليات الظاهرة',
+            value: selectedResponsibilities.length > 0 ? selectedResponsibilities.join(', ') : 'لا يوجد'
+          });
+
+        await interaction.update({ embeds: [confirmEmbed], components: [] });
+        collector.stop();
+        return;
+      }
+
+      if (interaction.customId === 'sg_cancel') {
+        await interaction.update({ content: '**تم إلغاء العملية.**', embeds: [], components: [] });
+        collector.stop();
+        return;
+      }
+    } catch (error) {
+      console.error('خطأ في معالج sg:', error);
+    }
+  });
+
+  collector.on('end', (collected, reason) => {
+    if (reason === 'time') {
+      sentMessage.edit({ components: [] }).catch(() => {});
+    }
+  });
 }
 
 async function showUserResponsibilities(message, targetUser, responsibilities, client) {

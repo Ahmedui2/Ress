@@ -170,22 +170,24 @@ async function execute(message, args, { points, responsibilities, client }) {
         ]);
 
     // إضافة منيو اختيار المسؤولية
-    const respOptions = [{ label: 'جميع المسؤوليات', value: 'all_responsibilities', description: 'عرض ترتيب جميع المسؤولين' }];
+    const { createPaginatedResponsibilityArray, handlePaginationInteraction } = require('../utils/responsibilityPagination.js');
+    
+    const respList = [{ name: 'جميع المسؤوليات', description: 'عرض ترتيب جميع المسؤولين' }];
     Object.keys(currentResponsibilities).forEach(respName => {
-        respOptions.push({
-            label: respName,
-            value: `resp_${respName}`,
+        respList.push({
+            name: respName,
             description: `ترتيب مسؤولي ${respName} فقط`
         });
     });
 
-    const respSelect = new StringSelectMenuBuilder()
-        .setCustomId('top_resp_select')
-        .setPlaceholder('اختر المسؤولية...')
-        .addOptions(respOptions);
+    const pagination = createPaginatedResponsibilityArray(respList.map((r, i) => ({
+        name: r.name,
+        value: i === 0 ? 'all_responsibilities' : `resp_${r.name}`,
+        description: r.description
+    })), 0, 'top_resp_select', 'اختر المسؤولية...');
 
     const selectRow1 = new ActionRowBuilder().addComponents(typeSelect);
-    const selectRow2 = new ActionRowBuilder().addComponents(respSelect);
+    const selectRow2Components = pagination.components;
 
     const sorted = getOrCalculateUserPoints(currentType, currentResponsibility);
     const maxPages = Math.ceil(sorted.length / pageSize);
@@ -205,7 +207,7 @@ async function execute(message, args, { points, responsibilities, client }) {
 
     const sentMessage = await message.channel.send({ 
         embeds: [buildEmbed()], 
-        components: [selectRow1, selectRow2, buttonRow] 
+        components: [selectRow1, ...selectRow2Components, buttonRow] 
     });
 
     const filter = i => i.user.id === message.author.id && i.message.id === sentMessage.id;
