@@ -122,21 +122,6 @@ function createResponsibilitySelectMenu(responsibilities, customId, placeholder,
 
     const { createPaginatedResponsibilityMenu } = require('../utils/responsibilityPagination.js');
     return createPaginatedResponsibilityMenu(responsibilities, currentPage, customId, placeholder);
-}ة ${respName}`
-    }));
-
-    if (options.length === 0) {
-        options.push({
-            label: 'لا توجد مسؤوليات',
-            value: 'none',
-            description: 'يجب إنشاء مسؤوليات أولاً'
-        });
-    }
-
-    return new StringSelectMenuBuilder()
-        .setCustomId(customId)
-        .setPlaceholder(placeholder)
-        .addOptions(options.slice(0, 25)); // Discord limit
 }
 
 function createTemplateManagementEmbed(client, responsibilities, config) {
@@ -820,14 +805,13 @@ async function handleInteraction(interaction, context) {
                     }
 
                     responseContent = 'اختر المسؤولية لتعديل قالبها:';
+                    const pagination = createResponsibilitySelectMenu(
+                        latestResponsibilities, 
+                        'report_template_edit_select', 
+                        'اختر المسؤولية لتعديل قالبها'
+                    );
                     newComponents = [
-                        new ActionRowBuilder().addComponents(
-                            createResponsibilitySelectMenu(
-                                latestResponsibilities, 
-                                'report_template_edit_select', 
-                                'اختر المسؤولية لتعديل قالبها'
-                            )
-                        ),
+                        ...pagination.components,
                         new ActionRowBuilder().addComponents(
                             new ButtonBuilder()
                                 .setCustomId('report_manage_templates')

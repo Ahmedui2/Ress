@@ -252,9 +252,24 @@ async function execute(message, args, { points, responsibilities, client }) {
                     .setDisabled(page >= maxPages - 1 || maxPages === 0)
             );
 
+            // إعادة بناء pagination للمسؤوليات
+            const respList = [{ name: 'جميع المسؤوليات', description: 'عرض ترتيب جميع المسؤولين' }];
+            Object.keys(currentResponsibilities).forEach(respName => {
+                respList.push({
+                    name: respName,
+                    description: `ترتيب مسؤولي ${respName} فقط`
+                });
+            });
+
+            const newPagination = createPaginatedResponsibilityArray(respList.map((r, i) => ({
+                name: r.name,
+                value: i === 0 ? 'all_responsibilities' : `resp_${r.name}`,
+                description: r.description
+            })), 0, 'top_resp_select', 'اختر المسؤولية...');
+
             await interaction.update({ 
                 embeds: [buildEmbed()], 
-                components: [selectRow1, selectRow2, newButtonRow] 
+                components: [selectRow1, ...newPagination.components, newButtonRow] 
             });
         } catch (error) {
             console.error('Error in top leaderboard collector:', error);

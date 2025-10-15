@@ -878,13 +878,11 @@ async function execute(message, args, { responsibilities, points, scheduleSave, 
 
   collector.on('end', (collected, reason) => {
     if (reason === 'time') {
-      const disabledSelectRow = new ActionRowBuilder().addComponents(
-        StringSelectMenuBuilder.from(selectMenu).setDisabled(true)
-      );
-      const disabledButtonRow = new ActionRowBuilder().addComponents(
-        ButtonBuilder.from(cancelButton).setDisabled(true)
-      );
-      sentMessage.edit({ components: [disabledSelectRow, disabledButtonRow] }).catch(() => {});
+      try {
+        sentMessage.edit({ components: [] }).catch(() => {});
+      } catch (error) {
+        console.error('خطأ في تعطيل المكونات:', error);
+      }
     }
   });
 }
@@ -1138,11 +1136,26 @@ async function handleCallReasonModal(interaction, context) {
   const target = customIdParts[1];
   const reason = interaction.fields.getTextInputValue('reason').trim() || 'لا يوجد سبب محدد';
 
-  if (!responsibilities[responsibilityName]) {
+  // إعادة تحميل المسؤوليات من الملف للتأكد من أحدث البيانات
+  let currentResponsibilities = {};
+  try {
+    const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
+    if (fs.existsSync(responsibilitiesPath)) {
+      const data = fs.readFileSync(responsibilitiesPath, 'utf8');
+      currentResponsibilities = JSON.parse(data);
+    } else {
+      currentResponsibilities = responsibilities;
+    }
+  } catch (error) {
+    console.error('خطأ في إعادة تحميل المسؤوليات:', error);
+    currentResponsibilities = responsibilities;
+  }
+
+  if (!currentResponsibilities[responsibilityName]) {
     return interaction.reply({ content: '**المسؤولية غير موجودة!**', ephemeral: true });
   }
 
-  const responsibility = responsibilities[responsibilityName];
+  const responsibility = currentResponsibilities[responsibilityName];
   const responsibles = responsibility.responsibles || [];
 
   if (responsibles.length === 0) {

@@ -927,21 +927,35 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
 
           const buttonsRow1 = new ActionRowBuilder().addComponents(editButton, renameButton, deleteButton, manageButton, roleButton);
           
-          // إنشاء select menu للترتيب
-          const positionOptions = orderedKeys.map((key, index) => ({
+          // إنشاء select menu للترتيب (محدود بـ 25 عنصر)
+          let positionOptions = orderedKeys.map((key, index) => ({
             label: `${index + 1}. ${key}`,
             value: index.toString(),
             default: index === currentIndex,
             description: index === currentIndex ? '(الموضع الحالي)' : `نقل إلى الموضع ${index + 1}`
           }));
 
-          const positionSelect = new StringSelectMenuBuilder()
-            .setCustomId(`reorder_${selected}`)
-            .setPlaceholder(' اختر الموضع الجديد للمسؤولية')
-            .addOptions(positionOptions);
+          // إذا كان هناك أكثر من 25 مسؤولية، نحد الخيارات
+          if (positionOptions.length > 25) {
+            // نعرض 12 عنصر قبل العنصر الحالي و 12 بعده
+            const start = Math.max(0, currentIndex - 12);
+            const end = Math.min(orderedKeys.length, currentIndex + 13);
+            positionOptions = positionOptions.slice(start, end);
+          }
+
+          const components = [buttonsRow1];
+          
+          if (positionOptions.length > 1) {
+            const positionSelect = new StringSelectMenuBuilder()
+              .setCustomId(`reorder_${selected}`)
+              .setPlaceholder(' اختر الموضع الجديد للمسؤولية')
+              .addOptions(positionOptions);
+            const selectRow = new ActionRowBuilder().addComponents(positionSelect);
+            components.push(selectRow);
+          }
 
           const buttonsRow2 = new ActionRowBuilder().addComponents(backButton);
-          const selectRow = new ActionRowBuilder().addComponents(positionSelect);
+          components.push(buttonsRow2);
 
           const respList = responsibility.responsibles && responsibility.responsibles.length > 0
             ? responsibility.responsibles.map(r => `<@${r}>`).join(', ')
@@ -955,7 +969,7 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
             .setTitle(`**تعديل المسؤولية : ${selected}**`)
             .setDescription(`**المسؤولون :** ${respList}\n**الشرح :** ${desc}\n**الترتيب :** ${currentIndex + 1} من ${orderedKeys.length}`);
 
-          await interaction.update({ embeds: [embedEdit], components: [buttonsRow1, selectRow, buttonsRow2] });
+          await interaction.update({ embeds: [embedEdit], components });
         }
       } else if (interaction.customId === 'back_to_menu' || interaction.customId.startsWith('back_to_main_')) {
         // إيقاف جميع الـ collectors النشطة عند العودة للقائمة الرئيسية

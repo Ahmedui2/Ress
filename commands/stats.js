@@ -299,7 +299,24 @@ function calculateCompleteStats(allData, guild) {
 }
 
 async function showResponsibilityDetails(messageOrInteraction, responsibilityName, allData, client, isInteraction = false) {
-    const responsibility = allData.responsibilities[responsibilityName];
+    // إعادة تحميل المسؤوليات من الملف للتأكد من أحدث البيانات
+    const fs = require('fs');
+    const path = require('path');
+    let currentResponsibilities = {};
+    try {
+        const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
+        if (fs.existsSync(responsibilitiesPath)) {
+            const data = fs.readFileSync(responsibilitiesPath, 'utf8');
+            currentResponsibilities = JSON.parse(data);
+        } else {
+            currentResponsibilities = allData.responsibilities;
+        }
+    } catch (error) {
+        console.error('خطأ في إعادة تحميل المسؤوليات:', error);
+        currentResponsibilities = allData.responsibilities;
+    }
+
+    const responsibility = currentResponsibilities[responsibilityName];
     if (!responsibility) {
         const errorMsg = '**المسؤولية غير موجودة**';
         if (isInteraction) {
