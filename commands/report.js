@@ -423,6 +423,25 @@ async function handleInteraction(interaction, context) {
                 });
             }
 
+            // إعادة تحميل المسؤوليات للتأكد من وجودها
+            let currentResponsibilities = {};
+            try {
+                if (fs.existsSync(responsibilitiesPath)) {
+                    const data = fs.readFileSync(responsibilitiesPath, 'utf8');
+                    currentResponsibilities = JSON.parse(data);
+                }
+            } catch (error) {
+                console.error('❌ خطأ في قراءة المسؤوليات:', error);
+            }
+
+            // التحقق من وجود المسؤولية
+            if (!currentResponsibilities[reportData.responsibilityName]) {
+                return await interaction.reply({ 
+                    content: `❌ المسؤولية "${reportData.responsibilityName}" لم تعد موجودة!`, 
+                    ephemeral: true 
+                });
+            }
+
             const modal = new ModalBuilder()
                 .setCustomId(`report_submit_${reportId}`)
                 .setTitle('Report');
@@ -778,7 +797,7 @@ async function handleInteraction(interaction, context) {
                         }
                     }
 
-                    await interaction.update({
+                    await interaction.editReply({
                         content: '',
                         embeds: [templatesEmbed],
                         components: [
