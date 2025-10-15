@@ -116,20 +116,27 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
     });
   }
 
-  async function sendSettingsMenu() {
-    const embed = colorManager.createEmbed()
-      .setTitle('**Res sys**')
-      .setDescription('Choose res or edit it')
-      .setFooter({ text: 'By Ahmed.' })
-      .setThumbnail('https://cdn.discordapp.com/emojis/1186585722401063032.png?v=1');
-
+  // دالة لإنشاء منيو مقسم إلى صفحات
+  function createPaginatedMenu(page = 0) {
     const orderedKeys = getOrderedResponsibilities();
-    const options = orderedKeys.map(key => ({
+    const ITEMS_PER_PAGE = 24; // ترك مساحة لخيار "إضافة مسؤولية"
+    const totalPages = Math.ceil(orderedKeys.length / ITEMS_PER_PAGE);
+    
+    // التأكد من أن رقم الصفحة صحيح
+    if (page < 0) page = 0;
+    if (page >= totalPages && totalPages > 0) page = totalPages - 1;
+    
+    const startIndex = page * ITEMS_PER_PAGE;
+    const endIndex = Math.min(startIndex + ITEMS_PER_PAGE, orderedKeys.length);
+    const pageKeys = orderedKeys.slice(startIndex, endIndex);
+    
+    const options = pageKeys.map(key => ({
       label: key,
       description: responsibilities[key].description ? responsibilities[key].description.substring(0, 50) : 'لا يوجد شرح',
       value: key
     }));
 
+    // إضافة خيار إنشاء مسؤولية جديدة
     options.push({
       label: 'res add',
       description: 'إنشاء مسؤولية جديدة',
@@ -141,8 +148,59 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
       .setPlaceholder('اختر مسؤولية')
       .addOptions(options);
 
-    const row = new ActionRowBuilder().addComponents(selectMenu);
-    return await message.channel.send({ embeds: [embed], components: [row] });
+    const components = [new ActionRowBuilder().addComponents(selectMenu)];
+    
+    // إضافة أزرار التنقل إذا كان هناك أكثر من صفحة
+    if (totalPages > 1) {
+      const navButtons = [];
+      
+      if (page > 0) {
+        navButtons.push(
+          new ButtonBuilder()
+            .setCustomId(`page_prev_${page}`)
+            .setLabel('◀ السابق')
+            .setStyle(ButtonStyle.Primary)
+        );
+      }
+      
+      navButtons.push(
+        new ButtonBuilder()
+          .setCustomId(`page_info_${page}`)
+          .setLabel(`صفحة ${page + 1}/${totalPages}`)
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(true)
+      );
+      
+      if (page < totalPages - 1) {
+        navButtons.push(
+          new ButtonBuilder()
+            .setCustomId(`page_next_${page}`)
+            .setLabel('التالي ▶')
+            .setStyle(ButtonStyle.Primary)
+        );
+      }
+      
+      components.push(new ActionRowBuilder().addComponents(navButtons));
+    }
+    
+    return { components, currentPage: page, totalPages };
+  }
+
+  // تتبع الصفحة الحالية لكل مستخدم
+  const userPages = new Map();
+
+  async function sendSettingsMenu(page = 0) {
+    userPages.set(message.author.id, page);
+    
+    const embed = colorManager.createEmbed()
+      .setTitle('**Res sys**')
+      .setDescription('Choose res or edit it')
+      .setFooter({ text: 'By Ahmed.' })
+      .setThumbnail('https://cdn.discordapp.com/emojis/1186585722401063032.png?v=1');
+
+    const menuData = createPaginatedMenu(page);
+    
+    return await message.channel.send({ embeds: [embed], components: menuData.components });
   }
 
   const sentMessage = await sendSettingsMenu();
@@ -169,34 +227,24 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
     }
   });
 
-  async function updateMainMenu() {
+  async function updateMainMenu(page = null) {
     try {
+      // استخدام الصفحة المحفوظة للمستخدم إذا لم يتم تحديد صفحة
+      if (page === null) {
+        page = userPages.get(message.author.id) || 0;
+      } else {
+        userPages.set(message.author.id, page);
+      }
+      
       const embed = colorManager.createEmbed()
         .setTitle('**Res sys**')
         .setDescription('Choose res or edit it')
         .setFooter({ text: 'By Ahmed.' })
         .setThumbnail('https://cdn.discordapp.com/emojis/1186585722401063032.png?v=1');
 
-      const orderedKeys = getOrderedResponsibilities();
-      const options = orderedKeys.map(key => ({
-        label: key,
-        description: responsibilities[key].description ? responsibilities[key].description.substring(0, 50) : 'لا يوجد شرح',
-        value: key
-      }));
-
-      options.push({
-        label: 'res add',
-        description: 'إنشاء مسؤولية جديدة',
-        value: 'add_new'
-      });
-
-      const selectMenu = new StringSelectMenuBuilder()
-        .setCustomId('settings_select_responsibility')
-        .setPlaceholder('اختر مسؤولية')
-        .addOptions(options);
-
-      const row = new ActionRowBuilder().addComponents(selectMenu);
-      await sentMessage.edit({ embeds: [embed], components: [row] });
+      const menuData = createPaginatedMenu(page);
+      
+      await sentMessage.edit({ embeds: [embed], components: menuData.components });
     } catch (error) {
       console.error('خطأ في تحديث المنيو الرئيسي:', error);
     }
@@ -794,6 +842,22 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
         return;
       }
 
+      // معالجة أزرار التنقل بين الصفحات
+      if (interaction.customId && (interaction.customId.startsWith('page_prev_') || interaction.customId.startsWith('page_next_'))) {
+        const currentPage = parseInt(interaction.customId.split('_')[2]);
+        let newPage = currentPage;
+        
+        if (interaction.customId.startsWith('page_prev_')) {
+          newPage = currentPage - 1;
+        } else if (interaction.customId.startsWith('page_next_')) {
+          newPage = currentPage + 1;
+        }
+        
+        await updateMainMenu(newPage);
+        await safeReply(interaction, `**تم الانتقال إلى الصفحة ${newPage + 1}**`);
+        return;
+      }
+      
       if (interaction.customId === 'settings_select_responsibility') {
         const selected = interaction.values[0];
 

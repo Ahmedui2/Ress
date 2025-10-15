@@ -190,15 +190,9 @@ async function execute(message, args, { responsibilities, client, saveData, BOT_
     const filter = i => i.user.id === message.author.id && i.message.id === sentMessage.id;
     const collector = message.channel.createMessageComponentCollector({ filter, time: 300000 });
 
+    // لا نحتاج تحديث تلقائي - سيتم التحديث فقط عند الحاجة
     collector.on('collect', async interaction => {
-        // تحديث الرسالة بعد كل تفاعل
-        setTimeout(async () => {
-            try {
-                await sentMessage.edit({ embeds: [createMainEmbed()], components: [row] });
-            } catch (error) {
-                console.log('لا يمكن تحديث الرسالة:', error.message);
-            }
-        }, 1000);
+        // تم إزالة التحديث التلقائي لتجنب الرجوع السريع للقائمة الرئيسية
     });
 
     collector.on('end', () => {
@@ -518,24 +512,22 @@ async function handleInteraction(interaction, context) {
                 });
             }
 
-            const options = Object.keys(responsibilities).map(resp => ({
-                label: resp,
-                description: `تعيين cooldown لـ ${resp}`,
-                value: resp
-            }));
+            // إنشاء Modal للبحث عن المسؤوليات
+            const modal = new ModalBuilder()
+                .setCustomId('cooldown_search_responsibility_modal')
+                .setTitle('بحث عن مسؤولية');
 
-            const selectMenu = new StringSelectMenuBuilder()
-                .setCustomId('cooldown_select_responsibility')
-                .setPlaceholder('اختر المسؤولية')
-                .addOptions(options);
+            const searchInput = new TextInputBuilder()
+                .setCustomId('search_query')
+                .setLabel('اكتب اسم المسؤولية للبحث')
+                .setStyle(TextInputStyle.Short)
+                .setRequired(true)
+                .setPlaceholder('مثال: مسؤول التصميم، مدير، admin');
 
-            const row = new ActionRowBuilder().addComponents(selectMenu);
-
-            await interaction.reply({
-                content: '**اختر المسؤولية التي تريد تعيين cooldown لها :**',
-                components: [row],
-                ephemeral: true
-            });
+            const actionRow = new ActionRowBuilder().addComponents(searchInput);
+            modal.addComponents(actionRow);
+            
+            await interaction.showModal(modal);
 
         } else if (interaction.customId === 'cooldown_view') {
             const cooldowns = loadCooldowns();
@@ -575,6 +567,41 @@ async function handleInteraction(interaction, context) {
                     console.log('لا يمكن تحديث الرسالة الأساسية:', error.message);
                 }
             }, 500);
+
+        } else if (interaction.customId === 'cooldown_search_responsibility_modal') {
+            // معالجة البحث عن مسؤولية
+            const searchQuery = interaction.fields.getTextInputValue('search_query').trim().toLowerCase();
+            
+            const matchingResponsibilities = Object.keys(responsibilities).filter(resp => 
+                resp.toLowerCase().includes(searchQuery)
+            );
+
+            if (matchingResponsibilities.length === 0) {
+                return interaction.reply({
+                    content: `**❌ لم يتم العثور على أي مسؤولية تحتوي على: "${searchQuery}"**`,
+                    ephemeral: true
+                });
+            }
+
+            // عرض نتائج البحث (حد أقصى 25)
+            const options = matchingResponsibilities.slice(0, 25).map(resp => ({
+                label: resp,
+                description: `تعيين cooldown لـ ${resp}`,
+                value: resp
+            }));
+
+            const selectMenu = new StringSelectMenuBuilder()
+                .setCustomId('cooldown_select_responsibility')
+                .setPlaceholder('اختر المسؤولية')
+                .addOptions(options);
+
+            const row = new ActionRowBuilder().addComponents(selectMenu);
+
+            await interaction.reply({
+                content: `**تم العثور على ${matchingResponsibilities.length} مسؤولية:\n(عرض أول 25)**`,
+                components: [row],
+                ephemeral: true
+            });
 
         } else if (interaction.customId === 'cooldown_select_responsibility') {
             const selectedResp = interaction.values[0];
