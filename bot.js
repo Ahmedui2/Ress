@@ -2377,8 +2377,9 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // Handle cooldown system interactions
-    if (interaction.customId && interaction.customId.startsWith('cooldown_')) {
+    // Handle cooldown system interactions (including modals)
+    if (interaction.customId && (interaction.customId.startsWith('cooldown_') || 
+        (interaction.isModalSubmit() && interaction.customId === 'cooldown_search_responsibility_modal'))) {
         const cooldownCommand = client.commands.get('cooldown');
         if (cooldownCommand && cooldownCommand.handleInteraction) {
             await cooldownCommand.handleInteraction(interaction, context);
@@ -2421,12 +2422,19 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // Handle notifications modal submissions
+    // Handle notifications modal submissions (including search)
     if (interaction.isModalSubmit() && (interaction.customId.startsWith('change_global_time_modal') ||
-        interaction.customId.startsWith('responsibility_time_modal_'))) {
+        interaction.customId.startsWith('responsibility_time_modal_') ||
+        interaction.customId === 'notifications_search_responsibility_modal')) {
         const notificationsCommand = client.commands.get('notifications');
         if (notificationsCommand && notificationsCommand.handleModalSubmit) {
             await notificationsCommand.handleModalSubmit(interaction, client, responsibilities);
+        } else if (interaction.customId === 'notifications_search_responsibility_modal') {
+            // إضافة معالج مباشر للبحث
+            const notificationsCommand = client.commands.get('notifications');
+            if (notificationsCommand && notificationsCommand.handleInteraction) {
+                await notificationsCommand.handleInteraction(interaction, context);
+            }
         }
         return;
     }
