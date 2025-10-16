@@ -626,7 +626,7 @@ async function handleInteraction(interaction, context) {
                         ]);
                     }
 
-                    await interaction.update({
+                    await interaction.editReply({
                         content: '',
                         embeds: [respsEmbed],
                         components: [
