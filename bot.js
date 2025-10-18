@@ -1912,6 +1912,87 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
+    // --- Report System Interaction Router (HIGHEST PRIORITY) ---
+    if (interaction.customId && interaction.customId.startsWith('report_')) {
+        console.log(`🔔 معالجة تفاعل نظام التقارير: ${interaction.customId}`);
+        
+        try {
+            const reportCommand = client.commands.get('report');
+            if (reportCommand && reportCommand.handleInteraction) {
+                // إعادة تحميل المسؤوليات من الملف مباشرة
+                const responsibilitiesPath = path.join(__dirname, 'data', 'responsibilities.json');
+                let responsibilities = {};
+                try {
+                    if (fs.existsSync(responsibilitiesPath)) {
+                        const data = fs.readFileSync(responsibilitiesPath, 'utf8');
+                        responsibilities = JSON.parse(data);
+                    }
+                } catch (error) {
+                    console.error('❌ خطأ في قراءة المسؤوليات:', error);
+                }
+
+                // تحميل النقاط والإعدادات
+                const pointsPath = path.join(__dirname, 'data', 'points.json');
+                const botConfigPath = path.join(__dirname, 'data', 'botConfig.json');
+
+                let points = {};
+                let BOT_OWNERS = [];
+
+                try {
+                    if (fs.existsSync(pointsPath)) {
+                        points = JSON.parse(fs.readFileSync(pointsPath, 'utf8'));
+                    }
+                    if (fs.existsSync(botConfigPath)) {
+                        const botConfig = JSON.parse(fs.readFileSync(botConfigPath, 'utf8'));
+                        BOT_OWNERS = botConfig.owners || [];
+                    }
+                } catch (error) {
+                    console.error('❌ خطأ في قراءة البيانات:', error);
+                }
+
+                // دالة للحفظ
+                const scheduleSave = () => {
+                    try {
+                        fs.writeFileSync(pointsPath, JSON.stringify(points, null, 2));
+                        const botConfig = JSON.parse(fs.readFileSync(botConfigPath, 'utf8'));
+                        const pendingReportsObj = {};
+                        for (const [key, value] of client.pendingReports.entries()) {
+                            pendingReportsObj[key] = value;
+                        }
+                        botConfig.pendingReports = pendingReportsObj;
+                        fs.writeFileSync(botConfigPath, JSON.stringify(botConfig, null, 2));
+                    } catch (error) {
+                        console.error('❌ خطأ في حفظ البيانات:', error);
+                    }
+                };
+
+                // إنشاء كائن السياق
+                const context = {
+                    client,
+                    responsibilities,
+                    points,
+                    scheduleSave,
+                    BOT_OWNERS,
+                    logConfig: client.logConfig,
+                    colorManager
+                };
+
+                await reportCommand.handleInteraction(interaction, context);
+            } else {
+                console.error('❌ لم يتم العثور على معالج report');
+            }
+        } catch (error) {
+            console.error('❌ خطأ في معالج تفاعلات التقارير:', error);
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({
+                    content: '❌ حدث خطأ في معالجة التفاعل',
+                    flags: MessageFlags.Ephemeral
+                }).catch(() => {});
+            }
+        }
+        return;
+    }
+
     // --- SetAdmin System Interaction Router ---
     if (interaction.customId && (
         interaction.customId === 'setadmin_menu' ||
