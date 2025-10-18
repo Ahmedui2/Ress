@@ -2463,6 +2463,14 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // معالج report تم نقله إلى ملف report.js كمعالج مستقل
+if (interaction.isModalSubmit() && (interaction.customId === 'add_category_modal' ||
+        interaction.customId.startsWith('edit_category_modal_'))) {
+        const ctgCommand = client.commands.get('ctg');
+        if (ctgCommand && ctgCommand.handleModalSubmit) {
+            await ctgCommand.handleModalSubmit(interaction, client);
+        }
+        return;
+    }
 
     // Handle adminroles interactions (including refresh buttons)
     if (interaction.customId && interaction.customId.startsWith('adminroles_')) {
