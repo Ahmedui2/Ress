@@ -625,6 +625,14 @@ client.once(Events.ClientReady, async () => {
         promoteManager.init(client);
         console.log('⚠️ تم تهيئة نظام الترقيات بدون قاعدة البيانات');
     }
+    // Initialize prayer reminder system
+    try {
+        const prayerReminder = require('./commands/prayer-reminder.js');
+        prayerReminder.startPrayerReminderSystem(client);
+        console.log('✅ تم تهيئة نظام تذكير الصلاة بنجاح');
+    } catch (error) {
+        console.error('❌ خطأ في تهيئة نظام تذكير الصلاة:', error);
+    }
 
     // تتبع النشاط الصوتي باستخدام client.voiceSessions المحسّن
     client.on('voiceStateUpdate', async (oldState, newState) => {
@@ -2462,8 +2470,27 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // معالج report تم نقله إلى ملف report.js كمعالج مستقل
-if (interaction.isModalSubmit() && (interaction.customId === 'add_category_modal' ||
+    // Handle category interactions (buttons and select menus)
+    if (interaction.customId && (
+        interaction.customId === 'add_category' ||
+        interaction.customId === 'edit_category' ||
+        interaction.customId === 'delete_category' ||
+        interaction.customId === 'manage_category_resps' ||
+        interaction.customId.startsWith('select_category_') ||
+        interaction.customId.startsWith('confirm_delete_') ||
+        interaction.customId === 'cancel_delete' ||
+        interaction.customId.startsWith('save_category_resps_') ||
+        interaction.customId.startsWith('add_resps_to_category_')
+    )) {
+        const ctgCommand = client.commands.get('ctg');
+        if (ctgCommand && ctgCommand.handleInteraction) {
+            await ctgCommand.handleInteraction(interaction, context);
+        }
+        return;
+    }
+
+    // Handle category modal submissions
+    if (interaction.isModalSubmit() && (interaction.customId === 'add_category_modal' ||
         interaction.customId.startsWith('edit_category_modal_'))) {
         const ctgCommand = client.commands.get('ctg');
         if (ctgCommand && ctgCommand.handleModalSubmit) {
@@ -2471,6 +2498,8 @@ if (interaction.isModalSubmit() && (interaction.customId === 'add_category_modal
         }
         return;
     }
+
+    // معالج report تم نقله إلى ملف report.js كمعالج مستقل
 
     // Handle adminroles interactions (including refresh buttons)
     if (interaction.customId && interaction.customId.startsWith('adminroles_')) {
