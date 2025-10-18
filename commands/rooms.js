@@ -320,38 +320,107 @@ async function showRoleActivity(message, role, client) {
                         components: generateButtons(currentPage)
                     });
                 } else if (interaction.customId === 'rooms_notify') {
-                    await interaction.deferUpdate();
-                                        
+                    try {
+                        // تأجيل الرد أولاً
+                        await interaction.deferUpdate();
 
-                    collector.stop();
+                        let successCount = 0;
+                        let failCount = 0;
+                        let skippedCount = 0;
+                        let processedCount = 0;
 
-                    let successCount = 0;
-                    let failCount = 0;
+                        // إرسال الرسالة الأولية
+                        const initialEmbed = colorManager.createEmbed()
+                            .setTitle('**جاري إرسال التنبيه للأعضاء...**')
+                            .setDescription(`**✅ تم الإرسال:** 0\n**❌ فشل:** 0\n**⏭️ في الرومات:** 0`)
+                            .setFooter({ text: 'By Ahmed.' })
+                            .setTimestamp();
+
+                        await interaction.editReply({ embeds: [initialEmbed], components: [] });
 
                     for (const data of memberActivities) {
-                        try {
-                            const dmEmbed = colorManager.createEmbed()
-                                .setTitle('**تنبيه من إدارة السيرفر**')
-                                .setDescription(`**🔔 الرجاء التفاعل في الرومات**\n\n**السيرفر :** ${message.guild.name}\n**الرول :** ___${role.name}___`)
-                                .setThumbnail(message.guild.iconURL({ dynamic: true }))
-                                .setFooter({ text: 'By Ahmed.' })
-                                .setTimestamp();
+                            try {
+                                const freshMember = await message.guild.members.fetch(data.member.id, { force: true });
+                                
+                                const isInVoice = freshMember.voice && 
+                                                freshMember.voice.channelId && 
+                                                freshMember.voice.channel !== null &&
+                                                message.guild.channels.cache.has(freshMember.voice.channelId);
+                                
+                                if (isInVoice) {
+                                    skippedCount++;
+                                    const channelName = freshMember.voice.channel?.name || 'Unknown';
+                                    console.log(`⏭️ تم استبعاد ${freshMember.displayName} لأنه في الرومات الصوتية: ${channelName} (ID: ${freshMember.voice.channelId})`);
+                                } else {
+                                    try {
+                                        const dmEmbed = colorManager.createEmbed()
+                                            .setTitle('**تنبيه من إدارة السيرفر**')
+                                            .setDescription(`**🔔 الرجاء التفاعل في الرومات**\n\n**السيرفر :** ${message.guild.name}\n**الرول :** ___${role.name}___`)
+                                            .setThumbnail(message.guild.iconURL({ dynamic: true }))
+                                            .setFooter({ text: 'By Ahmed.' })
+                                            .setTimestamp();
 
-                            await data.member.send({ embeds: [dmEmbed] });
-                            successCount++;
+                                        await freshMember.send({ embeds: [dmEmbed] });
+                                        successCount++;
+                                        console.log(`✅ تم إرسال تنبيه لـ ${freshMember.displayName} (ليس في رومات صوتية)`);
+                                    } catch (dmError) {
+                                        failCount++;
+                                        console.error(`❌ فشل إرسال DM لـ ${freshMember.displayName}:`, dmError.message);
+                                    }
+                                }
+                                
+                                processedCount++;
+                                
+                                // تأخير بسيط لتجنب rate limits
+                                await new Promise(resolve => setTimeout(resolve, 300));
+                                
+                                // تحديث كل 3 أعضاء أو عند الانتهاء
+                                if (processedCount % 3 === 0 || processedCount === memberActivities.length) {
+                                    const updateEmbed = colorManager.createEmbed()
+                                        .setTitle('**جاري إرسال التنبيه للأعضاء...**')
+                                        .setDescription(`**✅ تم الإرسال:** ${successCount}\n**❌ فشل:** ${failCount}\n**⏭️ في الرومات:** ${skippedCount}\n\n**تم معالجة:** ${processedCount}/${memberActivities.length}`)
+                                        .setFooter({ text: 'By Ahmed.' })
+                                        .setTimestamp();
+
+                                    try {
+                                        await interaction.editReply({ embeds: [updateEmbed], components: [] });
+                                    } catch (updateError) {
+                                        console.error('خطأ في تحديث الرسالة:', updateError);
+                                    }
+                                }
+                            } catch (error) {
+                                failCount++;
+                                processedCount++;
+                                console.error(`❌ فشل معالجة العضو ${data.member.displayName}:`, error.message);
+                            }
+                        }
+
+                    // الرسالة النهائية
+                        const finalEmbed = colorManager.createEmbed()
+                            .setTitle('**✅ تم الانتهاء من الإرسال**')
+                            .setDescription(`**✅ تم الإرسال:** ${successCount}\n**❌ فشل:** ${failCount}\n**⏭️ في الرومات:** ${skippedCount}\n\n**إجمالي الأعضاء:** ${memberActivities.length}`)
+                            .setFooter({ text: 'By Ahmed.' })
+                            .setTimestamp();
+
+                        try {
+                            await interaction.editReply({ embeds: [finalEmbed], components: [] });
                         } catch (error) {
-                            failCount++;
-                            console.error(`فشل إرسال رسالة لـ ${data.member.displayName}:`, error.message);
+                            console.error('خطأ في إرسال الرسالة النهائية:', error);
+                            await message.channel.send({ embeds: [finalEmbed] });
+                        }
+                    } catch (notifyError) {
+                        console.error('خطأ في معالج التنبيه:', notifyError);
+                        try {
+                            const errorEmbed = colorManager.createEmbed()
+                                .setTitle('**❌ حدث خطأ**')
+                                .setDescription('**حدث خطأ أثناء إرسال التنبيهات**')
+                                .setFooter({ text: 'By Ahmed.' });
+                            
+                            await interaction.editReply({ embeds: [errorEmbed], components: [] });
+                        } catch (editError) {
+                            console.error('خطأ في إرسال رسالة الخطأ:', editError);
                         }
                     }
-
-                    const resultEmbed = colorManager.createEmbed()
-                        .setTitle('**نتيجة التنبيه**')
-                        .setDescription(`**✅ تم الإرسال:** ${successCount}\n**❌ فشل الإرسال:** ${failCount}`)
-                        .setFooter({ text: 'By Ahmed.' })
-                        .setTimestamp();
-
-                    await interaction.followUp({ embeds: [resultEmbed], ephemeral: true });
                 }
             } catch (error) {
                 console.error('خطأ في معالج الأزرار:', error);

@@ -409,15 +409,14 @@ async function showRoleActivityStats(message, role, client) {
 
                     const selectRow = new ActionRowBuilder().addComponents(selectMenu);
 
-                    const selectReply = await modalSubmit.reply({ 
+                    await modalSubmit.reply({ 
                         content: '**اختر اللون للأعضاء الذين تريد تنبيههم:**', 
                         components: [selectRow], 
-                        ephemeral: true,
-                        fetchReply: true
+                        ephemeral: true
                     });
 
                     try {
-                        const selectInteraction = await selectReply.awaitMessageComponent({
+                        const selectInteraction = await modalSubmit.channel.awaitMessageComponent({
                             filter: i => i.customId === 'select_warning_recipients' && i.user.id === interaction.user.id,
                             time: 300000
                         });
@@ -434,12 +433,28 @@ async function showRoleActivityStats(message, role, client) {
                         if (selectedColors.includes('red')) {
                             selectedUserIds.push(...redUsers.map(u => u.userId));
                         }
-selectedUserIds = [...new Set(selectedUserIds)];
+                        selectedUserIds = [...new Set(selectedUserIds)];
 
                         collector.stop();
+                        
+                        await selectInteraction.deferUpdate();
+
+                        const progressEmbed = colorManager.createEmbed()
+                            .setTitle('**جاري إرسال التنبيه للأعضاء...**')
+                            .setDescription(`**✅ تم الإرسال:** 0\n**❌ فشل:** 0`)
+                            .setFooter({ text: 'By Ahmed.' })
+                            .setTimestamp();
+
+                        await sentMessage.edit({ 
+                            embeds: [progressEmbed],
+                            components: [] 
+                        });
+
                         const sender = selectInteraction.user;
                         const date = moment().tz('Asia/Riyadh').format('YYYY-MM-DD HH:mm');
-                        const failedUsers = [];
+                        let successCount = 0;
+                        let failCount = 0;
+                        let processedCount = 0;
 
                         for (const userId of selectedUserIds) {
                             try {
@@ -450,17 +465,26 @@ selectedUserIds = [...new Set(selectedUserIds)];
                                     .setColor('#FF0000')
                                     .setTimestamp();
 
-                                const dmResult = await user.send({ embeds: [warningEmbed] }).catch((err) => {
-                                    console.log(`لا يمكن إرسال رسالة خاصة إلى ${userId}: ${err.message}`);
-                                    return null;
-                                });
-
-                                if (!dmResult) {
-                                    failedUsers.push(userId);
-                                }
+                                await user.send({ embeds: [warningEmbed] });
+                                successCount++;
+                                console.log(`✅ تم إرسال تنبيه لـ ${user.tag}`);
+                                
+                                await new Promise(resolve => setTimeout(resolve, 200));
                             } catch (error) {
-                                console.error(`خطأ في إرسال التنبيه إلى ${userId}:`, error);
-                                failedUsers.push(userId);
+                                failCount++;
+                                console.error(`❌ فشل إرسال رسالة إلى ${userId}:`, error.message);
+                            }
+
+                            processedCount++;
+
+                            if (processedCount % 3 === 0 || processedCount === selectedUserIds.length) {
+                                const updateEmbed = colorManager.createEmbed()
+                                    .setTitle('**جاري إرسال التنبيه للأعضاء...**')
+                                    .setDescription(`**✅ تم الإرسال:** ${successCount}\n**❌ فشل:** ${failCount}`)
+                                    .setFooter({ text: 'By Ahmed.' })
+                                    .setTimestamp();
+
+                                await sentMessage.edit({ embeds: [updateEmbed] }).catch(() => {});
                             }
                         }
 
@@ -470,15 +494,18 @@ selectedUserIds = [...new Set(selectedUserIds)];
                             if (c === 'red') return '🔴 أحمر';
                         }).join(', ');
 
-                        let responseMessage = `**✅ تم إرسال التنبيه إلى ${selectedUserIds.length - failedUsers.length} عضو**\n**الألوان :** ${colorNames}`;
-                        if (failedUsers.length > 0) {
-                            responseMessage += `\n**⚠️ فشل إرسال ${failedUsers.length} رسالة (الرسائل الخاصة مغلقة)**`;
-                        }
+                        const finalEmbed = colorManager.createEmbed()
+                            .setTitle('**✅ تم الانتهاء من الإرسال**')
+                            .setDescription(`**✅ تم الإرسال:** ${successCount}\n**❌ فشل:** ${failCount}\n**الألوان:** ${colorNames}`)
+                            .setFooter({ text: 'By Ahmed.' })
+                            .setTimestamp();
 
-                        await selectInteraction.update({ 
-                            content: responseMessage, 
-                            components: [] 
-                        });
+                        try {
+                            await sentMessage.edit({ embeds: [finalEmbed] });
+                        } catch (updateError) {
+                            console.error('فشل تحديث الرسالة، سأرسل في القناة:', updateError.message);
+                            await message.channel.send({ embeds: [finalEmbed] }).catch(() => {});
+                        }
                     } catch (selectError) {
                         console.error('خطأ في انتظار اختيار المستلمين:', selectError);
                         await modalSubmit.editReply({ 
@@ -488,14 +515,6 @@ selectedUserIds = [...new Set(selectedUserIds)];
                     }
                 } catch (error) {
                     console.error('خطأ في انتظار Modal:', error);
-                    try {
-                        await interaction.followUp({
-                            content: '**❌ انتهت مهلة إدخال التنبيه**',
-                            ephemeral: true
-                        });
-                    } catch (followUpError) {
-                        console.error('خطأ في إرسال رسالة المهلة المنتهية:', followUpError);
-                    }
                 }
             }
         } catch (error) {
