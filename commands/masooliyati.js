@@ -61,7 +61,11 @@ module.exports = {
 
         const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
 
+        const categoriesPath = path.join(__dirname, '..', 'data', 'respCategories.json');
+
         let currentResponsibilities = {};
+
+        let categories = {};
 
         try {
 
@@ -81,6 +85,42 @@ module.exports = {
 
         }
 
+        try {
+
+            if (fs.existsSync(categoriesPath)) {
+
+                const data = fs.readFileSync(categoriesPath, 'utf8');
+
+                categories = JSON.parse(data);
+
+            }
+
+        } catch (error) {
+
+            console.error('خطأ في قراءة الأقسام:', error);
+
+            categories = {};
+
+        }
+
+        // دالة للبحث عن قسم المسؤولية
+
+        function findCategoryForResp(respName) {
+
+            for (const [catName, catData] of Object.entries(categories)) {
+
+                if (catData.responsibilities && catData.responsibilities.includes(respName)) {
+
+                    return catName;
+
+                }
+
+            }
+
+            return null;
+
+        }
+
         // البحث عن مسؤوليات المستخدم المحدد
 
         const userResponsibilities = [];
@@ -91,13 +131,17 @@ module.exports = {
 
                 const otherResponsibles = respData.responsibles.filter(id => id !== userId);
 
+                const category = findCategoryForResp(respName);
+
                 userResponsibilities.push({
 
                     name: respName,
 
                     description: respData.description || 'لا يوجد وصف',
 
-                    otherResponsiblesCount: otherResponsibles.length
+                    otherResponsiblesCount: otherResponsibles.length,
+
+                    category: category
 
                 });
 
@@ -127,27 +171,67 @@ module.exports = {
 
         } else {
 
-            const responsibilitiesList = userResponsibilities.map((resp, index) => `**${index + 1}.** ${resp.name}`).join('\n');
+            // فحص إذا كانت جميع المسؤوليات من نفس القسم
+
+            const categories = userResponsibilities.map(r => r.category).filter(c => c !== null);
+
+            const uniqueCategories = [...new Set(categories)];
+
+            const allSameCategory = uniqueCategories.length === 1 && categories.length === userResponsibilities.length;
+
+            let responsibilitiesList;
+
+            let descriptionText = userId === message.author.id ? '** Your Res :**\n\n' : `**Res ${targetUser.displayName || targetUser.username}:**\n\n`;
+
+            
+
+            if (allSameCategory) {
+
+                // جميع المسؤوليات من نفس القسم - عرض مميز
+
+                descriptionText += `<:emoji_4:1428973990315167814>  **Category : ${uniqueCategories[0]}**\n\n`;
+
+                responsibilitiesList = userResponsibilities.map((resp, index) => 
+
+                    `**${index + 1}.** ${resp.name}`
+
+                ).join('\n');
+
+            } else {
+
+                // مسؤوليات من أقسام مختلفة أو بعضها بدون قسم
+
+                responsibilitiesList = userResponsibilities.map((resp, index) => {
+
+                    let line = `**${index + 1}.** ${resp.name}`;
+
+                    if (resp.category) {
+
+                        line += `\n   <:emoji_4:1428973990315167814>  Category : ${resp.category}`;
+
+                    }
+
+                    return line;
+
+                }).join('\n\n');
+
+            }
 
             const displayName = targetUser.displayName || targetUser.username;
 
             const respEmbed = colorManager.createEmbed()
 
-                .setTitle(`مسؤوليات ${displayName}`)
+                .setTitle(`Res : ${displayName}`)
 
-                .setDescription(userId === message.author.id ?
-
-                    `**مسؤولياتك الحالية:**\n\n${responsibilitiesList}` :
-
-                    `**مسؤوليات ${displayName}:**\n\n${responsibilitiesList}`)
+                .setDescription(descriptionText + responsibilitiesList)
 
                 .setThumbnail(targetUser.displayAvatarURL({ dynamic: true }))
 
                 .addFields([
 
-                    { name: 'إجمالي المسؤوليات', value: `${userResponsibilities.length}`, inline: true },
+                    { name: 'All Res', value: `${userResponsibilities.length}`, inline: true },
 
-                    { name: 'الشخص', value: `<@${userId}>`, inline: true }
+                    { name: 'Person', value: `<@${userId}>`, inline: true }
 
                 ])
 
@@ -193,7 +277,7 @@ module.exports = {
 
                     await interaction.reply({
 
-                        content: `**شرح مسؤولية "${selectedRespName}":**\n${desc}`,
+                        content: `**شرح مسؤولية "${selectedRespName}" :**\n${desc}`,
 
                         ephemeral: true
 

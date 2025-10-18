@@ -40,7 +40,7 @@ let embedMessages = new Map(); // guildId -> { messageId, channelId, message }
 // دالة لإنشاء الايمبد
 function createResponsibilitiesEmbed(responsibilities) {
     const embed = colorManager.createEmbed()
-        .setTitle('المسؤوليات');
+        .setTitle('Responsibilities');
     
     const categories = readJSONFile(DATA_FILES.categories, {});
     
@@ -55,24 +55,21 @@ function createResponsibilitiesEmbed(responsibilities) {
         const sortedCategories = Object.entries(categories).sort((a, b) => (a[1].order || 0) - (b[1].order || 0));
         
         for (const [catName, catData] of sortedCategories) {
-            description += `\n━━━━━━━━━━━━━━━━━━━━\n`;
-            description += `📁 **${catName}**\n`;
-            description += `━━━━━━━━━━━━━━━━━━━━\n\n`;
-            
+            description += `\n**# ${catName} Category**\n\n`;    
             const categoryResps = catData.responsibilities || [];
             
             if (categoryResps.length === 0) {
-                description += `*لا توجد مسؤوليات في هذا القسم*\n\n`;
+                description += `*No Res*\n\n`;
             } else {
                 for (const respName of categoryResps) {
                     const respData = responsibilities[respName];
                     if (respData) {
-                        description += `**▫️ ${respName}**\n`;
+                        description += `**المسؤوليه : ${respName}**\n`;
                         if (respData.responsibles && respData.responsibles.length > 0) {
                             const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' ، ');
-                            description += `   المسؤولين: ${responsiblesList}\n\n`;
+                            description += `المسؤولين : ${responsiblesList}\n\n`;
                         } else {
-                            description += `   المسؤولين: لا يوجد مسؤولين\n\n`;
+                            description += `المسؤولين : 0\n\n`;
                         }
                     }
                 }
@@ -86,18 +83,16 @@ function createResponsibilitiesEmbed(responsibilities) {
         });
         
         if (uncategorizedResps.length > 0) {
-            description += `\n━━━━━━━━━━━━━━━━━━━━\n`;
-            description += `📋 **مسؤوليات غير مصنفة**\n`;
-            description += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+            description += `\n**# No categories**\n\n`;
             
             for (const respName of uncategorizedResps) {
                 const respData = responsibilities[respName];
-                description += `**▫️ ${respName}**\n`;
+                description += `**المسؤوليه : ${respName}**\n`;
                 if (respData.responsibles && respData.responsibles.length > 0) {
                     const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' ، ');
-                    description += `   المسؤولين: ${responsiblesList}\n\n`;
+                    description += `المسؤولين : ${responsiblesList}\n\n`;
                 } else {
-                    description += `   المسؤولين: لا يوجد مسؤولين\n\n`;
+                    description += `المسؤولين : 0\n\n`;
                 }
             }
         }
@@ -108,7 +103,7 @@ function createResponsibilitiesEmbed(responsibilities) {
                 const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' ، ');
                 description += `**المسؤولين :** ${responsiblesList}\n\n`;
             } else {
-                description += `**المسؤولين :** لا يوجد مسؤولين\n\n`;
+                description += `**المسؤولين :** 0\n\n`;
             }
         }
     }
@@ -203,7 +198,7 @@ async function handleSuggestionModal(interaction, client) {
         
         if (!config.guilds[guildId] || !config.guilds[guildId].suggestionsChannel) {
             await interaction.reply({
-                content: 'لم يتم تحديد قناة الاقتراحات بعد',
+                content: 'لم يتم تحديد روم الاقتراحات بعد',
                 ephemeral: true
             });
             return;
@@ -222,16 +217,16 @@ async function handleSuggestionModal(interaction, client) {
         
         // إنشاء إيمبد الاقتراح بتنسيق محسن
         const suggestionEmbed = colorManager.createEmbed()
-            .setTitle('اقتراح')
-            .setDescription(`**اقتراح من:** <@${interaction.user.id}>\n\n**الاقتراح:**\n${suggestionText}`)
+            .setTitle('Suggest')
+            .setDescription(`**اقتراح من :** <@${interaction.user.id}>\n\n**الاقتراح :**\n${suggestionText}`)
             .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
             .setTimestamp()
-            .setFooter({ text: `معرف المقترح: ${interaction.user.id}` });
+            .setFooter({ text: `اي دي المقترح : ${interaction.user.id}` });
         
         await channel.send({ embeds: [suggestionEmbed] });
         
         await interaction.reply({
-            content: 'تم إرسال اقتراحك بنجاح',
+            content: 'Done ✅️',
             ephemeral: true
         });
         
@@ -288,7 +283,7 @@ module.exports = {
                 
                 // تأكيد أن القناة تنتمي لنفس السيرفر
                 if (suggestionsChannel.guild.id !== guildId) {
-                    await msg.channel.send('يجب اختيار قناة من نفس السيرفر');
+                    await msg.channel.send('يجب اختيار روم من نفس السيرفر');
                     return;
                 }
                 

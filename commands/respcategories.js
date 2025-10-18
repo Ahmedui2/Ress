@@ -43,25 +43,80 @@ async function updateRespEmbeds(client) {
     }
 }
 
-function createCategoriesListEmbed(categories) {
+async function updateAllCategoriesEmbeds(client) {
+    try {
+        const categories = readJSONFile(DATA_FILES.categories, {});
+        const responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
+        const embed = createCategoriesListEmbed(categories, responsibilities);
+        const buttons = createMainMenuButtons();
+
+        // تحديث جميع رسائل ctg في جميع السيرفرات
+        if (client.ctgMessages) {
+            for (const [guildId, message] of client.ctgMessages.entries()) {
+                try {
+                    await message.edit({
+                        embeds: [embed],
+                        components: [buttons]
+                    });
+                    console.log(`✅ تم تحديث إيمبد ctg في السيرفر ${guildId}`);
+                } catch (error) {
+                    console.error(`خطأ في تحديث إيمبد ctg للسيرفر ${guildId}:`, error);
+                }
+            }
+        }
+    } catch (error) {
+        console.error('خطأ في تحديث إيمبد ctg:', error);
+    }
+}
+
+async function updateCategoriesEmbed(message) {
+    try {
+        const categories = readJSONFile(DATA_FILES.categories, {});
+        const responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
+        const embed = createCategoriesListEmbed(categories, responsibilities);
+        const buttons = createMainMenuButtons();
+
+        if (message && message.edit) {
+            await message.edit({
+                embeds: [embed],
+                components: [buttons]
+            });
+        }
+    } catch (error) {
+        console.error('خطأ في تحديث إيمبد الأقسام:', error);
+    }
+}
+
+function createCategoriesListEmbed(categories, responsibilities = {}) {
     const embed = colorManager.createEmbed()
         .setTitle('Categories List');
-    
+
     if (Object.keys(categories).length === 0) {
-        embed.setDescription('لا توجد أقسام محددة حالياً\n\nاستخدم الأزرار أدناه لإضافة قسم جديد');
+        embed.setDescription ('No categories\n\n Choose Button To setup categories');
     } else {
-        let description = '**الأقسام الحالية:**\n\n';
+        let description = '** categories :**\n\n';
         const sortedCategories = Object.entries(categories).sort((a, b) => (a[1].order || 0) - (b[1].order || 0));
-        
+
         sortedCategories.forEach(([catName, catData], index) => {
-            const respCount = catData.responsibilities ? catData.responsibilities.length : 0;
-            description += `**${index + 1}.** ${catName}\n`;
-            description += `   عدد المسؤوليات : ${respCount}\n\n`;
+            const respList = catData.responsibilities || [];
+            const respCount = respList.length;
+
+            description += `**${index + 1}. ${catName}** (ترتيب: ${catData.order || 0})\n`;
+
+            if (respCount === 0) {
+                description += `    لا توجد مسؤوليات\n\n`;
+            } else {
+                description += `   المسؤوليات (${respCount}) :\n`;
+                respList.forEach(respName => {
+                    description += `      • ${respName}\n`;
+                });
+                description += '\n';
+            }
         });
-        
+
         embed.setDescription(description);
     }
-    
+
     return embed;
 }
 
@@ -89,14 +144,14 @@ function createMainMenuButtons() {
 
 function createCategorySelectMenu(categories, customId = 'select_category', placeholder = 'اختر قسماً...') {
     const sortedCategories = Object.entries(categories).sort((a, b) => (a[1].order || 0) - (b[1].order || 0));
-    
+
     const options = sortedCategories.map(([catName, catData], index) => ({
         label: catName,
         value: catName,
         description: `${catData.responsibilities ? catData.responsibilities.length : 0} مسؤولية`,
-        
+
     }));
-    
+
     return new StringSelectMenuBuilder()
         .setCustomId(customId)
         .setPlaceholder(placeholder)
@@ -104,38 +159,85 @@ function createCategorySelectMenu(categories, customId = 'select_category', plac
         .setDisabled(options.length === 0);
 }
 
+async function showCategoryRespsPage(interaction, categoryName, allRespNames, currentRespNames, page, isInitial) {
+    const totalPages = Math.ceil(allRespNames.length / 25);
+    const start = page * 25;
+    const end = Math.min(start + 25, allRespNames.length);
+    const pageResps = allRespNames.slice(start, end);
+
+    const options = pageResps.map(respName => ({
+        label: respName.substring(0, 100),
+        value: respName,
+        description: currentRespNames.includes(respName) ? '✅ مضافة حالياً' : 'غير مضافة',
+        default: currentRespNames.includes(respName)
+    }));
+
+    const components = [];
+
+    // القائمة المنسدلة
+    const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId(`add_resps_to_category_page_${page}_${categoryName}`)
+        .setPlaceholder(`اختر المسؤوليات (صفحة ${page + 1}/${totalPages})...`)
+        .setMinValues(0)
+        .setMaxValues(options.length)
+        .addOptions(options);
+    components.push(new ActionRowBuilder().addComponents(selectMenu));
+
+    // أزرار التنقل
+    if (totalPages > 1) {
+        const navButtons = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`category_resps_nav_prev`)
+                    .setLabel('◀️ السابق')
+                    .setStyle(ButtonStyle.Primary)
+                    .setDisabled(page === 0),
+                new ButtonBuilder()
+                    .setCustomId(`category_resps_nav_info`)
+                    .setLabel(`صفحة ${page + 1} من ${totalPages}`)
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(true),
+                new ButtonBuilder()
+                    .setCustomId(`category_resps_nav_next`)
+                    .setLabel('التالي ▶️')
+                    .setStyle(ButtonStyle.Primary)
+                    .setDisabled(page === totalPages - 1)
+            );
+        components.push(navButtons);
+    }
+
+    // زر الحفظ
+    const actionButtons = new ActionRowBuilder()
+        .addComponents(
+            new ButtonBuilder()
+                .setCustomId(`save_category_resps_${categoryName}`)
+                .setLabel('💾 حفظ')
+                .setStyle(ButtonStyle.Success)
+        );
+    components.push(actionButtons);
+
+    const updateOptions = {
+        content: `**إدارة مسؤوليات القسم: ${categoryName}**\n\n اختر المسؤوليات التي تريد إضافتها لهذا القسم:\n\nالمسؤوليات المتاحة: ${allRespNames.length}\n✅ المسؤوليات المحددة حالياً : ${currentRespNames.length}`,
+        components: components
+    };
+
+    if (isInitial) {
+        await interaction.update(updateOptions);
+    } else {
+        await interaction.update(updateOptions);
+    }
+}
+
 module.exports = {
     name: 'ctg',
     description: 'إدارة أقسام المسؤوليات',
-    
-    async execute(message, args, context) {
+
+    async handleInteraction(interaction, context) {
         const { client } = context;
-        
-        const botConfig = readJSONFile(path.join(__dirname, '..', 'data', 'botConfig.json'), {});
-        const BOT_OWNERS = botConfig.owners || [];
-        const isOwner = BOT_OWNERS.includes(message.author.id) || message.guild.ownerId === message.author.id;
+        const customId = interaction.customId;
 
-        if (!isOwner) {
-            await message.react('❌');
-            return;
-        }
-
-        const categories = readJSONFile(DATA_FILES.categories, {});
-        const embed = createCategoriesListEmbed(categories);
-        const buttons = createMainMenuButtons();
-
-        const msg = await message.channel.send({
-            embeds: [embed],
-            components: [buttons]
-        });
-
-        const collector = msg.createMessageComponentCollector({
-            filter: i => i.user.id === message.author.id,
-            time: 300000
-        });
-
-        collector.on('collect', async (interaction) => {
-            if (interaction.customId === 'add_category') {
+        if (interaction.isButton()) {
+            if (customId === 'add_category') {
                 const modal = new ModalBuilder()
                     .setCustomId('add_category_modal')
                     .setTitle('إضافة قسم جديد');
@@ -163,9 +265,9 @@ module.exports = {
 
                 await interaction.showModal(modal);
 
-            } else if (interaction.customId === 'edit_category') {
+            } else if (customId === 'edit_category') {
                 const currentCategories = readJSONFile(DATA_FILES.categories, {});
-                
+
                 if (Object.keys(currentCategories).length === 0) {
                     await interaction.reply({
                         content: '❌ لا توجد أقسام للتعديل',
@@ -175,16 +277,16 @@ module.exports = {
                 }
 
                 const selectMenu = createCategorySelectMenu(currentCategories, 'select_category_to_edit', 'اختر قسماً للتعديل...');
-                
+
                 await interaction.reply({
                     content: '**اختر القسم الذي تريد تعديله:**',
                     components: [new ActionRowBuilder().addComponents(selectMenu)],
                     ephemeral: true
                 });
 
-            } else if (interaction.customId === 'delete_category') {
+            } else if (customId === 'delete_category') {
                 const currentCategories = readJSONFile(DATA_FILES.categories, {});
-                
+
                 if (Object.keys(currentCategories).length === 0) {
                     await interaction.reply({
                         content: '❌ لا توجد أقسام للحذف',
@@ -194,16 +296,16 @@ module.exports = {
                 }
 
                 const selectMenu = createCategorySelectMenu(currentCategories, 'select_category_to_delete', 'اختر قسماً للحذف...');
-                
+
                 await interaction.reply({
                     content: '**اختر القسم الذي تريد حذفه:**',
                     components: [new ActionRowBuilder().addComponents(selectMenu)],
                     ephemeral: true
                 });
 
-            } else if (interaction.customId === 'manage_category_resps') {
+            } else if (customId === 'manage_category_resps') {
                 const currentCategories = readJSONFile(DATA_FILES.categories, {});
-                
+
                 if (Object.keys(currentCategories).length === 0) {
                     await interaction.reply({
                         content: '❌ لا توجد أقسام. قم بإضافة قسم أولاً',
@@ -213,14 +315,57 @@ module.exports = {
                 }
 
                 const selectMenu = createCategorySelectMenu(currentCategories, 'select_category_for_resps', 'اختر قسماً...');
-                
+
                 await interaction.reply({
                     content: '**اختر القسم لإدارة مسؤولياته:**',
                     components: [new ActionRowBuilder().addComponents(selectMenu)],
                     ephemeral: true
                 });
 
-            } else if (interaction.customId === 'select_category_to_edit') {
+            } else if (customId.startsWith('confirm_delete_')) {
+                const categoryName = customId.replace('confirm_delete_', '');
+                const currentCategories = readJSONFile(DATA_FILES.categories, {});
+
+                delete currentCategories[categoryName];
+                writeJSONFile(DATA_FILES.categories, currentCategories);
+
+                await interaction.update({
+                    content: `✅ تم حذف القسم "${categoryName}" بنجاح`,
+                    components: []
+                });
+
+                await updateRespEmbeds(client);
+                await updateAllCategoriesEmbeds(client);
+
+            } else if (customId === 'cancel_delete') {
+                await interaction.update({
+                    content: '❌ تم إلغاء الحذف',
+                    components: []
+                });
+
+            } else if (customId.startsWith('save_category_resps_')) {
+                const categoryName = customId.replace('save_category_resps_', '');
+                const selectedResps = interaction.message.tempCategoryResps?.[categoryName] || [];
+
+                const currentCategories = readJSONFile(DATA_FILES.categories, {});
+
+                if (!currentCategories[categoryName]) {
+                    currentCategories[categoryName] = { order: 0, responsibilities: [] };
+                }
+
+                currentCategories[categoryName].responsibilities = selectedResps;
+                writeJSONFile(DATA_FILES.categories, currentCategories);
+
+                await interaction.update({
+                    content: `✅ تم حفظ ${selectedResps.length} مسؤولية للقسم "${categoryName}"`,
+                    components: []
+                });
+
+                await updateRespEmbeds(client);
+                await updateAllCategoriesEmbeds(client);
+            }
+        } else if (interaction.isStringSelectMenu()) {
+            if (customId === 'select_category_to_edit') {
                 const categoryName = interaction.values[0];
                 const currentCategories = readJSONFile(DATA_FILES.categories, {});
                 const categoryData = currentCategories[categoryName];
@@ -252,9 +397,9 @@ module.exports = {
 
                 await interaction.showModal(modal);
 
-            } else if (interaction.customId === 'select_category_to_delete') {
+            } else if (customId === 'select_category_to_delete') {
                 const categoryName = interaction.values[0];
-                
+
                 const confirmRow = new ActionRowBuilder()
                     .addComponents(
                         new ButtonBuilder()
@@ -272,35 +417,12 @@ module.exports = {
                     components: [confirmRow]
                 });
 
-            } else if (interaction.customId.startsWith('confirm_delete_')) {
-                const categoryName = interaction.customId.replace('confirm_delete_', '');
-                const currentCategories = readJSONFile(DATA_FILES.categories, {});
-                
-                delete currentCategories[categoryName];
-                writeJSONFile(DATA_FILES.categories, currentCategories);
-                
-                await interaction.update({
-                    content: `✅ تم حذف القسم "${categoryName}" بنجاح`,
-                    components: []
-                });
-
-                await updateRespEmbeds(client);
-
-                const updatedEmbed = createCategoriesListEmbed(currentCategories);
-                await msg.edit({ embeds: [updatedEmbed], components: [buttons] });
-
-            } else if (interaction.customId === 'cancel_delete') {
-                await interaction.update({
-                    content: '❌ تم إلغاء الحذف',
-                    components: []
-                });
-
-            } else if (interaction.customId === 'select_category_for_resps') {
+            } else if (customId === 'select_category_for_resps') {
                 const categoryName = interaction.values[0];
                 const currentCategories = readJSONFile(DATA_FILES.categories, {});
                 const responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
                 const categoryData = currentCategories[categoryName] || { responsibilities: [] };
-                
+
                 const allRespNames = Object.keys(responsibilities);
                 const currentRespNames = categoryData.responsibilities || [];
 
@@ -312,71 +434,120 @@ module.exports = {
                     return;
                 }
 
-                const options = allRespNames.map(respName => ({
-                    label: respName,
-                    value: respName,
-                    description: currentRespNames.includes(respName) ? '✅ مضافة حالياً' : 'غير مضافة',
-                    default: currentRespNames.includes(respName)
-                }));
+                // تخزين البيانات المؤقتة
+                if (!interaction.message.tempCategoryResps) {
+                    interaction.message.tempCategoryResps = {};
+                }
+                interaction.message.tempCategoryResps[categoryName] = [...currentRespNames];
+                interaction.message.tempCategoryData = {
+                    categoryName,
+                    allRespNames,
+                    currentPage: 0
+                };
 
-                const selectMenu = new StringSelectMenuBuilder()
-                    .setCustomId(`add_resps_to_category_${categoryName}`)
-                    .setPlaceholder('اختر المسؤوليات لإضافتها...')
-                    .setMinValues(0)
-                    .setMaxValues(Math.min(options.length, 25))
-                    .addOptions(options);
+                // إنشاء القوائم مع pagination
+                await showCategoryRespsPage(interaction, categoryName, allRespNames, currentRespNames, 0, true);
 
-                const actionButtons = new ActionRowBuilder()
-                    .addComponents(
-                        new ButtonBuilder()
-                            .setCustomId(`save_category_resps_${categoryName}`)
-                            .setLabel('Save')
-                            .setStyle(ButtonStyle.Success)
-                    );
+            } else if (customId.startsWith('add_resps_to_category_page_')) {
+                const parts = customId.split('_');
+                const pageNum = parseInt(parts[parts.length - 1]);
+                const categoryName = interaction.message.tempCategoryData?.categoryName;
 
-                await interaction.update({
-                    content: `**إدارة مسؤوليات القسم: ${categoryName}**\n\nاختر المسؤوليات التي تريد إضافتها لهذا القسم:`,
-                    components: [new ActionRowBuilder().addComponents(selectMenu), actionButtons]
+                if (!categoryName) {
+                    await interaction.update({
+                        content: '❌ حدث خطأ في تحميل البيانات',
+                        components: []
+                    });
+                    return;
+                }
+
+                const selectedResps = interaction.values;
+                const tempData = interaction.message.tempCategoryResps || {};
+                if (!tempData[categoryName]) {
+                    tempData[categoryName] = [];
+                }
+
+                // دمج الاختيارات
+                selectedResps.forEach(resp => {
+                    if (!tempData[categoryName].includes(resp)) {
+                        tempData[categoryName].push(resp);
+                    }
                 });
 
-            } else if (interaction.customId.startsWith('add_resps_to_category_')) {
-                const categoryName = interaction.customId.replace('add_resps_to_category_', '');
-                const selectedResps = interaction.values;
-                
-                const tempData = interaction.message.tempCategoryResps || {};
-                tempData[categoryName] = selectedResps;
+                // إزالة المسؤوليات غير المحددة في هذه الصفحة
+                const currentCategories = readJSONFile(DATA_FILES.categories, {});
+                const responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
+                const allRespNames = Object.keys(responsibilities);
+                const start = pageNum * 25;
+                const end = Math.min(start + 25, allRespNames.length);
+                const pageResps = allRespNames.slice(start, end);
+
+                pageResps.forEach(resp => {
+                    if (!selectedResps.includes(resp)) {
+                        const index = tempData[categoryName].indexOf(resp);
+                        if (index > -1) {
+                            tempData[categoryName].splice(index, 1);
+                        }
+                    }
+                });
+
                 interaction.message.tempCategoryResps = tempData;
 
                 await interaction.deferUpdate();
 
-            } else if (interaction.customId.startsWith('save_category_resps_')) {
-                const categoryName = interaction.customId.replace('save_category_resps_', '');
-                const selectedResps = interaction.message.tempCategoryResps?.[categoryName] || [];
-                
-                const currentCategories = readJSONFile(DATA_FILES.categories, {});
-                
-                if (!currentCategories[categoryName]) {
-                    currentCategories[categoryName] = { order: 0, responsibilities: [] };
+            } else if (customId.startsWith('category_resps_nav_')) {
+                const action = customId.split('_').pop();
+                const categoryName = interaction.message.tempCategoryData?.categoryName;
+                const allRespNames = interaction.message.tempCategoryData?.allRespNames || [];
+                const currentPage = interaction.message.tempCategoryData?.currentPage || 0;
+
+                let newPage = currentPage;
+                if (action === 'prev' && currentPage > 0) {
+                    newPage = currentPage - 1;
+                } else if (action === 'next') {
+                    const totalPages = Math.ceil(allRespNames.length / 25);
+                    if (currentPage < totalPages - 1) {
+                        newPage = currentPage + 1;
+                    }
                 }
-                
-                currentCategories[categoryName].responsibilities = selectedResps;
-                writeJSONFile(DATA_FILES.categories, currentCategories);
 
-                await interaction.update({
-                    content: `✅ تم حفظ ${selectedResps.length} مسؤولية للقسم "${categoryName}"`,
-                    components: []
-                });
+                interaction.message.tempCategoryData.currentPage = newPage;
 
-                await updateRespEmbeds(client);
+                const tempData = interaction.message.tempCategoryResps || {};
+                const currentRespNames = tempData[categoryName] || [];
 
-                const updatedEmbed = createCategoriesListEmbed(currentCategories);
-                await msg.edit({ embeds: [updatedEmbed], components: [buttons] });
+                await showCategoryRespsPage(interaction, categoryName, allRespNames, currentRespNames, newPage, false);
             }
+        }
+    },
+
+    async execute(message, args, context) {
+        const { client } = context;
+
+        const botConfig = readJSONFile(path.join(__dirname, '..', 'data', 'botConfig.json'), {});
+        const BOT_OWNERS = botConfig.owners || [];
+        const isOwner = BOT_OWNERS.includes(message.author.id) || message.guild.ownerId === message.author.id;
+
+        if (!isOwner) {
+            await message.react('❌');
+            return;
+        }
+
+        const categories = readJSONFile(DATA_FILES.categories, {});
+        const responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
+        const embed = createCategoriesListEmbed(categories, responsibilities);
+        const buttons = createMainMenuButtons();
+
+        const sentMessage = await message.channel.send({
+            embeds: [embed],
+            components: [buttons]
         });
 
-        collector.on('end', () => {
-            msg.edit({ components: [] }).catch(() => {});
-        });
+        // حفظ مرجع الرسالة للتحديثات التلقائية
+        if (!client.ctgMessages) {
+            client.ctgMessages = new Map();
+        }
+        client.ctgMessages.set(message.guild.id, sentMessage);
     },
 
     async handleModalSubmit(interaction, client) {
@@ -386,7 +557,7 @@ module.exports = {
             const order = orderInput ? parseInt(orderInput) : Object.keys(readJSONFile(DATA_FILES.categories, {})).length + 1;
 
             const categories = readJSONFile(DATA_FILES.categories, {});
-            
+
             if (categories[categoryName]) {
                 await interaction.reply({
                     content: `❌ القسم "${categoryName}" موجود بالفعل`,
@@ -408,6 +579,7 @@ module.exports = {
             });
 
             await updateRespEmbeds(client);
+            await updateAllCategoriesEmbeds(client);
 
         } else if (interaction.customId.startsWith('edit_category_modal_')) {
             const oldCategoryName = interaction.customId.replace('edit_category_modal_', '');
@@ -416,7 +588,7 @@ module.exports = {
             const newOrder = orderInput ? parseInt(orderInput) : 0;
 
             const categories = readJSONFile(DATA_FILES.categories, {});
-            
+
             if (oldCategoryName !== newCategoryName && categories[newCategoryName]) {
                 await interaction.reply({
                     content: `❌ القسم "${newCategoryName}" موجود بالفعل`,
@@ -427,7 +599,7 @@ module.exports = {
 
             const categoryData = categories[oldCategoryName];
             delete categories[oldCategoryName];
-            
+
             categories[newCategoryName] = {
                 order: newOrder,
                 responsibilities: categoryData.responsibilities || []
@@ -441,6 +613,7 @@ module.exports = {
             });
 
             await updateRespEmbeds(client);
+            await updateAllCategoriesEmbeds(client);
         }
     }
 };
