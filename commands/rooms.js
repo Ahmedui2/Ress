@@ -289,23 +289,28 @@ async function showRoleActivity(message, role, client) {
         const filter = i => i.user.id === message.author.id;
         const collector = sentMessage.createMessageComponentCollector({ filter, time: 300000 });
 
-        collector.on('collect', async interaction => {
-            try {
-                if (interaction.replied || interaction.deferred) return;
+        let isNotifyInProgress = false;
 
+        collector.on('collect', async interaction => {
+            console.log(`🔘 تم الضغط على زر: ${interaction.customId} من قبل ${interaction.user.tag}`);
+            
+            try {
                 if (interaction.customId === 'rooms_previous') {
+                    if (interaction.replied || interaction.deferred) return;
                     currentPage = Math.max(0, currentPage - 1);
                     await interaction.update({
                         embeds: [generateEmbed(currentPage)],
                         components: generateButtons(currentPage)
                     });
                 } else if (interaction.customId === 'rooms_next') {
+                    if (interaction.replied || interaction.deferred) return;
                     currentPage = Math.min(totalPages - 1, currentPage + 1);
                     await interaction.update({
                         embeds: [generateEmbed(currentPage)],
                         components: generateButtons(currentPage)
                     });
                 } else if (interaction.customId === 'rooms_mention') {
+                    if (interaction.replied || interaction.deferred) return;
                     const mentions = memberActivities.map(data => `<@${data.member.id}>`).join(' ');
                     
                     const mentionEmbed = colorManager.createEmbed()
@@ -320,6 +325,25 @@ async function showRoleActivity(message, role, client) {
                         components: generateButtons(currentPage)
                     });
                 } else if (interaction.customId === 'rooms_notify') {
+                    console.log(`🔔 بدء معالجة زر التنبيه - حالة: replied=${interaction.replied}, deferred=${interaction.deferred}, inProgress=${isNotifyInProgress}`);
+                    
+                    if (interaction.replied || interaction.deferred) {
+                        console.log('⚠️ تم تجاهل ضغطة زر تنبيه - التفاعل معالج مسبقاً');
+                        return;
+                    }
+
+                    if (isNotifyInProgress) {
+                        console.log('⚠️ عملية تنبيه قيد التنفيذ بالفعل');
+                        await interaction.reply({ 
+                            content: '**⏳ يوجد عملية إرسال تنبيهات جارية حالياً، الرجاء الانتظار**', 
+                            ephemeral: true 
+                        }).catch(() => {});
+                        return;
+                    }
+
+                    isNotifyInProgress = true;
+                    console.log('✅ تم تعيين isNotifyInProgress = true');
+                    
                     try {
                         // تأجيل الرد أولاً
                         await interaction.deferUpdate();
@@ -408,18 +432,30 @@ async function showRoleActivity(message, role, client) {
                             console.error('خطأ في إرسال الرسالة النهائية:', error);
                             await message.channel.send({ embeds: [finalEmbed] });
                         }
+
+                        console.log('✅ تم الانتهاء من إرسال التنبيهات بنجاح');
                     } catch (notifyError) {
-                        console.error('خطأ في معالج التنبيه:', notifyError);
+                        console.error('❌ خطأ في معالج التنبيه:', notifyError);
                         try {
                             const errorEmbed = colorManager.createEmbed()
                                 .setTitle('**❌ حدث خطأ**')
-                                .setDescription('**حدث خطأ أثناء إرسال التنبيهات**')
+                                .setDescription('**حدث خطأ أثناء إرسال التنبيهات**\n\n**السبب:** ' + (notifyError.message || 'خطأ غير معروف'))
                                 .setFooter({ text: 'By Ahmed.' });
                             
-                            await interaction.editReply({ embeds: [errorEmbed], components: [] });
+                            if (interaction.deferred) {
+                                await interaction.editReply({ embeds: [errorEmbed], components: [] });
+                            } else if (!interaction.replied) {
+                                await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+                            }
                         } catch (editError) {
                             console.error('خطأ في إرسال رسالة الخطأ:', editError);
+                            await message.channel.send({ 
+                                content: '**❌ حدث خطأ أثناء معالجة التنبيهات**' 
+                            }).catch(() => {});
                         }
+                    } finally {
+                        isNotifyInProgress = false;
+                        console.log('🔓 تم إعادة تعيين isNotifyInProgress = false');
                     }
                 }
             } catch (error) {

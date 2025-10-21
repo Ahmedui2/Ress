@@ -91,7 +91,7 @@ async function execute(message, args, { responsibilities, BOT_OWNERS, client, sa
         .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400722238927536208/images__11_-removebg-preview.png?ex=688dabbd&is=688c5a3d&hm=d3d2f91cf09599fa234e240d7b838e689663b2c0353c3791bdb181c3bffaeff4&')
         .addFields([
             { name: '**Owners : **', value: `**__${owners}__**`, inline: true },
-            { name: '** Prefix :**', value: `**${currentPrefix === '' ? 'بدون بريفكس' : currentPrefix}**`, inline: true },
+            { name: '**Prefix :**', value: `**${currentPrefix === '' ? 'بدون بريفكس' : currentPrefix}**`, inline: true },
             { name: '**Res count :**', value: `**${responsibilityCount}**`, inline: true },
             { name: '**Resb count **', value: `__**${totalResponsibles}**__`, inline: true }
         ])
@@ -453,7 +453,7 @@ async function execute(message, args, { responsibilities, BOT_OWNERS, client, sa
                                     console.log('✅ تم قطع الاتصال مع Discord');
 
                                     // إعادة تسجيل الدخول
-                                    await client.login(process.env.DISCORD_TOKEN);
+                                    await client.login(process.env.DISCORD_BOT_TOKEN);
                                     console.log('✅ تم إعادة الاتصال مع Discord بنجاح');
                                 } catch (error) {
                                     console.error('❌ فشل في إعادة تشغيل البوت:', error);

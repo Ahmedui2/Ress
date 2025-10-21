@@ -497,4 +497,26 @@ async function execute(message, args, { saveData, BOT_OWNERS, client }) {
   });
 }
 
-module.exports = { name, execute };
+// معالج التفاعلات
+async function handleInteraction(interaction, context) {
+  const { client, BOT_OWNERS } = context;
+  
+  // التحقق من الصلاحيات
+  if (global.reloadBotOwners) {
+    global.reloadBotOwners();
+  }
+  
+  if (!BOT_OWNERS.includes(interaction.user.id)) {
+    console.log(`❌ المستخدم ${interaction.user.id} ليس مالك`);
+    return interaction.reply({ 
+      content: '❌ ليس لديك صلاحية لاستخدام هذا الأمر', 
+      flags: 64 
+    }).catch(() => {});
+  }
+  
+  // تمرير التفاعل للمعالج الرئيسي
+  // يمكن إضافة منطق إضافي هنا حسب الحاجة
+  console.log(`✅ معالجة تفاعل adminroles: ${interaction.customId}`);
+}
+
+module.exports = { name, execute, handleInteraction };
