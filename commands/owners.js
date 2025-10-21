@@ -215,6 +215,8 @@ async function execute(message, args, { client, scheduleSave, BOT_OWNERS }) {
                                 throw new Error('فشل في حفظ ملف الإعدادات');
                             }
 
+                            scheduleSave();
+
                             // Log the event
                             logEvent(client, message.guild, {
                                 type: 'ADMIN_ACTIONS',
@@ -354,6 +356,8 @@ async function execute(message, args, { client, scheduleSave, BOT_OWNERS }) {
                                 throw new Error('فشل في حفظ ملف الإعدادات');
                             }
 
+                            scheduleSave();
+
                             // Log the event
                             logEvent(client, message.guild, {
                                 type: 'ADMIN_ACTIONS',
@@ -397,6 +401,8 @@ async function execute(message, args, { client, scheduleSave, BOT_OWNERS }) {
                                 BOT_OWNERS.splice(num - 1, 0, removedId);
                                 throw new Error('فشل في حفظ ملف الإعدادات');
                             }
+
+                            scheduleSave();
 
                             const successEmbed = new EmbedBuilder()
                                 .setDescription('**Complete delete**')

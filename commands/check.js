@@ -174,27 +174,27 @@ async function getColorIndicator(userId, client, dbManager) {
         const top1DailyCount = dailyTop1Count[0]?.count || 0;
 
         // نظام شامل: أخضر إذا كان في توب 5 في أي من الفئات أو حصل على توب 1 يومي 3 مرات أسبوعياً
-        if (monthlyRank > 0 && monthlyRank <= 5) return '🟢';
-        if (monthlyChatRank > 0 && monthlyChatRank <= 5) return '🟢';
-        if (monthlyVoiceRank > 0 && monthlyVoiceRank <= 5) return '🟢';
-        if (weeklyRank > 0 && weeklyRank <= 5) return '🟢';
-        if (weeklyChatRank > 0 && weeklyChatRank <= 5) return '🟢';
-        if (weeklyVoiceRank > 0 && weeklyVoiceRank <= 5) return '🟢';
-        if (top1DailyCount >= 3) return '🟢'; // 3 مرات توب 1 يومي = أخضر
+        if (monthlyRank > 0 && monthlyRank <= 5) return '<:emoji_11:1429246636936138823>';
+        if (monthlyChatRank > 0 && monthlyChatRank <= 5) return '<:emoji_11:1429246636936138823>';
+        if (monthlyVoiceRank > 0 && monthlyVoiceRank <= 5) return '<:emoji_11:1429246636936138823>';
+        if (weeklyRank > 0 && weeklyRank <= 5) return '<:emoji_11:1429246636936138823>';
+        if (weeklyChatRank > 0 && weeklyChatRank <= 5) return '<:emoji_11:1429246636936138823>';
+        if (weeklyVoiceRank > 0 && weeklyVoiceRank <= 5) return '<:emoji_11:1429246636936138823>';
+        if (top1DailyCount >= 3) return '<:emoji_11:1429246636936138823>'; // 3 مرات توب 1 يومي = أخضر
         
         // أصفر إذا كان في 6-10 في أي من الفئات أو حصل على توب 1 يومي مرتين
-        if (monthlyRank > 5 && monthlyRank <= 10) return '🟡';
-        if (monthlyChatRank > 5 && monthlyChatRank <= 10) return '🟡';
-        if (monthlyVoiceRank > 5 && monthlyVoiceRank <= 10) return '🟡';
-        if (weeklyRank > 5 && weeklyRank <= 10) return '🟡';
-        if (weeklyChatRank > 5 && weeklyChatRank <= 10) return '🟡';
-        if (weeklyVoiceRank > 5 && weeklyVoiceRank <= 10) return '🟡';
-        if (top1DailyCount === 2) return '🟡'; // مرتين توب 1 يومي = أصفر
+        if (monthlyRank > 5 && monthlyRank <= 10) return '<:emoji_10:1429246610784653412>';
+        if (monthlyChatRank > 5 && monthlyChatRank <= 10) return '<:emoji_10:1429246610784653412>';
+        if (monthlyVoiceRank > 5 && monthlyVoiceRank <= 10) return '<:emoji_10:1429246610784653412>';
+        if (weeklyRank > 5 && weeklyRank <= 10) return '<:emoji_10:1429246610784653412>';
+        if (weeklyChatRank > 5 && weeklyChatRank <= 10) return '<:emoji_10:1429246610784653412>';
+        if (weeklyVoiceRank > 5 && weeklyVoiceRank <= 10) return '<:emoji_10:1429246610784653412>';
+        if (top1DailyCount === 2) return '<:emoji_10:1429246610784653412>'; // مرتين توب 1 يومي = أصفر
 
-        return '🔴';
+        return '<:emoji_9:1429246586289918063>';
     } catch (error) {
         console.error('خطأ في حساب مؤشر اللون:', error);
-        return '🔴';
+        return '<:emoji_9:1429246586289918063>';
     }
 }
 
@@ -361,33 +361,33 @@ async function showRoleActivityStats(message, role, client) {
 
                     warningText = modalSubmit.fields.getTextInputValue('warning_text');
 
-                    const greenUsers = userStats.filter(stat => stat.color === '🟢');
-                    const yellowUsers = userStats.filter(stat => stat.color === '🟡');
-                    const redUsers = userStats.filter(stat => stat.color === '🔴');
+                    const greenUsers = userStats.filter(stat => stat.color === '<:emoji_11:1429246636936138823>');
+                    const yellowUsers = userStats.filter(stat => stat.color === '<:emoji_10:1429246610784653412>');
+                    const redUsers = userStats.filter(stat => stat.color === '<:emoji_9:1429246586289918063>');
 
                     const colorOptions = [];
                     if (greenUsers.length > 0) {
                         colorOptions.push({
                             label: 'أخضر (توب 5)',
                             value: 'green',
-                            emoji: '🟢',
-                            description: `عدد الأعضاء: ${greenUsers.length}`
+                            emoji: '<:emoji_11:1429246636936138823>',
+                            description: `عدد الأعضاء : ${greenUsers.length}`
                         });
                     }
                     if (yellowUsers.length > 0) {
                         colorOptions.push({
                             label: 'أصفر (توب 6-10)',
                             value: 'yellow',
-                            emoji: '🟡',
-                            description: `عدد الأعضاء: ${yellowUsers.length}`
+                            emoji: '<:emoji_10:1429246610784653412>',
+                            description: `عدد الأعضاء : ${yellowUsers.length}`
                         });
                     }
                     if (redUsers.length > 0) {
                         colorOptions.push({
                             label: 'أحمر (باقي الأعضاء)',
                             value: 'red',
-                            emoji: '🔴',
-                            description: `عدد الأعضاء: ${redUsers.length}`
+                            emoji: '<:emoji_9:1429246586289918063>',
+                            description: `عدد الأعضاء : ${redUsers.length}`
                         });
                     }
 
@@ -410,7 +410,7 @@ async function showRoleActivityStats(message, role, client) {
                     const selectRow = new ActionRowBuilder().addComponents(selectMenu);
 
                     await modalSubmit.reply({ 
-                        content: '**اختر اللون للأعضاء الذين تريد تنبيههم:**', 
+                        content: '**ا ختر اللون للأعضاء الذين تريد تنبيههم:**', 
                         components: [selectRow], 
                         ephemeral: true
                     });
@@ -441,7 +441,7 @@ async function showRoleActivityStats(message, role, client) {
 
                         const progressEmbed = colorManager.createEmbed()
                             .setTitle('**جاري إرسال التنبيه للأعضاء...**')
-                            .setDescription(`**✅ تم الإرسال:** 0\n**❌ فشل:** 0`)
+                            .setDescription(`**✅  Done to :** 0\n**❌ Failed to:** 0`)
                             .setFooter({ text: 'By Ahmed.' })
                             .setTimestamp();
 
@@ -462,7 +462,7 @@ async function showRoleActivityStats(message, role, client) {
                                 const warningEmbed = colorManager.createEmbed()
                                     .setTitle('Alert')
                                     .setDescription(`**تم تنبيهك بواسطة :** ${sender}\n**بتاريخ :** ${date}\n\n**التنبيه :**\n${warningText}`)
-                                    .setColor('#FF0000')
+                                
                                     .setTimestamp();
 
                                 await user.send({ embeds: [warningEmbed] });
@@ -480,7 +480,7 @@ async function showRoleActivityStats(message, role, client) {
                             if (processedCount % 3 === 0 || processedCount === selectedUserIds.length) {
                                 const updateEmbed = colorManager.createEmbed()
                                     .setTitle('**جاري إرسال التنبيه للأعضاء...**')
-                                    .setDescription(`**✅ تم الإرسال:** ${successCount}\n**❌ فشل:** ${failCount}`)
+                                    .setDescription(`**✅ Done Send :** ${successCount}\n**❌ Failed :** ${failCount}`)
                                     .setFooter({ text: 'By Ahmed.' })
                                     .setTimestamp();
 
@@ -489,14 +489,14 @@ async function showRoleActivityStats(message, role, client) {
                         }
 
                         const colorNames = selectedColors.map(c => {
-                            if (c === 'green') return '🟢 أخضر';
-                            if (c === 'yellow') return '🟡 أصفر';
-                            if (c === 'red') return '🔴 أحمر';
+                            if (c === 'green') return 'Green <:emoji_11:1429246636936138823>';
+                            if (c === 'yellow') return 'Yellow <:emoji_10:1429246610784653412>';
+                            if (c === 'red') return 'Red <:emoji_9:1429246586289918063>';
                         }).join(', ');
 
                         const finalEmbed = colorManager.createEmbed()
-                            .setTitle('**✅ تم الانتهاء من الإرسال**')
-                            .setDescription(`**✅ تم الإرسال:** ${successCount}\n**❌ فشل:** ${failCount}\n**الألوان:** ${colorNames}`)
+                            .setTitle('** Done sended ✅️**')
+                            .setDescription(`**✅  Done to :** ${successCount}\n**❌ Failed :** ${failCount}\n**Colors :** ${colorNames}`)
                             .setFooter({ text: 'By Ahmed.' })
                             .setTimestamp();
 

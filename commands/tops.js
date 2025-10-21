@@ -291,10 +291,10 @@ async function execute(message, args, { client }) {
         .setCustomId('tops_category_select')
         .setPlaceholder('اختر القسم...')
         .addOptions([
-            { label: 'Voice', value: 'voice', description: 'توب الفويس' },
-            { label: 'Chat', value: 'chat', description: 'توب الشات' },
-            { label: 'Reactions', value: 'reactions', description: 'توب الرياكتات' },
-            { label: 'Joins', value: 'joins', description: 'توب الجوين فويس' }
+            { label: 'Voice', value: 'voice', description: 'توب الفويس', emoji: '<:emoji_15:1429266644466798592>' },
+            { label: 'Chat', value: 'chat', description: 'توب الشات', emoji: '<:emoji_17:1429266743309893682>' },
+            { label: 'Reactions', value: 'reactions', description: 'توب الرياكتات', emoji: '<:emoji_19:1429266802239602830>' },
+            { label: 'Joins', value: 'joins', description: 'توب الجوين فويس', emoji: '<:emoji_16:1429266685214457856>' }
         ]);
 
     const selectRow = new ActionRowBuilder().addComponents(categorySelect);
@@ -331,12 +331,12 @@ async function execute(message, args, { client }) {
         const navigationRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId('tops_prev')
-                .setLabel('🔙')
+                .setEmoji('<:emoji_13:1429263136136888501>')
                 .setStyle(ButtonStyle.Secondary)
                 .setDisabled(currentPage === 0),
             new ButtonBuilder()
                 .setCustomId('tops_next')
-                .setLabel('🔜')
+                .setEmoji('<:emoji_14:1429263186539974708>')
                 .setStyle(ButtonStyle.Secondary)
                 .setDisabled(currentPage >= totalPages - 1)
         );

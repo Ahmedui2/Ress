@@ -301,7 +301,7 @@ module.exports = {
 
             // إرسال الطلب إلى قناة التقديم أولاً
             try {
-                await applicationChannel.send({
+                const sentMessage = await applicationChannel.send({
                     embeds: [simpleEmbed],
                     components: [row1, row2]
                 });
@@ -317,12 +317,18 @@ module.exports = {
                 };
 
                 if (saveAdminApplicationSettings(settings)) {
+                    // إرسال رسالة نجاح للمستخدم
+                    
+                    
+
                     // إضافة ريأكشن للرسالة الأصلية
                     if (interaction.message) {
-                        await interaction.message.react('✅');
+                        try {
+                            await interaction.message.react('✅');
+                        } catch (reactError) {
+                            console.log('⚠️ فشل إضافة رد الفعل (الرسالة قد تكون محذوفة):', reactError.message);
+                        }
                     }
-
-                   
             
                     console.log(`📋 تم إنشاء طلب تقديم إداري: ${candidateId} بواسطة ${interaction.user.id}`);
                 } else {
@@ -334,9 +340,15 @@ module.exports = {
             } catch (channelError) {
                 console.error('خطأ في إرسال الطلب للقناة:', channelError);
 
-                await interaction.editReply({
-                    content: '**❌ فشل في إرسال الطلب إلى رزظ التقديم. تحقق من صلاحيات البوت في لروم.**'
-                });
+                
+                if (interaction.message) {
+                        try {
+                            await interaction.message.react('❌️');
+                        } catch (reactError) {
+                            console.log('⚠️ فشل إضافة رد الفعل (الرسالة قد تكون محذوفة):', reactError.message);
+                        }
+                }
+                return; // إيقاف العملية هنا
             }
 
         } catch (error) {
@@ -442,7 +454,7 @@ async function handleAdminApplicationInteraction(interaction) {
             if (!application) {
                 await interaction.reply({
                     content: '**❌ لم يتم العثور على طلب التقديم أو تم معالجته مسبقاً.**',
-                    flags: 64
+                    ephemeral: true
                 });
                 return true;
             }
@@ -450,8 +462,8 @@ async function handleAdminApplicationInteraction(interaction) {
             // التحقق من صلاحية المعتمد لعرض التفاصيل
             if (!canApproveApplication(interaction.member, settings)) {
                 await interaction.reply({
-                    content: '❌ ** لا تسوي خوي **.',
-                    flags: 64
+                    content: '❌ **مب مسؤول؟ والله ماوريك.**',
+                    ephemeral: true
                 });
                 return true;
             }
@@ -642,6 +654,7 @@ async function handleAdminApplicationInteraction(interaction) {
             if (!application) {
                 console.log(`❌ لم يتم العثور على الطلب: ${applicationId}`);
                 console.log('📋 الطلبات المتاحة:', Object.keys(settings.pendingApplications));
+                
                 await interaction.reply({
                     content: '**❌ لم يتم العثور على طلب التقديم أو تم معالجته مسبقاً.**',
                     ephemeral: true
@@ -660,6 +673,7 @@ async function handleAdminApplicationInteraction(interaction) {
                 }
             } catch (fetchError) {
                 console.error('❌ خطأ في جلب المرشح:', fetchError);
+                
                 await interaction.reply({
                     content: '**❌ لم يتم العثور على المرشح في السيرفر. ربما غادر المرشح السيرفر.**',
                     ephemeral: true
@@ -745,7 +759,7 @@ async function handleAdminApplicationInteraction(interaction) {
             // تحديث الرسالة بالنتيجة النهائية
             const approvedEmbed = colorManager.createEmbed()
                 .setTitle('✅ Accepted')
-                .setDescription(`**قبلة مسؤول الإدارة :** ${interaction.member.displayName}\n\n ** الاداري الجديد ** :  ${candidate.displayName}\n\n**الرول الذي عُطي :** ${addedRoles.length > 0 ? addedRoles.map(r => r.name).join('** , **') : 'لا يوجد'}\n\n**تاريخ الموافقة :** ${new Date().toLocaleDateString('en-US')}**`)
+                .setDescription(`**قبلة مسؤول الإدارة :** ${interaction.member.displayName}\n\n ** الاداري الجديد ** :  ${candidate.displayName}\n\n**الرول الذي عُطي :** ${addedRoles.length > 0 ? addedRoles.map(r => r.name).join('** , **') : 'لا يوجد'}\n\n**تاريخ الموافقة :** **${new Date().toLocaleDateString('en-US')}**`)
                 .setTimestamp();
 
             if (failedRoles.length > 0) {
@@ -852,8 +866,7 @@ async function handleAdminApplicationInteraction(interaction) {
         // التحقق من صلاحية المعتمد
         if (!canApproveApplication(interaction.member, settings)) {
             await interaction.reply({
-                content: '❌ ** لا تسوي خوي **.',
-                ephemeral: true
+                content: '❌ ** وضعك خلني اضغط ومحد شايف ها ؟  ** ' ,        ephemeral: true
             });
             return true;
         }
@@ -885,7 +898,7 @@ async function handleAdminApplicationInteraction(interaction) {
 
             if (adminRoles.length === 0) {
                 await interaction.reply({
-                    content: '**❌ لا توجد رولات إدارية محددة في النظام. استخدم أمر adminroles لتحديدها.**',
+                    content: '**❌ لا توجد رولات إدارية **',
                     ephemeral: true
                 });
                 return true;

@@ -156,8 +156,8 @@ async function showUserActivity(message, user, client) {
             .setThumbnail(user.displayAvatarURL({ dynamic: true }))
             .setDescription(`** User :** ${user}`)
             .addFields([
-                { name: '**🔊 Last voice room **', value: lastVoiceInfo, inline: false },
-                { name: '**💬 Last Text Room**', value: lastMessageInfo, inline: false }
+                { name: '**<:emoji_7:1429246526949036212> Last voice room **', value: lastVoiceInfo, inline: false },
+                { name: '**<:emoji_8:1429246555726020699> Last Text Room**', value: lastMessageInfo, inline: false }
             ])
             .setFooter({ text: `By Ahmed.`, iconURL: message.guild.iconURL({ dynamic: true }) })
             .setTimestamp();
@@ -211,7 +211,7 @@ async function showRoleActivity(message, role, client) {
 
             const embed = colorManager.createEmbed()
                 .setTitle(`**Rooms : ${role.name}**`)
-                .setDescription(`**إجمالي الأعضاء:** ${memberActivities.length}\n━━━━━━━━━━━━━━━━━━━━━━━━`)
+                .setDescription(`** All members :** ${memberActivities.length}`)
                 .setFooter({ text: `By Ahmed. | صفحة ${page + 1} من ${totalPages}`, iconURL: message.guild.iconURL({ dynamic: true }) })
                 .setTimestamp();
 
@@ -238,8 +238,8 @@ async function showRoleActivity(message, role, client) {
                 
                 embed.addFields([{
                     name: `**#${globalRank} - ${member.displayName}**`,
-                    value: `> **🔊 Last Voice :** ${lastVoiceInfo}\n` +
-                           `> **💬 Last Text :** ${lastMessageInfo}`,
+                    value: `> **<:emoji_7:1429246526949036212> Last Voice :** ${lastVoiceInfo}\n` +
+                           `> **<:emoji_8:1429246555726020699> Last Text :** ${lastMessageInfo}`,
                     inline: false
                 }]);
             });
@@ -332,7 +332,7 @@ async function showRoleActivity(message, role, client) {
                         // إرسال الرسالة الأولية
                         const initialEmbed = colorManager.createEmbed()
                             .setTitle('**جاري إرسال التنبيه للأعضاء...**')
-                            .setDescription(`**✅ تم الإرسال:** 0\n**❌ فشل:** 0\n**⏭️ في الرومات:** 0`)
+                            .setDescription(`**✅ تم الإرسال :** 0\n**❌ فشل :** 0\n**⏭️ في الرومات :** 0`)
                             .setFooter({ text: 'By Ahmed.' })
                             .setTimestamp();
 
@@ -355,7 +355,7 @@ async function showRoleActivity(message, role, client) {
                                     try {
                                         const dmEmbed = colorManager.createEmbed()
                                             .setTitle('**تنبيه من إدارة السيرفر**')
-                                            .setDescription(`**🔔 الرجاء التفاعل في الرومات**\n\n**السيرفر :** ${message.guild.name}\n**الرول :** ___${role.name}___`)
+                                            .setDescription(`**🔔 الرجاء التفاعل في الرومات**\n\n**السيرفر :** ${message.guild.name}\n**الرول :** **${role.name}**`)
                                             .setThumbnail(message.guild.iconURL({ dynamic: true }))
                                             .setFooter({ text: 'By Ahmed.' })
                                             .setTimestamp();
@@ -378,7 +378,7 @@ async function showRoleActivity(message, role, client) {
                                 if (processedCount % 3 === 0 || processedCount === memberActivities.length) {
                                     const updateEmbed = colorManager.createEmbed()
                                         .setTitle('**جاري إرسال التنبيه للأعضاء...**')
-                                        .setDescription(`**✅ تم الإرسال:** ${successCount}\n**❌ فشل:** ${failCount}\n**⏭️ في الرومات:** ${skippedCount}\n\n**تم معالجة:** ${processedCount}/${memberActivities.length}`)
+                                        .setDescription(`**✅ Done :** ${successCount}\n**❌ Failed :** ${failCount}\n**⏭️ In rooms :** ${skippedCount}\n\n**Done it :** ${processedCount}/${memberActivities.length}`)
                                         .setFooter({ text: 'By Ahmed.' })
                                         .setTimestamp();
 
@@ -398,7 +398,7 @@ async function showRoleActivity(message, role, client) {
                     // الرسالة النهائية
                         const finalEmbed = colorManager.createEmbed()
                             .setTitle('**✅ تم الانتهاء من الإرسال**')
-                            .setDescription(`**✅ تم الإرسال:** ${successCount}\n**❌ فشل:** ${failCount}\n**⏭️ في الرومات:** ${skippedCount}\n\n**إجمالي الأعضاء:** ${memberActivities.length}`)
+                            .setDescription(`**✅ All done :** ${successCount}\n**❌ Failed:** ${failCount}\n** In rooms :** ${skippedCount}\n\n**All :** ${memberActivities.length}`)
                             .setFooter({ text: 'By Ahmed.' })
                             .setTimestamp();
 

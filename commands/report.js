@@ -161,7 +161,8 @@ async function handleInteraction(interaction, context) {
     const { client, scheduleSave, BOT_OWNERS, points } = context;
     const { customId, guildId } = interaction;
 
-    console.log(`[Report] معالجة تفاعل: ${customId} من المستخدم: ${interaction.user.id}`);
+    console.log(`[Report] 🔔 معالجة تفاعل: ${customId} من المستخدم: ${interaction.user.id}`);
+    console.log(`[Report] نوع التفاعل: ${interaction.isButton() ? 'Button' : interaction.isStringSelectMenu() ? 'SelectMenu' : interaction.isModalSubmit() ? 'Modal' : interaction.isChannelSelectMenu() ? 'ChannelSelect' : interaction.isRoleSelectMenu() ? 'RoleSelect' : 'Unknown'}`);
 
     try {
         // إعادة تحميل المسؤوليات من الملف مباشرة
@@ -474,10 +475,13 @@ async function handleInteraction(interaction, context) {
 
         // Handle all other interactions
         try {
-            // تأخير التفاعل فقط للأزرار والقوائم التي لا تحتاج لفتح Modal
-            const needsModal = customId === 'report_template_apply_all_btn' || customId === 'report_template_edit_select';
+            // قائمة الأزرار التي تحتاج Modal (لا يجب تأخيرها)
+            const needsModal = customId === 'report_template_apply_all_btn' || 
+                              customId === 'report_template_edit_select' ||
+                              customId === 'report_template_select_resp';
 
-            if ((interaction.isButton() || interaction.isStringSelectMenu() || interaction.isChannelSelectMenu()) && 
+            // تأخير التفاعل فقط للأزرار والقوائم التي لا تحتاج لفتح Modal
+            if ((interaction.isButton() || interaction.isStringSelectMenu() || interaction.isChannelSelectMenu() || interaction.isRoleSelectMenu()) && 
                 !interaction.replied && !interaction.deferred && !needsModal) {
                 await interaction.deferUpdate();
             }
@@ -1085,23 +1089,39 @@ async function handleInteraction(interaction, context) {
             // Update the message
             try {
                 if (shouldShowMain) {
-                    await interaction.editReply({ 
-                        content: '', 
-                        embeds: [createMainEmbed(client, guildId)], 
-                        components: [createMainButtons(guildId)] 
-                    });
+                    if (interaction.deferred) {
+                        await interaction.editReply({ 
+                            content: '', 
+                            embeds: [createMainEmbed(client, guildId)], 
+                            components: [createMainButtons(guildId)] 
+                        });
+                    } else {
+                        await interaction.update({ 
+                            content: '', 
+                            embeds: [createMainEmbed(client, guildId)], 
+                            components: [createMainButtons(guildId)] 
+                        });
+                    }
                 } else if (newComponents) {
-                    await interaction.editReply({ 
-                        content: responseContent, 
-                        embeds: [], 
-                        components: newComponents 
-                    });
+                    if (interaction.deferred) {
+                        await interaction.editReply({ 
+                            content: responseContent, 
+                            embeds: [], 
+                            components: newComponents 
+                        });
+                    } else {
+                        await interaction.update({ 
+                            content: responseContent, 
+                            embeds: [], 
+                            components: newComponents 
+                        });
+                    }
                 }
             } catch (editError) {
                 console.error('خطأ في تحديث الرسالة:', editError);
 
                 // محاولة إرسال رد جديد إذا فشل التحديث
-                if (!interaction.replied) {
+                if (!interaction.replied && !interaction.deferred) {
                     await interaction.reply({
                         content: responseContent || '✅ تم تنفيذ الإجراء بنجاح',
                         ephemeral: true
@@ -1320,18 +1340,34 @@ async function handleInteraction(interaction, context) {
             // Return to main menu if needed
             if (responseContent && !responseContent.startsWith('✅')) {
                 // If it's not a success message, show the main menu
-                await interaction.editReply({ 
-                    content: responseContent, 
-                    embeds: [createMainEmbed(client, guildId)], 
-                    components: [createMainButtons(guildId)] 
-                });
+                if (interaction.deferred) {
+                    await interaction.editReply({ 
+                        content: responseContent, 
+                        embeds: [createMainEmbed(client, guildId)], 
+                        components: [createMainButtons(guildId)] 
+                    });
+                } else {
+                    await interaction.update({ 
+                        content: responseContent, 
+                        embeds: [createMainEmbed(client, guildId)], 
+                        components: [createMainButtons(guildId)] 
+                    });
+                }
             } else if (responseContent) {
                 // If it's a success message, just show the confirmation
-                 await interaction.editReply({ 
-                    content: responseContent, 
-                    embeds: [], 
-                    components: [] 
-                });
+                if (interaction.deferred) {
+                    await interaction.editReply({ 
+                        content: responseContent, 
+                        embeds: [], 
+                        components: [] 
+                    });
+                } else {
+                    await interaction.update({ 
+                        content: responseContent, 
+                        embeds: [], 
+                        components: [] 
+                    });
+                }
             }
 
 
