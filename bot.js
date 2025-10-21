@@ -163,13 +163,26 @@ if (!client.voiceSessions) {
   client.voiceSessions = new Map();
 }
 
-// إعداد قائمة مالكي البوت من ملف botConfig فقط
+// إعداد قائمة مالكي البوت من ملف botConfig مع fallback لـ env
 let BOT_OWNERS = [];
 if (botConfig.owners && Array.isArray(botConfig.owners) && botConfig.owners.length > 0) {
     BOT_OWNERS = [...botConfig.owners]; // استنساخ المصفوفة
     console.log('✅ تم تحميل المالكين من ملف botConfig.json:', BOT_OWNERS);
 } else {
-    console.log('⚠️ لم يتم العثور على مالكين محددين');
+    // محاولة القراءة من متغيرات البيئة كـ fallback
+    const envOwner = process.env.BOT_OWNERS;
+    if (envOwner) {
+        BOT_OWNERS = [envOwner];
+        console.log('✅ تم تحميل المالك من متغيرات البيئة:', BOT_OWNERS);
+        
+        // حفظه في botConfig للمرات القادمة
+        botConfig.owners = BOT_OWNERS;
+        writeJSONFile(DATA_FILES.botConfig, botConfig);
+        console.log('💾 تم حفظ المالك في botConfig.json');
+    } else {
+        console.log('⚠️ لم يتم العثور على مالكين محددين');
+        console.log('💡 نصيحة: أضف OWNER_ID في Secrets أو استخدم أمر owners بعد تعيين أول مالك');
+    }
 }
 
 // دالة لإعادة تحميل BOT_OWNERS من الملف
@@ -321,6 +334,24 @@ function saveData(force = false) {
     }
 
     try {
+        // إعادة قراءة botConfig من الملف قبل الحفظ للحفاظ على أحدث التغييرات
+        // (خاصة للـ owners الذين يتم تحديثهم من أوامر أخرى)
+        const currentBotConfig = readJSONFile(DATA_FILES.botConfig, {
+            owners: [],
+            prefix: null,
+            settings: {},
+            activeTasks: {},
+            pendingReports: {}
+        });
+        
+        // دمج التغييرات المحلية مع الملف المحفوظ
+        botConfig = {
+            ...currentBotConfig,
+            prefix: botConfig.prefix !== undefined ? botConfig.prefix : currentBotConfig.prefix,
+            settings: botConfig.settings || currentBotConfig.settings,
+            activeTasks: botConfig.activeTasks || currentBotConfig.activeTasks
+        };
+
         // حفظ التقارير المعلقة إذا كان العميل متاحاً
         if (client && client.pendingReports) {
             try {
@@ -333,7 +364,8 @@ function saveData(force = false) {
                 console.error('❌ خطأ في تجهيز التقارير المعلقة للحفظ:', error);
             }
         }
-        // حفظ مباشر بدون قراءة ودمج معقد
+        
+        // حفظ مباشر
         writeJSONFile(DATA_FILES.points, points);
         writeJSONFile(DATA_FILES.responsibilities, responsibilities);
         writeJSONFile(DATA_FILES.logConfig, client.logConfig || logConfig);
@@ -2444,13 +2476,21 @@ client.on('interactionCreate', async (interaction) => {
         if (adminrolesCommand && adminrolesCommand.handleInteraction) {
           await adminrolesCommand.handleInteraction(interaction, context);
         } else {
-          // Handle directly in main bot file as fallback
-          await handleAdminRolesInteraction(interaction, context);
+          console.log('⚠️ لم يتم العثور على معالج adminroles');
+          if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({ 
+              content: '❌ معالج adminroles غير متوفر حالياً', 
+              flags: MessageFlags.Ephemeral 
+            });
+          }
         }
       } catch (error) {
         console.error('Error in adminroles interaction:', error);
         if (!interaction.replied && !interaction.deferred) {
-          await interaction.reply({ content: '❌ حدث خطأ أثناء معالجة التفاعل!', flags: MessageFlags.Ephemeral });
+          await interaction.reply({ 
+            content: '❌ حدث خطأ أثناء معالجة التفاعل!', 
+            flags: MessageFlags.Ephemeral 
+          }).catch(() => {});
         }
       }
       return;
@@ -2581,19 +2621,6 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // معالج report تم نقله إلى ملف report.js كمعالج مستقل
-
-    // Handle adminroles interactions (including refresh buttons)
-    if (interaction.customId && interaction.customId.startsWith('adminroles_')) {
-      console.log(`معالجة تفاعل adminroles: ${interaction.customId}`);
-      const adminRolesCommand = client.commands.get('adminroles');
-      if (adminRolesCommand && adminRolesCommand.handleInteraction) {
-        await adminRolesCommand.handleInteraction(interaction, context);
-      } else {
-        // Fallback handler if the command doesn't exist or doesn't have handleInteraction
-        await handleAdminRolesInteraction(interaction, context);
-      }
-      return;
-    }
 
     // Handle masoul interactions - تمرير جميع التفاعلات المتعلقة بـ masoul إلى معالج مستقل
     if (
@@ -4176,16 +4203,5 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('❌ فشل في حفظ البيانات:', saveError);
   }
 });
-
-// Need to define handleAdminRolesInteraction if it's used as a fallback
-async function handleAdminRolesInteraction(interaction, context) {
-  console.log(`Fallback handler for adminroles interaction: ${interaction.customId}`);
-  // Implement basic logic or reply with a message indicating fallback
-  await interaction.reply({
-    content: 'Fallback handler for adminroles. The command might not be loaded correctly.',
-    flags: MessageFlags.Ephemeral
-  });
-}
-
 
 client.login(process.env.DISCORD_BOT_TOKEN);
