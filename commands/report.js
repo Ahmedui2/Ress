@@ -87,7 +87,7 @@ function createMainEmbed(client, guildId) {
         .addFields(
             { name: 'حالة النظام', value: status, inline: true },
             { name: 'حالة النقاط', value: `*${pointsStatus}*`, inline: true },
-            { name: 'قناة التقارير', value: channelStatus, inline: true },
+            { name: 'روم التقارير', value: channelStatus, inline: true },
             { name: 'المعتمدون', value: approverStatus, inline: false }
         );
 }
@@ -259,28 +259,254 @@ async function handleInteraction(interaction, context) {
                 return;
             }
 
-            // Handle report writing modal
-            if (customId.startsWith('report_submit_')) {
+            // Handle clarification question modal
+            if (customId.startsWith('report_clarification_question_')) {
                 await interaction.deferReply({ ephemeral: true });
-                const reportId = customId.replace('report_submit_', '');
+                const reportId = customId.replace('report_clarification_question_', '');
                 const reportData = client.pendingReports?.get(reportId);
 
                 if (!reportData) {
                     return await interaction.editReply({ 
-                        content: 'لم يتم العثور على هذا التقرير أو انتهت صلاحيته.' 
+                        content: '❌ لم يتم العثور على هذا التقرير.' 
+                    });
+                }
+
+                const clarificationQuestion = interaction.fields.getTextInputValue('clarification_question');
+
+                // Save clarification data
+                if (!reportData.clarifications) {
+                    reportData.clarifications = [];
+                }
+
+                reportData.clarifications.push({
+                    question: clarificationQuestion,
+                    askedBy: interaction.user.id,
+                    askedAt: Date.now(),
+                    answer: null,
+                    answeredAt: null
+                });
+
+                // تعطيل زر طلب التوضيح
+                reportData.hasActiveClarificationButton = false;
+
+                client.pendingReports.set(reportId, reportData);
+                scheduleSave();
+
+                // Send DM to the reporter
+                try {
+                    const reporter = await client.users.fetch(reportData.claimerId);
+                    const clarificationEmbed = new EmbedBuilder()
+                        .setTitle('Clarification Request')
+                        .setDescription(`تم طلب توضيح على تقريرك للمسؤولية : **${reportData.responsibilityName}**`)
+                        .setColor('#ffffff')
+                        .addFields([
+                            { name: '<:emoji_31:1430330925304250591> السؤال', value: clarificationQuestion, inline: false },
+                            { name: '<:emoji_32:1430330951342358692> من قِبل', value: `<@${interaction.user.id}>`, inline: true },
+                            { name: '<:emoji_37:1430331094569455746> تقريرك الأصلي', value: reportData.reportText ? (reportData.reportText.length > 500 ? reportData.reportText.substring(0, 497) + '...' : reportData.reportText) : 'غير متوفر', inline: false }
+                        ])
+                        .setFooter({ text: `سيتم اعلامك بحالة الموافقه بعد  قليل` })
+                        .setTimestamp();
+
+                    const answerButton = new ButtonBuilder()
+                        .setCustomId(`report_answer_clarification_${reportId}`)
+                        .setLabel('إضافة توضيح')
+                        .setStyle(ButtonStyle.Primary)
+                        .setEmoji('<:emoji_35:1430331052773081181>');
+
+                    await reporter.send({ 
+                        embeds: [clarificationEmbed], 
+                        components: [new ActionRowBuilder().addComponents(answerButton)] 
+                    });
+
+                    await interaction.editReply({ 
+                        content: '✅ Sended' 
+                    });
+
+                    // Update original report message with disabled button
+                    try {
+                        const originalEmbed = EmbedBuilder.from(interaction.message.embeds[0]);
+                        originalEmbed.addFields([
+                            { 
+                                name: '<:emoji_35:1430331052773081181> طلب توضيح', 
+                                value: `بواسطة <@${interaction.user.id}>\n${clarificationQuestion}`, 
+                                inline: false 
+                            }
+                        ]);
+
+                        // تحديث الأزرار مع تعطيل زر طلب التوضيح
+                        const approveButton = new ButtonBuilder()
+                            .setCustomId(`report_approve_${reportId}`)
+                            .setLabel('قبول التقرير')
+                            .setStyle(ButtonStyle.Success)
+                            .setEmoji('<:emoji_41:1430334120839479449>');
+
+                        const rejectButton = new ButtonBuilder()
+                            .setCustomId(`report_reject_${reportId}`)
+                            .setLabel('رفض التقرير')
+                            .setStyle(ButtonStyle.Danger)
+                            .setEmoji('<:emoji_39:1430334088924893275>');
+
+                        const askClarificationButton = new ButtonBuilder()
+                            .setCustomId(`report_ask_clarification_${reportId}_disabled`)
+                            .setLabel('تم طلب التوضيح')
+                            .setStyle(ButtonStyle.Secondary)
+                            .setEmoji('✔️')
+                            .setDisabled(true);
+
+                        await interaction.message.edit({ 
+                            embeds: [originalEmbed],
+                            components: [new ActionRowBuilder().addComponents(approveButton, rejectButton, askClarificationButton)]
+                        });
+                    } catch (err) {
+                        console.error('Failed to update report message:', err);
+                    }
+                } catch (error) {
+                    console.error('Failed to send clarification request:', error);
+                    await interaction.editReply({ 
+                        content: '❌ فشل في إرسال طلب التوضيح للمُبلّغ. تأكد من أن الرسائل الخاصة مفتوحة.' 
+                    });
+                }
+                return;
+            }
+
+            // Handle clarification answer modal
+            if (customId.startsWith('report_answer_clarification_modal_')) {
+                await interaction.deferReply({ ephemeral: true });
+                const reportId = customId.replace('report_answer_clarification_modal_', '');
+                const reportData = client.pendingReports?.get(reportId);
+
+                if (!reportData) {
+                    return await interaction.editReply({ 
+                        content: '❌ لم يتم العثور على هذا التقرير.' 
+                    });
+                }
+
+                const clarificationAnswer = interaction.fields.getTextInputValue('clarification_answer');
+
+                // Find the latest unanswered clarification
+                if (reportData.clarifications && reportData.clarifications.length > 0) {
+                    const latestClarification = reportData.clarifications[reportData.clarifications.length - 1];
+                    if (!latestClarification.answer) {
+                        latestClarification.answer = clarificationAnswer;
+                        latestClarification.answeredAt = Date.now();
+                        latestClarification.answeredBy = interaction.user.id;
+                        client.pendingReports.set(reportId, reportData);
+                        scheduleSave();
+
+                        // تحديث رسالة الطلب الأصلية بإيمبد النجاح وتعطيل الأزرار
+                        try {
+                            const originalMessage = await interaction.message.fetch();
+                            const successEmbed = new EmbedBuilder()
+                                .setDescription('✅ **Done sended**')
+                                .setColor('#00ff00')
+                                .setTimestamp();
+
+                            await originalMessage.edit({ 
+                                embeds: [successEmbed],
+                                components: []
+                            });
+                        } catch (err) {
+                            console.error('Failed to update original message:', err);
+                        }
+
+                        await interaction.editReply({ 
+                            content: '✅ ' 
+                        });
+
+                        // إرسال إشعار للمسؤول الذي طلب التوضيح
+                        try {
+                            const requester = await client.users.fetch(latestClarification.askedBy);
+                            const notificationEmbed = new EmbedBuilder()
+                                .setTitle('✅ Reply from Resp')
+                                .setDescription(`تم الرد على طلبك للتوضيح للمسؤولية : **${reportData.responsibilityName}**`)
+                                .setColor('#ffffff')
+                                .addFields([
+                                    { name: '<:emoji_31:1430330925304250591> سؤالك', value: latestClarification.question, inline: false },
+                                    { name: '<:emoji_35:1430331052773081181> الرد', value: clarificationAnswer, inline: false },
+                                    { name: '<:emoji_32:1430330978580041838> من قِبل', value: `<@${interaction.user.id}>`, inline: true }
+                                ])
+                                .setFooter({ text: `معرف التقرير : ${reportId}` })
+                                .setTimestamp();
+
+                            await requester.send({ embeds: [notificationEmbed] });
+                        } catch (err) {
+                            console.error('Failed to send notification to requester:', err);
+                        }
+
+                        // Update the report in the channel with the clarification
+                        try {
+                            const reportGuildId = reportData.guildId || guildId;
+                            const guildConfig = loadReportsConfig(reportGuildId);
+
+                            if (guildConfig.reportChannel && guildConfig.reportChannel !== '0') {
+                                const reportChannel = await client.channels.fetch(guildConfig.reportChannel);
+                                const messages = await reportChannel.messages.fetch({ limit: 50 });
+                                const reportMessage = messages.find(msg => 
+                                    msg.embeds.length > 0 && 
+                                    msg.embeds[0].footer && 
+                                    msg.embeds[0].footer.text && 
+                                    msg.embeds[0].footer.text.includes(reportId)
+                                );
+
+                                if (reportMessage) {
+                                    const updatedEmbed = EmbedBuilder.from(reportMessage.embeds[0]);
+                                    updatedEmbed.addFields([
+                                        { 
+                                            name: '<:emoji_21:1429266842345672746> التوضيح المضاف', 
+                                            value: clarificationAnswer, 
+                                            inline: false 
+                                        },
+                                        { 
+                                            name: '<:emoji_34:1430331032405544970> تاريخ التوضيح', 
+                                            value: `<t:${Math.floor(Date.now() / 1000)}:R>`, 
+                                            inline: true 
+                                        }
+                                    ]);
+
+                                    // الحفاظ على الأزرار الحالية بدون تغيير
+                                    await reportMessage.edit({ embeds: [updatedEmbed] });
+                                }
+                            }
+                        } catch (err) {
+                            console.error('Failed to update report with clarification:', err);
+                        }
+                    } else {
+                        await interaction.editReply({ 
+                            content: '❌ تم الرد على هذا الطلب مسبقاً.' 
+                        });
+                    }
+                } else {
+                    await interaction.editReply({ 
+                        content: '❌ لا يوجد طلب توضيح لهذا التقرير.' 
+                    });
+                }
+                return;
+            }
+
+            // Handle report writing modal
+            if (customId.startsWith('report_submit_')) {
+                const reportId = customId.replace('report_submit_', '');
+                const reportData = client.pendingReports?.get(reportId);
+
+                if (!reportData) {
+                    return await interaction.reply({ 
+                        content: '❌ **لم يتم العثور على هذا التقرير أو انتهت صلاحيته.**',
+                        ephemeral: true
                     });
                 }
 
                 // التحقق من أن التقرير لم يتم إرساله من قبل
                 if (reportData.submitted) {
-                    return await interaction.editReply({ 
-                        content: '❌ تم إرسال هذا التقرير مسبقاً!' 
+                    return await interaction.reply({ 
+                        content: '❌ **تم إرسال هذا التقرير مسبقاً!**',
+                        ephemeral: true
                     });
                 }
 
                 const reportText = interaction.fields.getTextInputValue('report_text');
 
-                // Update pending report with the text (but don't mark as submitted yet)
+                // Mark as submitted IMMEDIATELY to prevent double submission
+                reportData.submitted = true;
                 reportData.reportText = reportText;
                 reportData.submittedAt = Date.now();
                 client.pendingReports.set(reportId, reportData);
@@ -289,46 +515,111 @@ async function handleInteraction(interaction, context) {
                 const reportGuildId = reportData.guildId || interaction.guildId;
                 const guildConfig = loadReportsConfig(reportGuildId);
 
+                // Check if approval is required (نقل التعريف قبل الاستخدام)
+                const isApprovalRequired = guildConfig.approvalRequiredFor && 
+                                          Array.isArray(guildConfig.approvalRequiredFor) && 
+                                          guildConfig.approvalRequiredFor.includes(reportData.responsibilityName);
+
                 // Create report embed with link to original message
+                const currentTimestamp = Math.floor(Date.now() / 1000);
                 const reportEmbed = new EmbedBuilder()
-                    .setTitle('New report')
-                    .setDescription(`**المسؤولية :** ${reportData.responsibilityName}\n**من قِبل :** <@${reportData.claimerId}> (${reportData.displayName})\n**السبب:** ${reportData.reason}`)
+                    .setTitle('New Report')
+                    .setDescription(`**المسؤولية:** ${reportData.responsibilityName}`)
+                    .setColor('#ffffff')
+                    .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
                     .addFields([
-                        { name: ' التقرير', value: reportText, inline: false }
-                    ])
-                    .setColor(colorManager.getColor(client))
-                    .setTimestamp()
-                    .setFooter({ text: `Report ID : ${reportId}` });
+                        { 
+                            name: '<:emoji_32:1430330978580041838> المسؤول', 
+                            value: `<@${reportData.claimerId}>\n${reportData.displayName}`, 
+                            inline: true 
+                        },
+                        { 
+                            name: '<:emoji_34:1430331032405544970> التاريخ', 
+                            value: `<t:${currentTimestamp}:D>`, 
+                            inline: true 
+                        },
+                        { 
+                            name: '<:emoji_33:1430331008514916422> الوقت', 
+                            value: `<t:${currentTimestamp}:t>`, 
+                            inline: true 
+                        }
+                    ]);
+
+                // إضافة صاحب الطلب (الإداري) إذا كان موجوداً
+                if (reportData.requesterId) {
+                    reportEmbed.addFields([
+                        { 
+                            name: '<:emoji_32:1430330951342358692> الاداري الذي طلب', 
+                            value: `<@${reportData.requesterId}>`, 
+                            inline: true 
+                        }
+                    ]);
+                }
+
+                // إضافة السبب
+                reportEmbed.addFields([
+                    { 
+                        name: '<:emoji_35:1430331052773081181> السبب', 
+                        value: reportData.reason || 'لا يوجد', 
+                        inline: false 
+                    }
+                ]);
 
                 // إضافة رابط الرسالة الأصلية إذا كان متوفراً
                 if (reportData.originalMessageId && reportData.originalChannelId && reportData.originalMessageId !== 'unknown' && reportGuildId) {
                     const messageUrl = `https://discord.com/channels/${reportGuildId}/${reportData.originalChannelId}/${reportData.originalMessageId}`;
                     reportEmbed.addFields([
-                        { name: '🔗 الرسالة الأصلية', value: `[اضغط هنا](${messageUrl})`, inline: true }
+                        { 
+                            name: '<:emoji_30:1430329732951707770> المصدر', 
+                            value: `[Message](${messageUrl})`, 
+                            inline: false 
+                        }
                     ]);
                 }
 
-                // Check if approval is required
-                const isApprovalRequired = guildConfig.approvalRequiredFor && 
-                                          Array.isArray(guildConfig.approvalRequiredFor) && 
-                                          guildConfig.approvalRequiredFor.includes(reportData.responsibilityName);
+                // إضافة التقرير
+                const truncatedReport = reportText.length > 1024 ? reportText.substring(0, 1021) + '...' : reportText;
+                reportEmbed.addFields([
+                    { 
+                        name: '<:emoji_37:1430331094569455746> التقرير', 
+                        value: truncatedReport, 
+                        inline: false 
+                    }
+                ]);
+
+                // إضافة Footer و Timestamp
+                reportEmbed
+                    .setTimestamp()
+                    .setFooter({ 
+                        text: `Status : On `,
+                        iconURL: client.user.displayAvatarURL()
+                    });
 
                 // Create approval buttons if needed
                 let components = [];
                 if (isApprovalRequired) {
                     const approveButton = new ButtonBuilder()
                         .setCustomId(`report_approve_${reportId}`)
-                        .setLabel('موافقة')
-                        .setStyle(ButtonStyle.Success)
-                        .setEmoji('✅');
+                        .setLabel('قبول التقرير')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('<:emoji_42:1430334150057001042>');
 
                     const rejectButton = new ButtonBuilder()
                         .setCustomId(`report_reject_${reportId}`)
-                        .setLabel('رفض')
-                        .setStyle(ButtonStyle.Danger)
-                        .setEmoji('❌');
+                        .setLabel('رفض التقرير')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('<:emoji_44:1430334506371645593>');
 
-                    components = [new ActionRowBuilder().addComponents(approveButton, rejectButton)];
+                    const askClarificationButton = new ButtonBuilder()
+                        .setCustomId(`report_ask_clarification_${reportId}`)
+                        .setLabel('طلب توضيح')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('<:emoji_31:1430330925304250591>');
+
+                    // حفظ مرجع للأزرار في reportData
+                    reportData.hasActiveClarificationButton = true;
+
+                    components = [new ActionRowBuilder().addComponents(approveButton, rejectButton, askClarificationButton)];
                 }
 
                 // Send report to channel or DMs
@@ -351,8 +642,15 @@ async function handleInteraction(interaction, context) {
                         reportData.submitted = true;
                         client.pendingReports.set(reportId, reportData);
 
-                        await interaction.editReply({ 
-                            content: '✅ تم إرسال التقرير للأونرات بنجاح!' 
+                        // تحديث الرسالة الأصلية بإيمبد النجاح وتعطيل الأزرار
+                        const successEmbed = new EmbedBuilder()
+                            .setDescription('**Done Sended ✅️**')
+                            .setColor('#ffffff')
+                            .setTimestamp();
+
+                        await interaction.update({ 
+                            embeds: [successEmbed],
+                            components: []
                         });
                     } else if (guildConfig.reportChannel) {
                         // Send to specific channel
@@ -366,12 +664,24 @@ async function handleInteraction(interaction, context) {
                         reportData.submitted = true;
                         client.pendingReports.set(reportId, reportData);
 
-                        await interaction.editReply({ 
-                            content: '✅ تم إرسال التقرير بنجاح!' 
+                        // تحديث الرسالة الأصلية بإيمبد النجاح وتعطيل الأزرار
+                        const successEmbed = new EmbedBuilder()
+                            .setDescription('✅ ** Done!**')
+                            .setColor('#00ff00')
+                            .setTimestamp();
+
+                        await interaction.update({ 
+                            embeds: [successEmbed],
+                            components: []
                         });
                     } else {
-                        await interaction.editReply({ 
-                            content: '❌ لم يتم تحديد قناة التقارير!' 
+                        const errorEmbed = new EmbedBuilder()
+                            .setDescription('❌ **لم يتم تحديد روم التقارير!**')
+                            .setColor('#ff0000');
+
+                        await interaction.update({ 
+                            embeds: [errorEmbed],
+                            components: []
                         });
                         return;
                     }
@@ -404,9 +714,12 @@ async function handleInteraction(interaction, context) {
                 } catch (error) {
                     console.error('Error sending report:', error);
                     // Don't mark as submitted if sending failed, so user can retry
-                    await interaction.editReply({ 
-                        content: '❌ حدث خطأ في إرسال التقرير! يرجى المحاولة مرة أخرى.' 
-                    });
+                    if (!interaction.replied) {
+                        await interaction.reply({ 
+                            content: '❌ **حدث خطأ في إرسال التقرير! يرجى المحاولة مرة أخرى.**',
+                            ephemeral: true
+                        });
+                    }
                 }
                 return;
             }
@@ -418,10 +731,26 @@ async function handleInteraction(interaction, context) {
             const reportData = client.pendingReports?.get(reportId);
 
             if (!reportData) {
-                return await interaction.reply({ 
-                    content: 'لم يتم العثور على هذا التقرير أو انتهت صلاحيته.', 
-                    ephemeral: true 
-                });
+                const errorEmbed = new EmbedBuilder()
+                    .setDescription('❌ **لم يتم العثور على هذا التقرير أو انتهت صلاحيته.**')
+                    .setColor('#FF0000');
+
+                return await interaction.update({ 
+                    embeds: [errorEmbed],
+                    components: []
+                }).catch(() => {});
+            }
+
+            // التحقق من أن التقرير لم يتم إرساله من قبل
+            if (reportData.submitted) {
+                const errorEmbed = new EmbedBuilder()
+                    .setDescription('✅ **تم إرسال هذا التقرير مسبقاً!**')
+                    .setColor('#00ff00');
+
+                return await interaction.update({ 
+                    embeds: [errorEmbed],
+                    components: []
+                }).catch(() => {});
             }
 
             // إعادة تحميل المسؤوليات للتأكد من وجودها
@@ -437,10 +766,14 @@ async function handleInteraction(interaction, context) {
 
             // التحقق من وجود المسؤولية
             if (!currentResponsibilities[reportData.responsibilityName]) {
-                return await interaction.reply({ 
-                    content: `❌ المسؤولية "${reportData.responsibilityName}" لم تعد موجودة!`, 
-                    ephemeral: true 
-                });
+                const errorEmbed = new EmbedBuilder()
+                    .setDescription(`❌ **المسؤولية "${reportData.responsibilityName}" لم تعد موجودة!**`)
+                    .setColor('#FF0000');
+
+                return await interaction.update({ 
+                    embeds: [errorEmbed],
+                    components: []
+                }).catch(() => {});
             }
 
             const modal = new ModalBuilder()
@@ -455,6 +788,7 @@ async function handleInteraction(interaction, context) {
             const reportInput = new TextInputBuilder()
                 .setCustomId('report_text')
                 .setLabel('الرجاء كتابة تقريرك هنا')
+                
                 .setStyle(TextInputStyle.Paragraph)
                 .setValue(template)
                 .setRequired(true);
@@ -465,42 +799,92 @@ async function handleInteraction(interaction, context) {
                 await interaction.showModal(modal);
             } catch (error) {
                 console.error('Error showing modal:', error);
-                await interaction.reply({ 
-                    content: '❌ حدث خطأ في عرض نموذج التقرير.', 
+                const errorEmbed = new EmbedBuilder()
+                    .setDescription('❌ **حدث خطأ في عرض نموذج التقرير.**')
+                    .setColor('#FF0000');
+
+                if (!interaction.replied && !interaction.deferred) {
+                    await interaction.update({ 
+                        embeds: [errorEmbed],
+                        components: []
+                    }).catch(() => {});
+                }
+            }
+            return;
+        }
+
+        // Handle answer clarification button
+        if (customId.startsWith('report_answer_clarification_')) {
+            const reportId = customId.replace('report_answer_clarification_', '');
+            const reportData = client.pendingReports?.get(reportId);
+
+            if (!reportData) {
+                return await interaction.reply({ 
+                    content: 'لم يتم العثور على هذا التقرير أو انتهت صلاحيته.', 
                     ephemeral: true 
                 });
+            }
+
+            // التحقق من أن التوضيح لم يتم إرساله من قبل
+            if (reportData.clarifications && reportData.clarifications.length > 0) {
+                const latestClarification = reportData.clarifications[reportData.clarifications.length - 1];
+                if (latestClarification.answer) {
+                    return await interaction.reply({ 
+                        content: '✅ تم إرسال التوضيح مسبقاً!', 
+                        ephemeral: true 
+                    });
+                }
+            }
+
+            // Show modal to answer the clarification
+            const answerModal = new ModalBuilder()
+                .setCustomId(`report_answer_clarification_modal_${reportId}`)
+                .setTitle('إضافة توضيح');
+
+            const answerInput = new TextInputBuilder()
+                .setCustomId('clarification_answer')
+                .setLabel('أضف التوضيح المطلوب')
+                .setStyle(TextInputStyle.Paragraph)
+                .setPlaceholder('اكتب التوضيح هنا...')
+                .setRequired(true);
+
+            answerModal.addComponents(new ActionRowBuilder().addComponents(answerInput));
+
+            try {
+                await interaction.showModal(answerModal);
+            } catch (error) {
+                console.error('Error showing answer modal:', error);
+                await interaction.reply({ 
+                    content: '❌ حدث خطأ في عرض نموذج التوضيح.', 
+                    ephemeral: true 
+                }).catch(() => {});
             }
             return;
         }
 
         // Handle all other interactions
         try {
-            // قائمة الأزرار التي تحتاج Modal (لا يجب تأخيرها)
-            const needsModal = customId === 'report_template_apply_all_btn' || 
-                              customId === 'report_template_edit_select' ||
-                              customId === 'report_template_select_resp';
+            // قائمة التفاعلات التي لا تحتاج لـ defer مطلقاً
+            const noDefer = customId === 'report_template_apply_all_btn' || 
+                          customId === 'report_template_edit_select' ||
+                          customId === 'report_template_select_resp' ||
+                          customId.startsWith('report_write_') ||
+                          customId.startsWith('report_submit_') ||
+                          customId.startsWith('report_ask_clarification_');
 
-            // تأخير التفاعل فقط للأزرار والقوائم التي لا تحتاج لفتح Modal
-            if ((interaction.isButton() || interaction.isStringSelectMenu() || interaction.isChannelSelectMenu() || interaction.isRoleSelectMenu()) && 
-                !interaction.replied && !interaction.deferred && !needsModal) {
+            // defer فقط للتفاعلات التي تحتاجه
+            if (!noDefer && (interaction.isButton() || interaction.isStringSelectMenu() || 
+                interaction.isChannelSelectMenu() || interaction.isRoleSelectMenu()) && 
+                !interaction.replied && !interaction.deferred) {
                 await interaction.deferUpdate();
             }
         } catch (error) {
-            console.error('❌ خطأ في تأجيل التفاعل:', error);
-
-            // تجاهل الأخطاء المعروفة
-            const ignoredErrorCodes = [10008, 40060, 10062];
+            // تجاهل الأخطاء المعروفة بصمت
+            const ignoredErrorCodes = [10008, 40060, 10062, 10003];
             if (error.code && ignoredErrorCodes.includes(error.code)) {
-                console.log(`تم تجاهل خطأ Discord معروف: ${error.code}`);
                 return;
             }
-
-            if (!interaction.replied && !interaction.deferred) {
-                return await interaction.reply({ 
-                    content: '❌ حدث خطأ في معالجة هذا التفاعل', 
-                    ephemeral: true 
-                }).catch(() => {});
-            }
+            console.error('❌ خطأ في تأجيل التفاعل:', error);
             return;
         }
 
@@ -561,7 +945,7 @@ async function handleInteraction(interaction, context) {
 
                     const requiredReport = config.requiredFor || [];
                     const requiredApproval = config.approvalRequiredFor || [];
-                    
+
                     // تصنيف المسؤوليات
                     const both = [];
                     const reportOnly = [];
@@ -961,27 +1345,21 @@ async function handleInteraction(interaction, context) {
                 const isApprove = customId.startsWith('report_approve_');
 
                 if (!reportData) {
-                    return await interaction.editReply({ 
+                    return await interaction.reply({ 
                         content: '❌ لم يتم العثور على هذا التقرير أو تمت معالجته مسبقاً.', 
-                        components: [] 
+                        ephemeral: true
                     });
                 }
 
                 // التحقق من أن التقرير لم تتم معالجته من قبل
                 if (reportData.processed) {
-                    return await interaction.editReply({ 
+                    return await interaction.reply({ 
                         content: '❌ تمت معالجة هذا التقرير مسبقاً.', 
-                        components: [] 
+                        ephemeral: true
                     });
                 }
 
-                // وضع علامة أن التقرير قيد المعالجة
-                reportData.processed = true;
-                reportData.processedBy = interaction.user.id;
-                reportData.processedAt = Date.now();
-                client.pendingReports.set(reportId, reportData);
-
-                // Check permissions based on approverType
+                // Check permissions BEFORE processing
                 let hasPermission = false;
 
                 if (config.approverType === 'owners') {
@@ -1004,17 +1382,17 @@ async function handleInteraction(interaction, context) {
                 }
 
                 if (!hasPermission) {
-                    // إلغاء علامة المعالجة في حالة عدم وجود صلاحية
-                    reportData.processed = false;
-                    delete reportData.processedBy;
-                    delete reportData.processedAt;
-                    client.pendingReports.set(reportId, reportData);
-
-                    return await interaction.editReply({ 
-                        content: '❌ ليس لديك صلاحية للموافقة أو رفض التقارير!', 
-                        components: [] 
+                    return await interaction.reply({ 
+                        content: '❌ عفوي!', 
+                        ephemeral: true
                     });
                 }
+
+                // وضع علامة أن التقرير قيد المعالجة
+                reportData.processed = true;
+                reportData.processedBy = interaction.user.id;
+                reportData.processedAt = Date.now();
+                client.pendingReports.set(reportId, reportData);
 
                 // Update the original message
                 const originalEmbed = EmbedBuilder.from(interaction.message.embeds[0])
@@ -1072,6 +1450,79 @@ async function handleInteraction(interaction, context) {
                 client.pendingReports.delete(reportId);
                 scheduleSave();
 
+                return;
+            }
+
+            // Handle ask clarification button
+            if (customId.startsWith('report_ask_clarification_')) {
+                const reportId = customId.replace('report_ask_clarification_', '');
+                const reportData = client.pendingReports?.get(reportId);
+
+                if (!reportData) {
+                    return await interaction.reply({ 
+                        content: '❌ لم يتم العثور على هذا التقرير أو تمت معالجته مسبقاً.', 
+                        ephemeral: true
+                    });
+                }
+
+                // التحقق من أن التقرير لم تتم معالجته من قبل
+                if (reportData.processed) {
+                    return await interaction.reply({ 
+                        content: '❌ تمت معالجة هذا التقرير مسبقاً.', 
+                        ephemeral: true
+                    });
+                }
+
+                // Check permissions
+                let hasPermission = false;
+
+                if (config.approverType === 'owners') {
+                    hasPermission = BOT_OWNERS.includes(interaction.user.id);
+                } else if (config.approverType === 'roles' && config.approverTargets && config.approverTargets.length > 0) {
+                    hasPermission = interaction.member.roles.cache.some(role => config.approverTargets.includes(role.id));
+                } else if (config.approverType === 'responsibility' && config.approverTargets && config.approverTargets.length > 0) {
+                    for (const respName of config.approverTargets) {
+                        if (responsibilities[respName] && responsibilities[respName].responsibles) {
+                            if (responsibilities[respName].responsibles.includes(interaction.user.id)) {
+                                hasPermission = true;
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    hasPermission = BOT_OWNERS.includes(interaction.user.id);
+                }
+
+                if (!hasPermission) {
+                    return await interaction.reply({ 
+                        content: '❌ ليس لديك صلاحية لطلب توضيح!', 
+                        ephemeral: true
+                    });
+                }
+
+                // Show modal to ask for clarification question
+                const clarificationModal = new ModalBuilder()
+                    .setCustomId(`report_clarification_question_${reportId}`)
+                    .setTitle('طلب توضيح');
+
+                const questionInput = new TextInputBuilder()
+                    .setCustomId('clarification_question')
+                    .setLabel('ما الذي تريد توضيحه؟')
+                    .setStyle(TextInputStyle.Paragraph)
+                    .setPlaceholder('مثال: هل يمكنك توضيح النقطة الثالثة بشكل أكبر؟')
+                    .setRequired(true);
+
+                clarificationModal.addComponents(new ActionRowBuilder().addComponents(questionInput));
+
+                try {
+                    await interaction.showModal(clarificationModal);
+                } catch (error) {
+                    console.error('Error showing clarification modal:', error);
+                    await interaction.reply({ 
+                        content: '❌ حدث خطأ في عرض نموذج طلب التوضيح.', 
+                        ephemeral: true 
+                    }).catch(() => {});
+                }
                 return;
             }
 
@@ -1139,7 +1590,7 @@ async function handleInteraction(interaction, context) {
                     case 'report_template_edit_select':
                         // فتح Modal لتعديل قالب المسؤولية المحددة
                         const selectedResp = interaction.values[0];
-                        
+
                         if (selectedResp === 'none') {
                             await interaction.reply({
                                 content: '❌ لا توجد مسؤوليات! يجب إنشاء مسؤوليات أولاً.',
@@ -1149,7 +1600,7 @@ async function handleInteraction(interaction, context) {
                         }
 
                         const currentTemplate = config.templates[selectedResp] || '';
-                        
+
                         const editModal = new ModalBuilder()
                             .setCustomId(`report_template_save_modal_${selectedResp}`)
                             .setTitle(`تعديل قالب: ${selectedResp}`);
@@ -1296,7 +1747,7 @@ async function handleInteraction(interaction, context) {
                 if (!interaction.deferred && !interaction.replied) {
                     await interaction.deferUpdate();
                 }
-                
+
                 config.approverTargets = interaction.values;
                 config.approverType = 'roles'; // التأكد من حفظ النوع
                 if (saveReportsConfig(guildId, config)) {

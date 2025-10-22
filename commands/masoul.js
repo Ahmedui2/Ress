@@ -267,9 +267,9 @@ async function handleClaimButton(interaction, context) {
     try {
         const originalEmbed = interaction.message.embeds[0];
         if (originalEmbed && originalEmbed.description) {
-            const reasonLine = originalEmbed.description.split('\n').find(line => line.includes('**السبب:**'));
+            const reasonLine = originalEmbed.description.split('\n').find(line => line.includes('**السبب :**'));
             if (reasonLine) {
-                reason = reasonLine.replace('**السبب:**', '').trim();
+                reason = reasonLine.replace('**السبب :**', '').trim();
             }
         }
     } catch (e) {
@@ -392,21 +392,22 @@ async function handleClaimButton(interaction, context) {
             }
 
             const reportEmbed = colorManager.createEmbed()
-                .setTitle('تم استلام المهمة بنجاح')
-                .setDescription(`**هذه المهمة تتطلب تقريراً بعد الإنتهاء منها.**\n\n**السبب:** ${reason}\n\nيرجى الضغط على الزر أدناه لكتابة التقرير.`)
+                .setTitle(' ✅️ Claims')
+                .setDescription(`**هذه المهمة تتطلب تقريراً بعد الإنتهاء منها.**\n\n**السبب الاولي :** ${reason}\n\nيرجى الضغط على الزر أدناه لكتابة التقرير.`)
                 .setFooter({text: 'By Ahmed.'});
 
             const writeReportButton = new ButtonBuilder()
                 .setCustomId(`report_write_${reportId}`)
-                .setLabel('كتابة التقرير')
-                .setStyle(ButtonStyle.Success);
+                .setLabel('Write')
+                .setEmoji('<:emoji_35:1430331052773081181>')
+                .setStyle(ButtonStyle.Secondary);
 
             const components = [writeReportButton];
 
             // إضافة رابط الرسالة الصحيح
             if (originalMessageId && originalChannelId && originalMessageId !== 'unknown' && guildId) {
                 const url = `https://discord.com/channels/${guildId}/${originalChannelId}/${originalMessageId}`;
-                components.push(new ButtonBuilder().setLabel('🔗 رابط الرسالة').setStyle(ButtonStyle.Link).setURL(url));
+                components.push(new ButtonBuilder().setLabel('message').setEmoji('<:emoji_30:1430329732951707770>').setStyle(ButtonStyle.Link).setURL(url));
             }
 
             const row = new ActionRowBuilder().addComponents(components);
@@ -437,12 +438,12 @@ async function handleClaimButton(interaction, context) {
         let claimedButtonRow = null;
         if (finalMessageId && guildId && finalChannelId && /^\d{17,19}$/.test(finalMessageId)) {
           const url = `https://discord.com/channels/${guildId}/${finalChannelId}/${finalMessageId}`;
-          const goBtn = new ButtonBuilder().setLabel('🔗 Message Link').setStyle(ButtonStyle.Link).setURL(url);
+          const goBtn = new ButtonBuilder().setLabel('Message Link').setEmoji('<:emoji_30:1430329732951707770>').setStyle(ButtonStyle.Link).setURL(url);
           claimedButtonRow = new ActionRowBuilder().addComponents(goBtn);
         }
 
         const claimedEmbed = colorManager.createEmbed()
-          .setDescription(`**✅ تم استلام المهمة من قبل <@${interaction.user.id}> (${displayName})**\n\n**السبب:** ${reason}`)
+          .setDescription(`**✅ تم استلام المهمة من قبل <@${interaction.user.id}> (${displayName})**\n\n**السبب كان :** ${reason}`)
           .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400676711439273994/1320524603868712960.png?ex=688d8157&is=688c2fd7&hm=2f0fcafb0d4dd4fc905d6c5c350cfafe7d68e902b5668117f2e7903a62c8&');
 
         await interaction.update({ embeds: [claimedEmbed], components: claimedButtonRow ? [claimedButtonRow] : [] });
@@ -590,7 +591,7 @@ async function execute(message, args, { responsibilities, points, scheduleSave, 
   const buttonRow = new ActionRowBuilder().addComponents(cancelButton);
 
   const sentMessage = await message.channel.send({
-    content: '**اختر مسؤولية من القائمة:**',
+    content: '**اختر مسؤولية من القائمة :**',
     components: [...pagination.components, buttonRow]
   });
 
@@ -636,7 +637,7 @@ async function execute(message, args, { responsibilities, points, scheduleSave, 
         const newPagination = createPaginatedResponsibilityMenu(freshResponsibilities, currentPage, 'masoul_select_responsibility', 'اختر مسؤولية');
         currentPage = newPagination.currentPage;
         
-        await interaction.update({ content: '**اختر مسؤولية من القائمة:**', components: [...newPagination.components, buttonRow] });
+        await interaction.update({ content: '**اختر مسؤولية من القائمة :**', components: [...newPagination.components, buttonRow] });
         return;
       }
 
