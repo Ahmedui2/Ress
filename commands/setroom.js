@@ -1,9 +1,11 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionFlagsBits, ChannelType, StringSelectMenuBuilder } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionFlagsBits, ChannelType, StringSelectMenuBuilder, AttachmentBuilder } = require('discord.js');
 const colorManager = require('../utils/colorManager.js');
 const { logEvent } = require('../utils/logs_system.js');
 const fs = require('fs');
 const path = require('path');
 const schedule = require('node-schedule');
+const { createCanvas, registerFont, loadImage } = require('canvas');
+const fetch = require('node-fetch');
 
 const name = 'setroom';
 
@@ -92,7 +94,7 @@ async function deleteRoom(channelId, client) {
         }
         await channel.delete('انتهت مدة الروم (12 ساعة)');
         console.log(`🗑️ تم حذف الروم: ${channel.name}`);
-        
+
         activeRooms.delete(channelId);
         roomEmbedMessages.delete(channelId);
         cancelVerificationJobs(channelId);
@@ -104,13 +106,13 @@ async function deleteRoom(channelId, client) {
 // جدولة حذف روم بعد 12 ساعة
 function scheduleRoomDeletion(channelId, client) {
     const deletionTime = new Date(Date.now() + 12 * 60 * 60 * 1000); // 12 ساعة
-    
+
     const job = schedule.scheduleJob(deletionTime, async () => {
         console.log(`⏰ حان موعد حذف الروم: ${channelId}`);
         await deleteRoom(channelId, client);
         roomDeletionJobs.delete(channelId);
     });
-    
+
     roomDeletionJobs.set(channelId, job);
     console.log(`✅ تم جدولة حذف الروم ${channelId} بعد 12 ساعة`);
 }
@@ -134,7 +136,7 @@ async function resendSetupEmbed(guildId, client) {
     try {
         const config = loadRoomConfig();
         const guildConfig = config[guildId];
-        
+
         if (!guildConfig || !guildConfig.embedChannelId || !guildConfig.imageUrl) {
             console.error(`❌ لا توجد بيانات setup للسيرفر ${guildId}`);
             return false;
@@ -142,7 +144,7 @@ async function resendSetupEmbed(guildId, client) {
 
         const setupData = setupEmbedMessages.get(guildId);
         const embedChannel = await client.channels.fetch(guildConfig.embedChannelId).catch(() => null);
-        
+
         if (!embedChannel) {
             console.error(`❌ قناة الإيمبد ${guildConfig.embedChannelId} غير موجودة`);
             return false;
@@ -159,34 +161,46 @@ async function resendSetupEmbed(guildId, client) {
 
         // إعادة الإرسال
         console.log(`🔄 إعادة إرسال setup embed في ${embedChannel.name}`);
-        
+
+        const guild = await client.guilds.fetch(guildId).catch(() => null);
+        if (!guild) {
+            console.error(`❌ السيرفر ${guildId} غير موجود`);
+            return false;
+        }
+
+        // إنشاء صورة الألوان المدمجة مع الصورة الأصلية
+        const mergedImagePath = await createColorsImage(guild, guildConfig);
+
+        const colorDescription = createColorDescription(guild, guildConfig);
+
+        // استخدام الصورة المدمجة أو الصورة الأصلية
+        const imageToUse = mergedImagePath ? `attachment://colors_merged.png` : guildConfig.imageUrl;
+
         const finalEmbed = colorManager.createEmbed()
-            .setTitle('**Rooms**')
-            .setDescription('**اختر نوع الروم التي تريد طلبها :**')
-            .setImage(guildConfig.imageUrl)
-            .setFooter({ text: 'Rooms system' });
+            .setTitle('**Rooms & Colors**')
+            .setDescription('**اختر لونك او نوع الروم التي تريد طلبها :**' + colorDescription)
+            .setImage(imageToUse)
+            .setFooter({ text: 'System' });
 
-        const menu = new ActionRowBuilder().addComponents(
-            new StringSelectMenuBuilder()
-                .setCustomId('room_type_menu')
-                .setPlaceholder('اختر نوع الروم')
-                .addOptions([
-                    {
-                        label: 'Doaa',
-                        description: 'طلب روم دعاء',
-                        emoji: '<:emoji_5:1430777863363100775>',
-                        value: 'condolence',
-                    },
-                    {
-                        label: 'Birthday ',
-                        description: 'طلب روم ميلاد',
-                        emoji: '<:emoji_4:1430777429235994725>',
-                        value: 'birthday',
-                    }
-                ])
-        );
+        const menus = createSetupMenus(guild, guildConfig);
 
-        const newMessage = await embedChannel.send({ embeds: [finalEmbed], components: [menu] });
+        const messageOptions = { 
+            embeds: [finalEmbed], 
+            components: menus 
+        };
+
+        // إضافة الصورة المدمجة
+        if (mergedImagePath) {
+            const attachment = new AttachmentBuilder(mergedImagePath, { name: 'colors_merged.png' });
+            messageOptions.files = [attachment];
+        }
+
+        const newMessage = await embedChannel.send(messageOptions);
+
+        // حذف الصورة المؤقتة
+        if (mergedImagePath && fs.existsSync(mergedImagePath)) {
+            fs.unlinkSync(mergedImagePath);
+        }
 
         // تحديث معلومات الرسالة
         setupEmbedMessages.set(guildId, {
@@ -194,7 +208,7 @@ async function resendSetupEmbed(guildId, client) {
             channelId: embedChannel.id,
             imageUrl: guildConfig.imageUrl
         });
-        
+
         saveSetupEmbedMessages(setupEmbedMessages);
 
         console.log(`✅ تم إعادة إرسال setup embed بنجاح في ${embedChannel.name}`);
@@ -231,17 +245,17 @@ async function verifySetupEmbed(guildId, messageId, channelId, client, attempt =
 // جدولة فحص setup embed بعد 3 دقائق
 function scheduleSetupEmbedThreeMinuteCheck(guildId, messageId, channelId, client) {
     const checkTime = new Date(Date.now() + 3 * 60 * 1000);
-    
+
     const job = schedule.scheduleJob(checkTime, async () => {
         console.log(`⏰ [فحص setup 3 دقائق] فحص setup embed للسيرفر ${guildId}`);
-        
+
         const isValid = await verifySetupEmbed(guildId, messageId, channelId, client, 2);
         if (!isValid) {
             console.log(`🔄 [فحص setup 3 دقائق] محاولة إعادة الإرسال...`);
             await resendSetupEmbed(guildId, client);
         }
     });
-    
+
     console.log(`📅 تم جدولة فحص setup embed بعد 3 دقائق للسيرفر ${guildId}`);
     return job;
 }
@@ -250,24 +264,24 @@ function scheduleSetupEmbedThreeMinuteCheck(guildId, messageId, channelId, clien
 function scheduleSetupEmbedPeriodicChecks(guildId, messageId, channelId, client) {
     const jobs = [];
     const jobKey = `setup_${guildId}`;
-    
+
     // فحص كل 10 دقائق لمدة ساعة (6 فحوصات)
     for (let i = 1; i <= 6; i++) {
         const checkTime = new Date(Date.now() + (i * 10 * 60 * 1000));
-        
+
         const job = schedule.scheduleJob(checkTime, async () => {
             console.log(`⏰ [فحص دوري setup ${i}/6] فحص setup embed للسيرفر ${guildId}`);
-            
+
             const isValid = await verifySetupEmbed(guildId, messageId, channelId, client, i + 2);
             if (!isValid) {
                 console.log(`🔄 [فحص دوري setup ${i}/6] محاولة إعادة الإرسال...`);
                 await resendSetupEmbed(guildId, client);
             }
         });
-        
+
         jobs.push(job);
     }
-    
+
     console.log(`📅 تم جدولة 6 فحوصات دورية لـ setup embed (كل 10 دقائق) للسيرفر ${guildId}`);
     messageVerificationJobs.set(jobKey, jobs);
 }
@@ -276,40 +290,40 @@ async function checkAndDeleteOldRooms(client) {
     const now = Date.now();
     const roomsToDelete = [];
     const TWELVE_HOURS = 12 * 60 * 60 * 1000; // 12 ساعة بالميلي ثانية
-    
+
     for (const [channelId, roomData] of activeRooms.entries()) {
         const roomAge = now - roomData.createdAt;
         const hoursSinceCreation = roomAge / (1000 * 60 * 60);
-        
+
         console.log(`🔍 فحص الروم ${channelId}: عمر الروم ${hoursSinceCreation.toFixed(2)} ساعة`);
-        
+
         if (hoursSinceCreation >= 12) {
             console.log(`⚠️ الروم ${channelId} تجاوز 12 ساعة - سيتم حذفه فوراً`);
             roomsToDelete.push(channelId);
         } else {
             const remainingTime = TWELVE_HOURS - roomAge;
             const deletionTime = new Date(roomData.createdAt + TWELVE_HOURS);
-            
+
             const job = schedule.scheduleJob(deletionTime, async () => {
                 console.log(`⏰ حان موعد حذف الروم: ${channelId}`);
                 await deleteRoom(channelId, client);
                 roomDeletionJobs.delete(channelId);
             });
-            
+
             roomDeletionJobs.set(channelId, job);
-            
+
             const remainingHours = (remainingTime / (1000 * 60 * 60)).toFixed(2);
             const remainingMinutes = Math.round(remainingTime / (1000 * 60));
             console.log(`✅ تم إعادة جدولة حذف الروم ${channelId} - متبقي ${remainingHours} ساعة (${remainingMinutes} دقيقة)`);
             console.log(`📅 سيتم الحذف في: ${deletionTime.toLocaleString('ar-SA')}`);
         }
     }
-    
+
     // حذف الرومات القديمة
     for (const channelId of roomsToDelete) {
         await deleteRoom(channelId, client);
     }
-    
+
     if (roomsToDelete.length > 0) {
         console.log(`🗑️ تم حذف ${roomsToDelete.length} روم قديم`);
     } else {
@@ -347,7 +361,7 @@ function restoreSchedules(client) {
         for (const [channelId, roomData] of savedRooms.entries()) {
             activeRooms.set(channelId, roomData);
         }
-        
+
         if (activeRooms.size > 0) {
             console.log(`📂 تم تحميل ${activeRooms.size} روم نشط من الملف`);
             // استعادة جدولات الحذف والإيموجي
@@ -370,43 +384,112 @@ function startContinuousSetupEmbedCheck(client) {
             console.error('❌ خطأ في الفحص الدوري المستمر:', error);
         }
     }, 5 * 60 * 1000); // كل 5 دقائق
-    
+
     console.log('✅ تم تشغيل نظام الفحص الدوري المستمر (كل 5 دقائق)');
+}
+
+// نظام حذف تلقائي للرسائل في قناة الإيمبد كل 3 دقائق
+function startAutoMessageDeletion(client) {
+    setInterval(async () => {
+        try {
+            const config = loadRoomConfig();
+            
+            for (const [guildId, guildConfig] of Object.entries(config)) {
+                if (!guildConfig.embedChannelId) continue;
+                
+                try {
+                    const setupData = setupEmbedMessages.get(guildId);
+                    if (!setupData || !setupData.messageId) continue;
+                    
+                    const embedChannel = await client.channels.fetch(guildConfig.embedChannelId);
+                    if (!embedChannel) continue;
+                    
+                    // جلب آخر 100 رسالة
+                    const messages = await embedChannel.messages.fetch({ limit: 100 });
+                    
+                    // تصفية الرسائل: حذف كل شيء عدا رسالة الإيمبد
+                    const messagesToDelete = messages.filter(msg => 
+                        msg.id !== setupData.messageId && 
+                        !msg.pinned // عدم حذف الرسائل المثبتة
+                    );
+                    
+                    if (messagesToDelete.size > 0) {
+                        try {
+                            // حذف جميع الرسائل دفعة واحدة باستخدام bulkDelete
+                            const deleted = await embedChannel.bulkDelete(messagesToDelete, true);
+                            
+                            if (deleted.size > 0) {
+                                console.log(`🗑️ تم حذف ${deleted.size} رسالة دفعة واحدة من قناة الإيمبد في ${embedChannel.name}`);
+                            }
+                        } catch (bulkError) {
+                            // إذا فشل الحذف الجماعي (مثلاً رسائل أقدم من 14 يوم)، احذف واحدة تلو الأخرى
+                            console.log(`⚠️ فشل الحذف الجماعي، محاولة الحذف الفردي...`);
+                            
+                            let deletedCount = 0;
+                            for (const message of messagesToDelete.values()) {
+                                try {
+                                    await message.delete();
+                                    deletedCount++;
+                                    // تأخير بسيط لتجنب rate limit
+                                    await new Promise(resolve => setTimeout(resolve, 100));
+                                } catch (deleteError) {
+                                    // تجاهل الأخطاء (قد تكون الرسالة محذوفة بالفعل)
+                                    if (deleteError.code !== 10008) { // 10008 = Unknown Message
+                                        console.error(`خطأ في حذف رسالة: ${deleteError.message}`);
+                                    }
+                                }
+                            }
+                            
+                            if (deletedCount > 0) {
+                                console.log(`🗑️ تم حذف ${deletedCount} رسالة بشكل فردي من قناة الإيمبد في ${embedChannel.name}`);
+                            }
+                        }
+                    }
+                } catch (channelError) {
+                    console.error(`❌ خطأ في معالجة القناة للسيرفر ${guildId}:`, channelError.message);
+                }
+            }
+        } catch (error) {
+            console.error('❌ خطأ في نظام الحذف التلقائي للرسائل:', error);
+        }
+    }, 3 * 60 * 1000); // كل 3 دقائق
+
+    console.log('✅ تم تشغيل نظام الحذف التلقائي للرسائل (كل 3 دقائق)');
 }
 
 // استعادة الإيموجي للرسائل الموجودة في الرومات النشطة
 async function restoreRoomEmojis(client) {
     try {
         console.log('🔄 بدء استعادة الإيموجي للرومات النشطة...');
-        
+
         let restoredCount = 0;
-        
+
         for (const [channelId, roomData] of activeRooms.entries()) {
             if (!roomData.emojis || roomData.emojis.length === 0) {
                 continue;
             }
-            
+
             try {
                 const channel = await client.channels.fetch(channelId).catch(() => null);
                 if (!channel) {
                     console.log(`⚠️ القناة ${channelId} غير موجودة - تخطي`);
                     continue;
                 }
-                
+
                 // جلب آخر 100 رسالة من القناة
                 const messages = await channel.messages.fetch({ limit: 100 });
-                
+
                 for (const message of messages.values()) {
                     // تخطي رسائل البوتات
                     if (message.author.bot) continue;
-                    
+
                     // التحقق من الإيموجي الموجودة على الرسالة
                     const existingReactions = message.reactions.cache;
-                    
+
                     // إضافة الإيموجي المفقودة
                     for (const emoji of roomData.emojis) {
                         let hasReaction = false;
-                        
+
                         // التحقق من وجود الريآكشن
                         const emojiIdMatch = emoji.match(/<a?:\w+:(\d+)>/);
                         if (emojiIdMatch) {
@@ -414,7 +497,7 @@ async function restoreRoomEmojis(client) {
                         } else {
                             hasReaction = existingReactions.has(emoji);
                         }
-                        
+
                         // إضافة الريآكشن إذا لم يكن موجودًا
                         if (!hasReaction) {
                             try {
@@ -434,13 +517,13 @@ async function restoreRoomEmojis(client) {
                         }
                     }
                 }
-                
+
                 console.log(`✅ تم فحص واستعادة الإيموجي للروم ${channel.name}`);
             } catch (channelError) {
                 console.error(`❌ خطأ في معالجة القناة ${channelId}:`, channelError.message);
             }
         }
-        
+
         if (restoredCount > 0) {
             console.log(`✅ تم استعادة ${restoredCount} إيموجي للرسائل`);
         } else {
@@ -456,19 +539,19 @@ async function checkAndRestoreSetupEmbed(client) {
     try {
         setupEmbedMessages = loadSetupEmbedMessages();
         const config = loadRoomConfig();
-        
+
         for (const [guildId, guildConfig] of Object.entries(config)) {
             if (!guildConfig.embedChannelId || !guildConfig.imageUrl) {
                 continue;
             }
 
             const setupData = setupEmbedMessages.get(guildId);
-            
+
             try {
                 const embedChannel = await client.channels.fetch(guildConfig.embedChannelId);
-                
+
                 let needsNewMessage = false;
-                
+
                 if (!setupData || !setupData.messageId) {
                     console.log(`📝 لا توجد رسالة محفوظة للسيرفر ${guildId} - سيتم إنشاء رسالة جديدة`);
                     needsNewMessage = true;
@@ -485,41 +568,49 @@ async function checkAndRestoreSetupEmbed(client) {
                 }
 
                 if (needsNewMessage) {
+                    const guild = client.guilds.cache.get(guildId);
+                    if (!guild) continue;
+
+                    // إنشاء صورة الألوان المدمجة مع الصورة الأصلية
+                    const mergedImagePath = await createColorsImage(guild, guildConfig);
+
+                    const colorDescription = createColorDescription(guild, guildConfig);
+
+                    // استخدام الصورة المدمجة أو الصورة الأصلية
+                    const imageToUse = mergedImagePath ? `attachment://colors_merged.png` : guildConfig.imageUrl;
+
                     const finalEmbed = colorManager.createEmbed()
-                        .setTitle('**Rooms**')
-                        .setDescription('**اختر نوع الروم التي تريد طلبها :**')
-                        .setImage(guildConfig.imageUrl)
-                        .setFooter({ text: 'Rooms system' });
+                        .setTitle('**Rooms & Colors**')
+                        .setDescription('**اختر لونك او نوع الروم التي تريد طلبها :**' + colorDescription)
+                        .setImage(imageToUse)
+                        .setFooter({ text: 'System' });
 
-                    const menu = new ActionRowBuilder().addComponents(
-                        new StringSelectMenuBuilder()
-                            .setCustomId('room_type_menu')
-                            .setPlaceholder('اختر نوع الروم')
-                            .addOptions([
-                                {
-                                    label: 'Doaa',
-                        description: 'طلب روم دعاء',
-                        emoji: '<:emoji_5:1430777863363100775>',
-                        value: 'condolence',
-                    },
-                    {
-                        label: 'Birthday ',
-                        description: 'طلب روم ميلاد',
-                        emoji: '<:emoji_4:1430777429235994725>',
-                        value: 'birthday',
-                                }
-                            ])
-                    );
+                    const menus = createSetupMenus(guild, guildConfig);
 
-                    const newMessage = await embedChannel.send({ embeds: [finalEmbed], components: [menu] });
-                    console.log(`📤 تم إرسال setup embed في السيرفر ${guildId}`);
+                    const messageOptions = { 
+                        embeds: [finalEmbed], 
+                        components: menus 
+                    };
+
+                    // إضافة الصورة المدمجة كملف مرفق
+                    if (mergedImagePath) {
+                        const attachment = new AttachmentBuilder(mergedImagePath, { name: 'colors_merged.png' });
+                        messageOptions.files = [attachment];
+                    }
+
+                    const newMessage = await embedChannel.send(messageOptions);
+
+                    // حذف الصورة المؤقتة بعد الإرسال
+                    if (mergedImagePath && fs.existsSync(mergedImagePath)) {
+                        fs.unlinkSync(mergedImagePath);
+                    }
 
                     setupEmbedMessages.set(guildId, {
                         messageId: newMessage.id,
                         channelId: embedChannel.id,
                         imageUrl: guildConfig.imageUrl
                     });
-                    
+
                     saveSetupEmbedMessages(setupEmbedMessages);
 
                     // فحص فوري بعد ثانية واحدة
@@ -630,6 +721,194 @@ function saveSetupEmbedMessages(embedMap) {
     }
 }
 
+// دالة لإنشاء منيوهات Setup (منيو الدعاء/الميلاد + منيو الألوان)
+function createSetupMenus(guild, guildConfig) {
+    const menus = [];
+
+    // منيو الدعاء والميلاد (المنيو الأول - موجود دائماً)
+    const roomMenu = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+            .setCustomId('room_type_menu')
+            .setPlaceholder('اختر نوع الروم')
+            .addOptions([
+                {
+                    label: 'Doaa',
+                    description: 'طلب روم دعاء',
+                    emoji: '<:emoji_5:1430777863363100775>',
+                    value: 'condolence',
+                },
+                {
+                    label: 'Birthday ',
+                    description: 'طلب روم ميلاد',
+                    emoji: '<:emoji_4:1430777429235994725>',
+                    value: 'birthday',
+                }
+            ])
+    );
+    menus.push(roomMenu);
+
+    // منيو الألوان (المنيو الثاني - إذا كانت الألوان مُعدة)
+    if (guildConfig && guildConfig.colorRoleIds && guildConfig.colorRoleIds.length > 0) {
+        const colorOptions = [
+            {
+                label: 'بدون لون',
+                description: 'إزالة جميع الألوان',
+                value: 'remove_all_colors',
+                
+            }
+        ];
+
+        let index = 1;
+        for (const roleId of guildConfig.colorRoleIds) {
+            const role = guild.roles.cache.get(roleId);
+            if (role) {
+                colorOptions.push({
+                    label: `${index}`,
+                    description: role.hexColor,
+                    value: roleId
+                });
+                index++;
+            }
+        }
+
+        if (colorOptions.length > 1) {
+            const colorMenu = new ActionRowBuilder().addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId('color_selection_menu')
+                    .setPlaceholder('اختر اللون المناسب')
+                    .addOptions(colorOptions)
+            );
+            menus.push(colorMenu);
+        }
+    }
+
+    return menus;
+}
+
+// دالة لإنشاء صورة الألوان بجودة عالية مع دمجها بالصورة الأصلية
+async function createColorsImage(guild, guildConfig) {
+    try {
+        if (!guildConfig || !guildConfig.colorRoleIds || guildConfig.colorRoleIds.length === 0) {
+            return null;
+        }
+
+        // تحميل الصورة الأصلية
+        let backgroundImage;
+        try {
+            backgroundImage = await loadImage(guildConfig.imageUrl);
+        } catch (imgError) {
+            console.error('❌ فشل في تحميل الصورة الأصلية:', imgError);
+            return null;
+        }
+
+        // إعدادات مربعات الألوان
+        const boxSize = 60; // حجم كل مربع (مطابق للصورة)
+        const gap = 12; // المسافة بين المربعات
+        const padding = 30; // المسافة من الحواف
+        const cornerRadius = 10; // انحناء زوايا المربعات
+
+        const colorsPerRow = 10; // عدد الألوان في كل صف
+        const totalColors = guildConfig.colorRoleIds.length;
+        const rows = Math.ceil(totalColors / colorsPerRow);
+
+        // استخدام أبعاد الصورة الأصلية
+        const canvasWidth = backgroundImage.width;
+        const canvasHeight = backgroundImage.height;
+
+        const canvas = createCanvas(canvasWidth, canvasHeight);
+        const ctx = canvas.getContext('2d');
+
+        // رسم الصورة الأصلية كخلفية
+        ctx.drawImage(backgroundImage, 0, 0, canvasWidth, canvasHeight);
+
+        // حساب عرض المربعات للتمركز أفقياً
+        const totalBoxesWidth = (boxSize * colorsPerRow) + (gap * (colorsPerRow - 1));
+        const startX = (canvasWidth - totalBoxesWidth) / 2;
+
+        // حساب ارتفاع المربعات لتحديد موقع البداية عمودياً (مع حساب الصفوف)
+        const totalBoxesHeight = (boxSize * rows) + (gap * (rows - 1));
+        // تحسين التمركز الرأسي - نضع المربعات في النصف السفلي من الصورة
+        const startY = rows > 1 
+            ? (canvasHeight - totalBoxesHeight) / 2 // تمركز في المنتصف للصفوف المتعددة
+            : (canvasHeight * 0.6) - (totalBoxesHeight / 2); // صف واحد - في النصف السفلي
+        
+        // إضافة نص "COLORS LIST:" يبدأ من نفس موضع المربعات الأفقي
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 20px Arial';
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
+        ctx.shadowBlur = 10;
+        ctx.textAlign = 'left';
+        // النص يبدأ من نفس موضع startX (بداية المربعات)
+        ctx.fillText('Colors List :', startX - 150, startY - 30);
+        ctx.shadowBlur = 20;
+        
+        // رسم المربعات
+        let currentX = startX;
+        let currentY = startY;
+        let colorIndex = 1;
+        
+        for (const roleId of guildConfig.colorRoleIds) {
+            const role = guild.roles.cache.get(roleId);
+            if (!role) continue;
+            
+            const color = role.hexColor || '#ffffff';
+            
+            // رسم مربع بزوايا منحنية
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.roundRect(currentX, currentY, boxSize, boxSize, cornerRadius);
+            ctx.fill();
+            
+            // إضافة رقم اللون داخل المربع
+            ctx.fillStyle = getContrastColor(color);
+            ctx.font = 'bold 24px Arial'; // حجم خط مناسب للمربعات الصغيرة
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(colorIndex.toString(), currentX + boxSize / 2, currentY + boxSize / 2);
+            
+            colorIndex++;
+            
+            // الانتقال للمربع التالي
+            if (colorIndex % colorsPerRow === 1 && colorIndex > 1) {
+                currentX = startX;
+                currentY += boxSize + gap;
+            } else {
+                currentX += boxSize + gap;
+            }
+        }
+        
+        // حفظ الصورة المدمجة
+        const buffer = canvas.toBuffer('image/png');
+        const imagePath = path.join(__dirname, '..', 'data', 'temp_colors_merged.png');
+        fs.writeFileSync(imagePath, buffer);
+        
+        return imagePath;
+    } catch (error) {
+        console.error('خطأ في إنشاء صورة الألوان:', error);
+        return null;
+    }
+}
+
+// دالة للحصول على لون نص متباين
+function getContrastColor(hexColor) {
+    // تحويل HEX إلى RGB
+    const r = parseInt(hexColor.slice(1, 3), 16);
+    const g = parseInt(hexColor.slice(3, 5), 16);
+    const b = parseInt(hexColor.slice(5, 7), 16);
+
+    // حساب السطوع
+    const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+
+    // إرجاع أبيض أو أسود حسب السطوع
+    return brightness > 128 ? '#000000' : '#ffffff';
+}
+
+// دالة لإنشاء وصف الألوان للإمبد
+function createColorDescription(guild, guildConfig) {
+    // لا نضيف الألوان في وصف الإيمبد - فقط في المنيو
+    return '';
+}
+
 // دالة لتحويل الآيدي أو اليوزر إلى منشن
 async function formatUserMention(input, guild) {
     // تنظيف المدخل
@@ -649,7 +928,7 @@ async function formatUserMention(input, guild) {
     try {
         // إزالة @ إذا كانت موجودة في البداية
         const searchName = cleaned.startsWith('@') ? cleaned.substring(1) : cleaned;
-        
+
         // البحث في أعضاء السيرفر
         const members = await guild.members.fetch();
         const member = members.find(m => 
@@ -657,7 +936,7 @@ async function formatUserMention(input, guild) {
             m.user.tag.toLowerCase() === searchName.toLowerCase() ||
             m.displayName.toLowerCase() === searchName.toLowerCase()
         );
-        
+
         if (member) {
             return `<@${member.user.id}>`;
         }
@@ -720,14 +999,14 @@ async function handleRoomRequestMenu(interaction, client) {
     try {
         const config = loadRoomConfig();
         const guildConfig = config[interaction.guild.id];
-        
+
         if (guildConfig) {
             const setupData = setupEmbedMessages.get(interaction.guild.id);
-            
+
             if (setupData && setupData.messageId && setupData.channelId === guildConfig.embedChannelId) {
                 const embedChannel = await client.channels.fetch(guildConfig.embedChannelId);
                 const setupMessage = await embedChannel.messages.fetch(setupData.messageId);
-                
+
                 // إعادة بناء المنيو بدون اختيار افتراضي
                 const freshMenu = new ActionRowBuilder().addComponents(
                     new StringSelectMenuBuilder()
@@ -748,7 +1027,7 @@ async function handleRoomRequestMenu(interaction, client) {
                             }
                         ])
                 );
-                
+
                 await setupMessage.edit({ components: [freshMenu] });
                 console.log('✅ تم إعادة تعيين المنيو فورًا بعد فتح المودال');
             }
@@ -811,7 +1090,7 @@ async function handleRoomModalSubmit(interaction, client) {
             .setTitle('**أخطاء في الإدخال**')
             .setDescription(validationErrors.join('\n'))
             .setColor('#ff0000');
-        
+
         await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
         return;
     }
@@ -870,17 +1149,17 @@ async function handleEmojiMessage(message, client) {
     // استخراج الإيموجيات المخصصة (عادية ومتحركة)
     const customEmojiRegex = /<a?:\w+:\d+>/g;
     const customEmojis = message.content.match(customEmojiRegex) || [];
-    
+
     // استخراج الإيموجيات Unicode
     const unicodeEmojiRegex = /(\p{Emoji_Presentation}|\p{Emoji}\uFE0F|\p{Emoji})/gu;
     const unicodeEmojis = [];
-    
+
     // إزالة الإيموجيات المخصصة من النص للحصول على Unicode فقط
     let cleanContent = message.content;
     for (const customEmoji of customEmojis) {
         cleanContent = cleanContent.replace(customEmoji, '');
     }
-    
+
     // استخراج Unicode
     const unicodeMatches = cleanContent.match(unicodeEmojiRegex) || [];
     for (const emoji of unicodeMatches) {
@@ -888,10 +1167,10 @@ async function handleEmojiMessage(message, client) {
             unicodeEmojis.push(emoji);
         }
     }
-    
+
     // دمج جميع الإيموجيات
     const emojis = [...customEmojis, ...unicodeEmojis];
-    
+
     if (emojis.length === 0) {
         await message.reply('❌ **لم يتم العثور على إيموجيات. تم إلغاء الطلب**').then(msg => {
             setTimeout(() => msg.delete().catch(() => {}), 5000);
@@ -972,10 +1251,10 @@ async function handleEmojiMessage(message, client) {
     try {
         const embedChannel = await client.channels.fetch(guildConfig.embedChannelId);
         const setupData = setupEmbedMessages.get(requestData.guildId);
-        
+
         if (setupData && setupData.messageId && setupData.channelId === guildConfig.embedChannelId) {
             const setupMessage = await embedChannel.messages.fetch(setupData.messageId);
-            
+
             // إعادة بناء المنيو بدون اختيار افتراضي
             const freshMenu = new ActionRowBuilder().addComponents(
                 new StringSelectMenuBuilder()
@@ -996,7 +1275,7 @@ async function handleEmojiMessage(message, client) {
                         }
                     ])
             );
-            
+
             await setupMessage.edit({ components: [freshMenu] });
             console.log('✅ تم تحديث منيو السيتب لإعادة تعيينه');
         }
@@ -1006,26 +1285,26 @@ async function handleEmojiMessage(message, client) {
 
     // حذف رسالة الإيموجيات من المستخدم
     await message.delete().catch(() => {});
-    
+
     // إرسال رد مخفي للمستخدم في الخاص
     try {
         let description = `**تم إرسال طلبك بنجاح!**\n\n${requestData.roomEmoji} نوع الروم : ${requestData.roomType}\n لـ : ${requestData.forWho}\n الموعد : ${requestData.when}\n لإيموجيات : ${emojis.join(' ')}`;
-        
+
         if (requestData.imageUrl) {
             description += `\n الصورة : مضافة`;
         }
-        
+
         description += `\n\nسيتم مراجعة طلبك وإبلاغك بالنتيجة قريباً`;
 
         const replyEmbed = colorManager.createEmbed()
             .setTitle('**تم إرسال الطلب**')
             .setDescription(description)
             .setTimestamp();
-        
+
         if (requestData.imageUrl) {
             replyEmbed.setImage(requestData.imageUrl);
         }
-        
+
         await message.author.send({ embeds: [replyEmbed] });
     } catch (error) {
         console.error('فشل في إرسال رسالة خاصة للمستخدم:', error);
@@ -1146,7 +1425,7 @@ async function scheduleRoomCreation(request, client) {
 async function createRoom(request, client, guildConfig) {
     try {
         console.log(`🔄 بدء إنشاء روم: ${request.roomType} لـ ${request.forWho}`);
-        
+
         const guild = await client.guilds.fetch(request.guildId);
         if (!guild) {
             console.error(`❌ السيرفر ${request.guildId} غير موجود`);
@@ -1155,7 +1434,7 @@ async function createRoom(request, client, guildConfig) {
 
         // استخراج اسم العرض (nickname) من forWho
         let displayName = request.forWho;
-        
+
         // إذا كان منشن، جلب المعلومات من السيرفر
         const mentionMatch = request.forWho.match(/<@!?(\d+)>/);
         if (mentionMatch) {
@@ -1211,7 +1490,7 @@ async function createRoom(request, client, guildConfig) {
         // إضافة الريآكتات من الطلب
         const emojis = request.emojis || [];
         console.log(`📝 محاولة إضافة ${emojis.length} ريآكشن`);
-        
+
         for (const reaction of emojis) {
             try {
                 // محاولة إضافة الريآكت (يدعم Unicode والمخصص والخارجي)
@@ -1241,11 +1520,11 @@ async function createRoom(request, client, guildConfig) {
             requestId: request.id
         });
         saveActiveRooms();
-        
+
         // جدولة حذف الروم بعد 12 ساعة
         scheduleRoomDeletion(channel.id, client);
         console.log(`✅ تم إنشاء روم ${request.roomType} بنجاح: ${roomName} (سيتم حذفها تلقائياً بعد 12 ساعة)`);
-        
+
         // إرسال إشعار لصاحب الطلب
         try {
             const requester = await client.users.fetch(request.userId);
@@ -1257,7 +1536,7 @@ async function createRoom(request, client, guildConfig) {
                     { name: 'رابط الروم', value: `<#${channel.id}>`, inline: true }
                 ])
                 .setTimestamp();
-            
+
             await requester.send({ embeds: [notificationEmbed] });
             console.log(`✅ تم إرسال إشعار لصاحب الطلب`);
         } catch (dmError) {
@@ -1266,7 +1545,7 @@ async function createRoom(request, client, guildConfig) {
 
     } catch (error) {
         console.error('❌ خطأ في إنشاء الروم:', error);
-        
+
         // محاولة إرسال إشعار بالخطأ لصاحب الطلب
         try {
             const requester = await client.users.fetch(request.userId);
@@ -1278,7 +1557,7 @@ async function createRoom(request, client, guildConfig) {
                 ])
                 .setColor('#ff0000')
                 .setTimestamp();
-            
+
             await requester.send({ embeds: [errorEmbed] });
         } catch (dmError) {
             console.error('فشل في إرسال إشعار الخطأ:', dmError.message);
@@ -1305,28 +1584,28 @@ function parseScheduleTime(timeString) {
     }
 
     // بعد X ثانية
-    const secondsMatch = cleanTime.match(/بعد\s+(\d+)\s*ثوان[يی]?|ثانية|بعد\s+ثانية/);
+    const secondsMatch = cleanTime.match(/بعد\s+(\d+)\s*ثوان[يی]?|بعد\s+ثانية/);
     if (secondsMatch) {
         const seconds = parseInt(secondsMatch[1] || 1);
         return now.clone().add(seconds, 'seconds').toDate();
     }
 
     // بعد X دقائق
-    const minutesMatch = cleanTime.match(/بعد\s+(\d+)\s*دقائق?|دقيقة|بعد\s+دقيقة/);
+    const minutesMatch = cleanTime.match(/بعد\s+(\d+)\s*دقائق?|بعد\s+دقيقة/);
     if (minutesMatch) {
         const minutes = parseInt(minutesMatch[1] || 1);
         return now.clone().add(minutes, 'minutes').toDate();
     }
 
     // بعد X ساعات
-    const hoursMatch = cleanTime.match(/بعد\s+(\d+)\s*ساعات?|ساعة|بعد\s+ساعة/);
+    const hoursMatch = cleanTime.match(/بعد\s+(\d+)\s*ساعات?|بعد\s+ساعة/);
     if (hoursMatch) {
         const hours = parseInt(hoursMatch[1] || 1);
         return now.clone().add(hours, 'hours').toDate();
     }
 
     // بعد X أيام
-    const daysMatch = cleanTime.match(/بعد\s+(\d+)\s*أيام?|يوم|بعد\s+يوم/);
+    const daysMatch = cleanTime.match(/بعد\s+(\d+)\s*أيام?|بعد\s+يوم/);
     if (daysMatch) {
         const days = parseInt(daysMatch[1] || 1);
         return now.clone().add(days, 'days').toDate();
@@ -1382,6 +1661,143 @@ function parseScheduleTime(timeString) {
     return now.clone().add(1, 'hour').toDate();
 }
 
+// معالجة اختيار الألوان
+async function handleColorSelection(interaction, client) {
+    try {
+        const selectedValue = interaction.values[0];
+        const guild = interaction.guild;
+        const member = interaction.member;
+
+        const config = loadRoomConfig();
+        const guildConfig = config[guild.id];
+
+        if (!guildConfig || !guildConfig.colorRoleIds) {
+            await interaction.reply({ content: '❌ **النظام غير مُعد بعد!**', ephemeral: true });
+            return;
+        }
+
+        // إزالة جميع الألوان
+        if (selectedValue === 'remove_all_colors') {
+            const currentColorRoles = member.roles.cache.filter(role => 
+                guildConfig.colorRoleIds.includes(role.id)
+            );
+
+            if (currentColorRoles.size === 0) {
+                await interaction.reply({ 
+                    content: '✅ **ليس لديك أي رولات ألوان حالياً**', 
+                    ephemeral: true 
+                });
+                return;
+            }
+
+            let removedCount = 0;
+            for (const role of currentColorRoles.values()) {
+                try {
+                    await member.roles.remove(role);
+                    removedCount++;
+                } catch (error) {
+                    console.error(`فشل إزالة الدور ${role.name}:`, error.message);
+                }
+            }
+
+            const successEmbed = colorManager.createEmbed()
+                .setTitle('✅ Done')
+                .setDescription(`تم إزالة ${removedCount} رول لون من حسابك`);
+
+            await interaction.reply({ embeds: [successEmbed], ephemeral: true });
+
+            // تحديث منيو الألوان بعد إزالة جميع الألوان
+            try {
+                const setupData = setupEmbedMessages.get(guild.id);
+                if (setupData && setupData.messageId && setupData.channelId === guildConfig.embedChannelId) {
+                    const embedChannel = await client.channels.fetch(guildConfig.embedChannelId);
+                    const setupMessage = await embedChannel.messages.fetch(setupData.messageId);
+
+                    const freshMenus = createSetupMenus(guild, guildConfig);
+                    await setupMessage.edit({ components: freshMenus });
+                    console.log(`✅ تم تحديث منيو الألوان بعد إزالة جميع الألوان`);
+                }
+            } catch (updateError) {
+                console.error('❌ خطأ في تحديث منيو الألوان:', updateError.message);
+            }
+
+            return;
+        }
+
+        // اختيار لون جديد
+        const selectedRole = guild.roles.cache.get(selectedValue);
+        if (!selectedRole) {
+            await interaction.reply({ content: '❌ **الدور غير موجود!**', ephemeral: true });
+            return;
+        }
+
+        const currentColorRoles = member.roles.cache.filter(role => 
+            guildConfig.colorRoleIds.includes(role.id)
+        );
+
+        if (currentColorRoles.has(selectedValue)) {
+            await interaction.reply({ 
+                content: `✅ **لديك هذا اللون بالفعل : ${selectedRole.name}**`, 
+                ephemeral: true 
+            });
+            return;
+        }
+
+        // إزالة الأدوار القديمة
+        for (const role of currentColorRoles.values()) {
+            try {
+                await member.roles.remove(role);
+                console.log(`🗑️ تم إزالة الدور القديم: ${role.name} من ${member.user.tag}`);
+            } catch (error) {
+                console.error(`فشل إزالة الدور ${role.name}:`, error.message);
+            }
+        }
+
+        // إضافة الدور الجديد
+        try {
+            await member.roles.add(selectedRole);
+
+            const successEmbed = colorManager.createEmbed()
+                .setTitle('✅ Done')
+                .setDescription(`**اللون الجديد :** ${selectedRole.name}\n**الكود :** ${selectedRole.hexColor}`)
+                .setColor(selectedRole.color);
+
+            await interaction.reply({ embeds: [successEmbed], ephemeral: true });
+            console.log(`✅ تم إضافة الدور ${selectedRole.name} لـ ${member.user.tag}`);
+
+            // تحديث منيو الألوان في رسالة السيتب ليعود لحالته الافتراضية
+            try {
+                const setupData = setupEmbedMessages.get(guild.id);
+                if (setupData && setupData.messageId && setupData.channelId === guildConfig.embedChannelId) {
+                    const embedChannel = await client.channels.fetch(guildConfig.embedChannelId);
+                    const setupMessage = await embedChannel.messages.fetch(setupData.messageId);
+
+                    // إعادة بناء جميع المنيوهات (الروم + الألوان)
+                    const freshMenus = createSetupMenus(guild, guildConfig);
+
+                    await setupMessage.edit({ components: freshMenus });
+                    console.log(`✅ تم تحديث منيو الألوان تلقائياً بعد الاختيار`);
+                }
+            } catch (updateError) {
+                console.error('❌ خطأ في تحديث منيو الألوان:', updateError.message);
+            }
+
+        } catch (error) {
+            console.error(`فشل إضافة الدور ${selectedRole.name}:`, error.message);
+            await interaction.reply({ 
+                content: '❌ **فشل تغيير اللون! تأكد من أن البوت لديه الصلاحيات المناسبة.**', 
+                ephemeral: true 
+            });
+        }
+
+    } catch (error) {
+        console.error('خطأ في معالجة اختيار اللون:', error);
+        if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({ content: '❌ **حدث خطأ!**', ephemeral: true }).catch(() => {});
+        }
+    }
+}
+
 // تسجيل معالجات التفاعلات
 function registerHandlers(client) {
     client.on('interactionCreate', async (interaction) => {
@@ -1391,6 +1807,12 @@ function registerHandlers(client) {
             // معالجة منيو طلبات الغرف
             if (interaction.isStringSelectMenu() && interaction.customId === 'room_type_menu') {
                 await handleRoomRequestMenu(interaction, client);
+                return;
+            }
+
+            // معالجة منيو اختيار الألوان
+            if (interaction.isStringSelectMenu() && interaction.customId === 'color_selection_menu') {
+                await handleColorSelection(interaction, client);
                 return;
             }
 
@@ -1414,7 +1836,7 @@ function registerHandlers(client) {
     client.on('messageCreate', async (message) => {
         await handleEmojiMessage(message, client);
         if (message.author.bot) return;
-        
+
         const roomData = activeRooms.get(message.channel.id);
         if (roomData && roomData.emojis && roomData.emojis.length > 0) {
             for (const reaction of roomData.emojis) {
@@ -1441,7 +1863,7 @@ function registerHandlers(client) {
             // التحقق من أن الرسالة في روم محمي
             if (roomEmbedMessages.has(message.channel.id)) {
                 const roomData = roomEmbedMessages.get(message.channel.id);
-                
+
                 // التحقق من أن الرسالة المحذوفة هي رسالة الإمبد
                 if (message.id === roomData.messageId) {
                     console.log(`⚠️ تم حذف رسالة الإمبد في ${message.channel.name} - سيتم إعادة الإرسال بعد 5 ثواني`);
@@ -1498,33 +1920,45 @@ function registerHandlers(client) {
                             const channel = await client.channels.fetch(setupData.channelId);
                             if (!channel) return;
 
+                            const guild = client.guilds.cache.get(guildId);
+                            if (!guild) return;
+
+                            const config = loadRoomConfig();
+                            const guildConfig = config[guildId];
+
+                            // إنشاء صورة الألوان المدمجة مع الصورة الأصلية
+                            const mergedImagePath = await createColorsImage(guild, guildConfig);
+
+                            const colorDescription = createColorDescription(guild, guildConfig);
+
+                            // استخدام الصورة المدمجة أو الصورة الأصلية
+                            const imageToUse = mergedImagePath ? `attachment://colors_merged.png` : setupData.imageUrl;
+
                             const finalEmbed = colorManager.createEmbed()
-                                .setTitle('**Rooms**')
-                                .setDescription('**اختر نوع الروم التي تريد طلبها :**')
-                                .setImage(setupData.imageUrl)
-                                .setFooter({ text: 'Rooms system' });
+                                .setTitle('**Rooms & Colors**')
+                                .setDescription('**اختر لونك او نوع الروم اللي تبيها :**' + colorDescription)
+                                .setImage(imageToUse)
+                                .setFooter({ text: 'System' });
 
-                            const menu = new ActionRowBuilder().addComponents(
-                                new StringSelectMenuBuilder()
-                                    .setCustomId('room_type_menu')
-                                    .setPlaceholder('اختر نوع الروم')
-                                    .addOptions([
-                                        {
-                                            label: 'Doaa',
-                        description: 'طلب روم دعاء',
-                        emoji: '<:emoji_5:1430777863363100775>',
-                        value: 'condolence',
-                    },
-                    {
-                        label: 'Birthday ',
-                        description: 'طلب روم ميلاد',
-                        emoji: '<:emoji_4:1430777429235994725>',
-                        value: 'birthday',
-                                        }
-                                    ])
-                            );
+                            const menus = createSetupMenus(guild, guildConfig);
 
-                            const newMessage = await channel.send({ embeds: [finalEmbed], components: [menu] });
+                            const messageOptions = { 
+                                embeds: [finalEmbed], 
+                                components: menus 
+                            };
+
+                            // إضافة الصورة المدمجة
+                            if (mergedImagePath) {
+                                const attachment = new AttachmentBuilder(mergedImagePath, { name: 'colors_merged.png' });
+                                messageOptions.files = [attachment];
+                            }
+
+                            const newMessage = await channel.send(messageOptions);
+
+                            // حذف الصورة المؤقتة
+                            if (mergedImagePath && fs.existsSync(mergedImagePath)) {
+                                fs.unlinkSync(mergedImagePath);
+                            }
 
                             console.log(`✅ تم إعادة إرسال رسالة سيتب الروم`);
 
@@ -1532,18 +1966,16 @@ function registerHandlers(client) {
                             setupEmbedMessages.set(guildId, {
                                 messageId: newMessage.id,
                                 channelId: channel.id,
-                                embed: finalEmbed,
-                                menu: menu,
                                 imageUrl: setupData.imageUrl
                             });
-                            
+
                             saveSetupEmbedMessages(setupEmbedMessages);
 
                         } catch (error) {
                             console.error('❌ فشل في إعادة إرسال رسالة سيتب الروم:', error);
                         }
                     }, 5000);
-                    
+
                     break;
                 }
             }
@@ -1604,7 +2036,7 @@ async function execute(message, args, { BOT_OWNERS, client }) {
             // الخطوة 3: طلب الصورة
             const step3Embed = colorManager.createEmbed()
                 .setTitle('**إعداد نظام الرومات**')
-                .setDescription('**الخطوة 3/3: أرسل الصورة**\n\nأرسل الصورة (إرفاق أو رابط)')
+                .setDescription('**الخطوة 3/3: أرسل الصورة**\n\nأرسل الصورة (إرفاق أو رابط)\n\n**ملاحظة:** سيتم إضافة جميع الرولات الملونة من السيرفر تلقائياً في منيو الألوان')
                 .setFooter({ text: 'لديك 120 ثانية للرد' });
 
             await message.channel.send({ embeds: [step3Embed] });
@@ -1631,97 +2063,179 @@ async function execute(message, args, { BOT_OWNERS, client }) {
                     return;
                 }
 
+                // جلب جميع الأدوار التي أسماؤها أرقام صافية فقط من السيرفر
+                const allRoles = message.guild.roles.cache;
+                let colorRoleData = [];
+
+                // جمع الأدوار التي أسماؤها أرقام صافية فقط (مثل "1", "2", "3")
+                const usedNumbers = new Set(); // لتتبع الأرقام المستخدمة
+                
+                allRoles.forEach(role => {
+                    // التحقق من أن الاسم بالكامل رقم فقط (لا يحتوي على أحرف أو مسافات)
+                    const trimmedName = role.name.trim();
+                    const isNumberOnly = /^\d+$/.test(trimmedName);
+
+                    if (isNumberOnly && !role.managed && role.id !== message.guild.id) {
+                        const roleNumber = parseInt(trimmedName);
+                        
+                        // تجاهل الرول إذا كان الرقم مستخدم بالفعل (رول مكرر)
+                        if (!usedNumbers.has(roleNumber)) {
+                            colorRoleData.push({
+                                id: role.id,
+                                number: roleNumber
+                            });
+                            usedNumbers.add(roleNumber);
+                            console.log(`✅ تم إضافة رول اللون: ${role.name} (${role.id})`);
+                        } else {
+                            console.warn(`⚠️ تم تجاهل رول مكرر: ${role.name} (${role.id}) - الرقم ${roleNumber} موجود بالفعل`);
+                        }
+                    }
+                });
+
+                // إذا لم يكن هناك رولات ألوان، قم بإنشاء 7 ألوان عشوائية
+                if (colorRoleData.length === 0) {
+                    const loadingMsg = await message.channel.send('⏳ **لا توجد رولات ألوان... جاري إنشاء 7 ألوان تلقائياً...**');
+
+                    // ألوان عشوائية جميلة
+                    const randomColors = [
+                        '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4',
+                        '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F',
+                        '#A29BFE', '#FD79A8', '#FDCB6E', '#6C5CE7',
+                        '#00B894', '#E17055', '#74B9FF', '#A29BFE'
+                    ];
+
+                    // خلط الألوان عشوائياً
+                    const shuffledColors = randomColors.sort(() => Math.random() - 0.5);
+
+                    // إنشاء 7 رولات
+                    for (let i = 1; i <= 7; i++) {
+                        try {
+                            const color = shuffledColors[i - 1];
+                            const newRole = await message.guild.roles.create({
+                                name: i.toString(),
+                                color: color,
+                                reason: 'تم إنشاء رول لون تلقائياً بواسطة نظام setroom'
+                            });
+
+                            colorRoleData.push({
+                                id: newRole.id,
+                                number: i
+                            });
+
+                            console.log(`✅ تم إنشاء رول لون: ${i} - ${color}`);
+                        } catch (roleError) {
+                            console.error(`❌ فشل في إنشاء رول اللون ${i}:`, roleError);
+                        }
+                    }
+
+                    await loadingMsg.edit(`✅ **تم إنشاء ${colorRoleData.length} رول لون بنجاح!**`);
+
+                    // انتظار ثانيتين قبل المتابعة
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                }
+
+                // ترتيب الأدوار حسب الرقم
+                colorRoleData.sort((a, b) => a.number - b.number);
+
+                const colorRoleIds = colorRoleData.map(r => r.id);
+
                 // حفظ الإعدادات
                 const config = loadRoomConfig();
                 config[guildId] = {
                     requestsChannelId: requestsChannel.id,
                     embedChannelId: embedChannel.id,
                     imageUrl: imageUrl,
+                    colorRoleIds: colorRoleIds,
                     setupBy: message.author.id,
                     setupAt: Date.now()
                 };
 
                 if (saveRoomConfig(config)) {
-                    // إرسال الإيمبد في روم الإيمبد
-                    const finalEmbed = colorManager.createEmbed()
-                        .setTitle('**Rooms**')
-                        .setDescription('**اختر نوع الروم التي تريد طلبها :**')
-                        .setImage(imageUrl)
-                        .setFooter({ text: 'Rooms system' });
+                        // إنشاء صورة الألوان المدمجة مع الصورة الأصلية
+                        const mergedImagePath = await createColorsImage(message.guild, config[guildId]);
 
-                    const menu = new ActionRowBuilder().addComponents(
-                        new StringSelectMenuBuilder()
-                            .setCustomId('room_type_menu')
-                            .setPlaceholder('اختر نوع الروم')
-                            .addOptions([
-                                {label: 'Doaa',
-                        description: 'طلب روم دعاء',
-                        emoji: '<:emoji_5:1430777863363100775>',
-                        value: 'condolence',
-                    },
-                    {
-                        label: 'Birthday ',
-                        description: 'طلب روم ميلاد',
-                        emoji: '<:emoji_4:1430777429235994725>',
-                        value: 'birthday',
-                                    
-                                }
-                            ])
-                    );
+                        // إرسال الإيمبد في روم الإيمبد
+                        const colorDescription = createColorDescription(message.guild, config[guildId]);
 
-                    const setupMessage = await embedChannel.send({ embeds: [finalEmbed], components: [menu] });
-                    console.log(`📤 تم إرسال setup embed للمرة الأولى - جاري التحقق...`);
+                        // استخدام الصورة المدمجة أو الصورة الأصلية
+                        const imageToUse = mergedImagePath ? `attachment://colors_merged.png` : imageUrl;
 
-                    // حفظ رسالة السيتب للحماية من الحذف
-                    setupEmbedMessages.set(guildId, {
-                        messageId: setupMessage.id,
-                        channelId: embedChannel.id,
-                        embed: finalEmbed,
-                        menu: menu,
-                        imageUrl: imageUrl
-                    });
-                    
-                    saveSetupEmbedMessages(setupEmbedMessages);
+                        const finalEmbed = colorManager.createEmbed()
+                            .setTitle('**Rooms & Colors**')
+                            .setDescription('**اختر لوونك او نوع الروم التي تريد طلبها :**' + colorDescription)
+                            .setImage(imageToUse)
+                            .setFooter({ text: 'System' });
 
-                    // فحص فوري للتأكد من الإرسال (بعد ثانية واحدة)
-                    setTimeout(async () => {
-                        const isVerified = await verifySetupEmbed(guildId, setupMessage.id, embedChannel.id, client, 1);
-                        if (isVerified) {
-                            console.log(`✅ [فحص فوري] تأكيد نجاح إرسال setup embed في ${embedChannel.name}`);
-                        } else {
-                            console.error(`⚠️ [فحص فوري] فشل التحقق من setup embed - سيتم المحاولة مجدداً`);
-                            await resendSetupEmbed(guildId, client);
+                        const menus = createSetupMenus(message.guild, config[guildId]);
+
+                        const messageOptions = { 
+                            embeds: [finalEmbed], 
+                            components: menus 
+                        };
+
+                        // إضافة الصورة المدمجة
+                        if (mergedImagePath) {
+                            const attachment = new AttachmentBuilder(mergedImagePath, { name: 'colors_merged.png' });
+                            messageOptions.files = [attachment];
                         }
-                    }, 1000);
 
-                    // جدولة فحص بعد 3 دقائق
-                    scheduleSetupEmbedThreeMinuteCheck(guildId, setupMessage.id, embedChannel.id, client);
+                        const setupMessage = await embedChannel.send(messageOptions);
 
-                    // جدولة فحوصات دورية كل 10 دقائق لمدة ساعة
-                    scheduleSetupEmbedPeriodicChecks(guildId, setupMessage.id, embedChannel.id, client);
+                        // حذف الصورة المؤقتة
+                        if (mergedImagePath && fs.existsSync(mergedImagePath)) {
+                            fs.unlinkSync(mergedImagePath);
+                        }
+                        console.log(`📤 تم إرسال setup embed للمرة الأولى - جاري التحقق...`);
 
-                    // رسالة نجاح
-                    const successEmbed = colorManager.createEmbed()
-                        .setTitle('✅ **تم الإعداد بنجاح**')
-                        .setDescription(`**تم إعداد نظام الرومات بنجاح مع نظام الفحص المتقدم!**\n\n روم الطلبات : ${requestsChannel}\nروم الإيمبد : ${embedChannel}`)
-                        .setTimestamp();
+                        // حفظ رسالة السيتب للحماية من الحذف
+                        setupEmbedMessages.set(guildId, {
+                            messageId: setupMessage.id,
+                            channelId: embedChannel.id,
+                            imageUrl: imageUrl
+                        });
 
-                    await message.channel.send({ embeds: [successEmbed] });
+                        saveSetupEmbedMessages(setupEmbedMessages);
 
-                    // تسجيل الحدث
-                    logEvent(client, message.guild, {
-                        type: 'SETUP_ACTIONS',
-                        title: 'إعداد نظام الغرف',
-                        description: `تم إعداد نظام طلبات الغرف`,
-                        user: message.author,
-                        fields: [
-                            { name: 'روم الطلبات', value: requestsChannel.name, inline: true },
-                            { name: 'روم الإيمبد', value: embedChannel.name, inline: true }
-                        ]
-                    });
-                } else {
-                    await message.channel.send('❌ **فشل في حفظ الإعدادات**');
-                }
+                        // فحص فوري للتأكد من الإرسال (بعد ثانية واحدة)
+                        setTimeout(async () => {
+                            const isVerified = await verifySetupEmbed(guildId, setupMessage.id, embedChannel.id, client, 1);
+                            if (isVerified) {
+                                console.log(`✅ [فحص فوري] تأكيد نجاح إرسال setup embed في ${embedChannel.name}`);
+                            } else {
+                                console.error(`⚠️ [فحص فوري] فشل التحقق من setup embed - سيتم المحاولة مجدداً`);
+                                await resendSetupEmbed(guildId, client);
+                            }
+                        }, 1000);
+
+                        // جدولة فحص بعد 3 دقائق
+                        scheduleSetupEmbedThreeMinuteCheck(guildId, setupMessage.id, embedChannel.id, client);
+
+                        // جدولة فحوصات دورية كل 10 دقائق لمدة ساعة
+                        scheduleSetupEmbedPeriodicChecks(guildId, setupMessage.id, embedChannel.id, client);
+
+                        // رسالة نجاح
+                        const successEmbed = colorManager.createEmbed()
+                            .setTitle('✅ **تم الإعداد بنجاح**')
+                            .setDescription(`**تم إعداد نظام الرومات بنجاح مع نظام الفحص المتقدم!**\n\n روم الطلبات : ${requestsChannel}\nروم الإيمبد : ${embedChannel}\n عدد الرولات الملونة : ${colorRoleIds.length}`)
+                            .setTimestamp();
+
+                        await message.channel.send({ embeds: [successEmbed] });
+
+                        // تسجيل الحدث
+                        logEvent(client, message.guild, {
+                            type: 'SETUP_ACTIONS',
+                            title: 'إعداد نظام الغرف',
+                            description: `تم إعداد نظام طلبات الغرف`,
+                            user: message.author,
+                            fields: [
+                                { name: 'روم الطلبات', value: requestsChannel.name, inline: true },
+                                { name: 'روم الإيمبد', value: embedChannel.name, inline: true },
+                                { name: 'عدد الألوان', value: colorRoleIds.length.toString(), inline: true }
+                            ]
+                        });
+                    } else {
+                        await message.channel.send('❌ **فشل في حفظ الإعدادات**');
+                    }
             });
         });
     });
@@ -1737,5 +2251,6 @@ module.exports = {
     registerHandlers,
     restoreSchedules,
     checkAndRestoreSetupEmbed,
-    startContinuousSetupEmbedCheck
+    startContinuousSetupEmbedCheck,
+    startAutoMessageDeletion
 };
