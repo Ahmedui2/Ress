@@ -172,13 +172,15 @@ async function resendSetupEmbed(guildId, client) {
                 .setPlaceholder('اختر نوع الروم')
                 .addOptions([
                     {
-                        label: 'روم تعزيه',
-                        description: 'طلب روم عزاء',
+                        label: 'Doaa',
+                        description: 'طلب روم دعاء',
+                        emoji: '<:emoji_5:1430777863363100775>',
                         value: 'condolence',
                     },
                     {
-                        label: 'روم ميلاد',
-                        description: 'طلب روم hbd',
+                        label: 'Birthday ',
+                        description: 'طلب روم ميلاد',
+                        emoji: '<:emoji_4:1430777429235994725>',
                         value: 'birthday',
                     }
                 ])
@@ -273,15 +275,20 @@ function scheduleSetupEmbedPeriodicChecks(guildId, messageId, channelId, client)
 async function checkAndDeleteOldRooms(client) {
     const now = Date.now();
     const roomsToDelete = [];
+    const TWELVE_HOURS = 12 * 60 * 60 * 1000; // 12 ساعة بالميلي ثانية
     
     for (const [channelId, roomData] of activeRooms.entries()) {
         const roomAge = now - roomData.createdAt;
         const hoursSinceCreation = roomAge / (1000 * 60 * 60);
         
+        console.log(`🔍 فحص الروم ${channelId}: عمر الروم ${hoursSinceCreation.toFixed(2)} ساعة`);
+        
         if (hoursSinceCreation >= 12) {
+            console.log(`⚠️ الروم ${channelId} تجاوز 12 ساعة - سيتم حذفه فوراً`);
             roomsToDelete.push(channelId);
-        } else { const remainingTime = (12 * 60 * 60 * 1000) - roomAge;
-            const deletionTime = new Date(now + remainingTime);
+        } else {
+            const remainingTime = TWELVE_HOURS - roomAge;
+            const deletionTime = new Date(roomData.createdAt + TWELVE_HOURS);
             
             const job = schedule.scheduleJob(deletionTime, async () => {
                 console.log(`⏰ حان موعد حذف الروم: ${channelId}`);
@@ -290,7 +297,11 @@ async function checkAndDeleteOldRooms(client) {
             });
             
             roomDeletionJobs.set(channelId, job);
-            console.log(`✅ تم إعادة جدولة حذف الروم ${channelId} بعد ${Math.round(remainingTime / (1000 * 60))} دقيقة`);
+            
+            const remainingHours = (remainingTime / (1000 * 60 * 60)).toFixed(2);
+            const remainingMinutes = Math.round(remainingTime / (1000 * 60));
+            console.log(`✅ تم إعادة جدولة حذف الروم ${channelId} - متبقي ${remainingHours} ساعة (${remainingMinutes} دقيقة)`);
+            console.log(`📅 سيتم الحذف في: ${deletionTime.toLocaleString('ar-SA')}`);
         }
     }
     
@@ -301,31 +312,49 @@ async function checkAndDeleteOldRooms(client) {
     
     if (roomsToDelete.length > 0) {
         console.log(`🗑️ تم حذف ${roomsToDelete.length} روم قديم`);
+    } else {
+        console.log(`ℹ️ لا توجد رومات قديمة تحتاج للحذف`);
     }
 }
 // تحميل واستعادة الجدولات
 function restoreSchedules(client) {
     try {
-        if (!fs.existsSync(schedulesPath)) return;
+        // استعادة جدولات إنشاء الرومات المجدولة
+        if (fs.existsSync(schedulesPath)) {
+            const schedulesData = JSON.parse(fs.readFileSync(schedulesPath, 'utf8'));
+            const requests = loadRoomRequests();
 
-        const schedulesData = JSON.parse(fs.readFileSync(schedulesPath, 'utf8'));
-        const requests = loadRoomRequests();
+            for (const request of requests) {
+                if (request.status === 'accepted' && schedulesData[request.id]) {
+                    const nextRun = new Date(schedulesData[request.id].nextRun);
 
-        for (const request of requests) {
-            if (request.status === 'accepted' && schedulesData[request.id]) {
-                const nextRun = new Date(schedulesData[request.id].nextRun);
-
-                // إذا كان الموعد في المستقبل، أعد جدولته
-                if (nextRun > new Date()) {
-                    scheduleRoomCreation(request, client);
-                    console.log(`✅ تم استعادة جدولة الروم: ${request.roomType} - ${request.forWho}`);
-                }
-                // إذا كان الموعد قد مضى، قم بإنشاء الروم فوراً
-                else {
-                    createRoom(request, client, loadRoomConfig()[request.guildId]);
-                    console.log(`⚡ تم إنشاء روم متأخر: ${request.roomType} - ${request.forWho}`);
+                    // إذا كان الموعد في المستقبل، أعد جدولته
+                    if (nextRun > new Date()) {
+                        scheduleRoomCreation(request, client);
+                        console.log(`✅ تم استعادة جدولة الروم: ${request.roomType} - ${request.forWho}`);
+                    }
+                    // إذا كان الموعد قد مضى، قم بإنشاء الروم فوراً
+                    else {
+                        createRoom(request, client, loadRoomConfig()[request.guildId]);
+                        console.log(`⚡ تم إنشاء روم متأخر: ${request.roomType} - ${request.forWho}`);
+                    }
                 }
             }
+        }
+
+        // استعادة جدولات حذف الرومات النشطة
+        const savedRooms = loadActiveRooms();
+        for (const [channelId, roomData] of savedRooms.entries()) {
+            activeRooms.set(channelId, roomData);
+        }
+        
+        if (activeRooms.size > 0) {
+            console.log(`📂 تم تحميل ${activeRooms.size} روم نشط من الملف`);
+            // استعادة جدولات الحذف والإيموجي
+            setTimeout(() => {
+                checkAndDeleteOldRooms(client);
+                restoreRoomEmojis(client);
+            }, 5000);
         }
     } catch (error) {
         console.error('خطأ في استعادة الجدولات:', error);
@@ -343,6 +372,83 @@ function startContinuousSetupEmbedCheck(client) {
     }, 5 * 60 * 1000); // كل 5 دقائق
     
     console.log('✅ تم تشغيل نظام الفحص الدوري المستمر (كل 5 دقائق)');
+}
+
+// استعادة الإيموجي للرسائل الموجودة في الرومات النشطة
+async function restoreRoomEmojis(client) {
+    try {
+        console.log('🔄 بدء استعادة الإيموجي للرومات النشطة...');
+        
+        let restoredCount = 0;
+        
+        for (const [channelId, roomData] of activeRooms.entries()) {
+            if (!roomData.emojis || roomData.emojis.length === 0) {
+                continue;
+            }
+            
+            try {
+                const channel = await client.channels.fetch(channelId).catch(() => null);
+                if (!channel) {
+                    console.log(`⚠️ القناة ${channelId} غير موجودة - تخطي`);
+                    continue;
+                }
+                
+                // جلب آخر 100 رسالة من القناة
+                const messages = await channel.messages.fetch({ limit: 100 });
+                
+                for (const message of messages.values()) {
+                    // تخطي رسائل البوتات
+                    if (message.author.bot) continue;
+                    
+                    // التحقق من الإيموجي الموجودة على الرسالة
+                    const existingReactions = message.reactions.cache;
+                    
+                    // إضافة الإيموجي المفقودة
+                    for (const emoji of roomData.emojis) {
+                        let hasReaction = false;
+                        
+                        // التحقق من وجود الريآكشن
+                        const emojiIdMatch = emoji.match(/<a?:\w+:(\d+)>/);
+                        if (emojiIdMatch) {
+                            hasReaction = existingReactions.has(emojiIdMatch[1]);
+                        } else {
+                            hasReaction = existingReactions.has(emoji);
+                        }
+                        
+                        // إضافة الريآكشن إذا لم يكن موجودًا
+                        if (!hasReaction) {
+                            try {
+                                await message.react(emoji);
+                                restoredCount++;
+                            } catch (reactError) {
+                                // محاولة استخدام آيدي الإيموجي
+                                if (emojiIdMatch) {
+                                    try {
+                                        await message.react(emojiIdMatch[1]);
+                                        restoredCount++;
+                                    } catch (err) {
+                                        console.error(`❌ فشل إضافة الإيموجي ${emoji}:`, err.message);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                console.log(`✅ تم فحص واستعادة الإيموجي للروم ${channel.name}`);
+            } catch (channelError) {
+                console.error(`❌ خطأ في معالجة القناة ${channelId}:`, channelError.message);
+            }
+        }
+        
+        if (restoredCount > 0) {
+            console.log(`✅ تم استعادة ${restoredCount} إيموجي للرسائل`);
+        } else {
+            console.log(`ℹ️ لا توجد إيموجيات تحتاج للاستعادة`);
+        }
+    } catch (error) {
+        console.error('❌ خطأ في استعادة الإيموجي:', error);
+    }
 }
 
 // فحص واستعادة الإيمبد المحذوف
@@ -391,14 +497,16 @@ async function checkAndRestoreSetupEmbed(client) {
                             .setPlaceholder('اختر نوع الروم')
                             .addOptions([
                                 {
-                                    label: 'روم تعزيه',
-                                    description: 'طلب روم عزاء',
-                                    value: 'condolence',
-                                },
-                                {
-                                    label: 'روم ميلاد',
-                                    description: 'طلب روم hbd',
-                                    value: 'birthday',
+                                    label: 'Doaa',
+                        description: 'طلب روم دعاء',
+                        emoji: '<:emoji_5:1430777863363100775>',
+                        value: 'condolence',
+                    },
+                    {
+                        label: 'Birthday ',
+                        description: 'طلب روم ميلاد',
+                        emoji: '<:emoji_4:1430777429235994725>',
+                        value: 'birthday',
                                 }
                             ])
                     );
@@ -564,12 +672,12 @@ async function formatUserMention(input, guild) {
 // معالجة طلبات الغرف (المنيو)
 async function handleRoomRequestMenu(interaction, client) {
     const roomTypeEn = interaction.values[0]; // 'condolence' أو 'birthday'
-    const roomType = roomTypeEn === 'condolence' ? 'عزاء' : 'ميلاد';
+    const roomType = roomTypeEn === 'condolence' ? 'دعاء' : 'ميلاد';
 
     // إنشاء المودال
     const modal = new ModalBuilder()
         .setCustomId(`room_modal_${roomTypeEn}_${interaction.user.id}`)
-        .setTitle(`طلب روم ${roomType}`);
+        .setTitle(`طلب روم : ${roomType}`);
 
     const forWhoInput = new TextInputBuilder()
         .setCustomId('for_who')
@@ -627,14 +735,16 @@ async function handleRoomRequestMenu(interaction, client) {
                         .setPlaceholder('اختر نوع الروم')
                         .addOptions([
                             {
-                                label: 'روم تعزيه',
-                                description: 'طلب روم عزاء',
-                                value: 'condolence',
-                            },
-                            {
-                                label: 'روم ميلاد',
-                                description: 'طلب روم hbd',
-                                value: 'birthday',
+                                label: 'Doaa',
+                        description: 'طلب روم دعاء',
+                        emoji: '<:emoji_5:1430777863363100775>',
+                        value: 'condolence',
+                    },
+                    {
+                        label: 'Birthday ',
+                        description: 'طلب روم ميلاد',
+                        emoji: '<:emoji_4:1430777429235994725>',
+                        value: 'birthday',
                             }
                         ])
                 );
@@ -652,7 +762,7 @@ async function handleRoomRequestMenu(interaction, client) {
 async function handleRoomModalSubmit(interaction, client) {
     const modalId = interaction.customId;
     const roomTypeEn = modalId.includes('condolence') ? 'condolence' : 'birthday';
-    const roomType = roomTypeEn === 'condolence' ? 'عزاء' : 'ميلاد';
+    const roomType = roomTypeEn === 'condolence' ? 'دعاء' : 'ميلاد';
     const roomEmoji = roomTypeEn === 'condolence' ? '🖤' : '🎂';
 
     let forWho = interaction.fields.getTextInputValue('for_who').trim();
@@ -825,8 +935,8 @@ async function handleEmojiMessage(message, client) {
     const requestsChannel = await client.channels.fetch(guildConfig.requestsChannelId);
 
     const requestEmbed = colorManager.createEmbed()
-        .setTitle(`${requestData.roomEmoji} **طلب روم ${requestData.roomType} جديد**`)
-        .setDescription(`**تم استلام طلب جديد:**`)
+        .setTitle(`${requestData.roomEmoji} **طلب روم : ${requestData.roomType} جديد**`)
+        .setDescription(`**تم استلام طلب جديد :**`)
         .addFields([
             { name: 'صاحب الطلب', value: `<@${userId}>`, inline: true },
             { name: 'لمن؟', value: requestData.forWho, inline: true },
@@ -836,7 +946,7 @@ async function handleEmojiMessage(message, client) {
             { name: 'معرف الطلب', value: `\`${request.id}\``, inline: false }
         ])
         .setTimestamp()
-        .setFooter({ text: `طلب من ${message.author.tag}`, iconURL: message.author.displayAvatarURL() });
+        .setFooter({ text: `طلب من : ${message.author.tag}`, iconURL: message.author.displayAvatarURL() });
 
     // إضافة الصورة إذا كانت موجودة
     if (requestData.imageUrl) {
@@ -846,14 +956,14 @@ async function handleEmojiMessage(message, client) {
     const buttons = new ActionRowBuilder().addComponents([
         new ButtonBuilder()
             .setCustomId(`room_accept_${request.id}`)
-            .setLabel('قبول')
-            .setStyle(ButtonStyle.Success)
-            .setEmoji('✅'),
+            .setLabel('Accept')
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji('<:emoji_41:1430334120839479449>'),
         new ButtonBuilder()
             .setCustomId(`room_reject_${request.id}`)
-            .setLabel('رفض')
-            .setStyle(ButtonStyle.Danger)
-            .setEmoji('❌')
+            .setLabel('Rejec')
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji('<:emoji_39:1430334088924893275>')
     ]);
 
     await requestsChannel.send({ embeds: [requestEmbed], components: [buttons] });
@@ -873,14 +983,16 @@ async function handleEmojiMessage(message, client) {
                     .setPlaceholder('اختر نوع الروم')
                     .addOptions([
                         {
-                            label: 'روم تعزيه',
-                            description: 'طلب روم عزاء',
-                            value: 'condolence',
-                        },
-                        {
-                            label: 'روم ميلاد',
-                            description: 'طلب روم hbd',
-                            value: 'birthday',
+                            label: 'Doaa',
+                        description: 'طلب روم دعاء',
+                        emoji: '<:emoji_5:1430777863363100775>',
+                        value: 'condolence',
+                    },
+                    {
+                        label: 'Birthday ',
+                        description: 'طلب روم ميلاد',
+                        emoji: '<:emoji_4:1430777429235994725>',
+                        value: 'birthday',
                         }
                     ])
             );
@@ -897,10 +1009,10 @@ async function handleEmojiMessage(message, client) {
     
     // إرسال رد مخفي للمستخدم في الخاص
     try {
-        let description = `**تم إرسال طلبك بنجاح!**\n\n${requestData.roomEmoji} نوع الروم : ${requestData.roomType}\n🎯 لـ: ${requestData.forWho}\n الموعد : ${requestData.when}\n لإيموجيات : ${emojis.join(' ')}`;
+        let description = `**تم إرسال طلبك بنجاح!**\n\n${requestData.roomEmoji} نوع الروم : ${requestData.roomType}\n لـ : ${requestData.forWho}\n الموعد : ${requestData.when}\n لإيموجيات : ${emojis.join(' ')}`;
         
         if (requestData.imageUrl) {
-            description += `\n🖼️ الصورة: مضافة`;
+            description += `\n الصورة : مضافة`;
         }
         
         description += `\n\nسيتم مراجعة طلبك وإبلاغك بالنتيجة قريباً`;
@@ -978,7 +1090,7 @@ async function handleRoomRequestAction(interaction, client) {
 
         const notificationEmbed = colorManager.createEmbed()
             .setTitle(`${action === 'accept' ? '✅' : '❌'} **${action === 'accept' ? 'تم قبول' : 'تم رفض'} طلبك**`)
-            .setDescription(`**طلب روم ${request.roomType}**\n\n${roomEmoji} لـ: ${request.forWho}\n الموعد: ${request.when}\n\n${action === 'accept' ? 'سيتم إنشاء الروم في الوقت المحدد' : 'تم رفض طلبك'}`)
+            .setDescription(`**طلب روم ${request.roomType}**\n\n${roomEmoji} لـ : ${request.forWho}\n الموعد : ${request.when}\n\n${action === 'accept' ? 'سيتم إنشاء الروم في الوقت المحدد' : 'تم رفض طلبك'}`)
             .setTimestamp();
 
         await requester.send({ embeds: [notificationEmbed] });
@@ -1058,7 +1170,7 @@ async function createRoom(request, client, guildConfig) {
             }
         }
 
-        const roomName = `${request.roomTypeEn === 'condolence' ? 'تعزية' : 'hbd'}-${displayName.replace(/[^a-zA-Z0-9\u0600-\u06FF]/g, '-')}`;
+        const roomName = `${request.roomTypeEn === 'condolence' ? 'دعاء' : 'hbd'}-${displayName.replace(/[^a-zA-Z0-9\u0600-\u06FF]/g, '-')}`;
 
         // إنشاء الروم
         const channel = await guild.channels.create({
@@ -1071,8 +1183,8 @@ async function createRoom(request, client, guildConfig) {
 
         // إرسال الرسالة
         const roomEmbed = colorManager.createEmbed()
-            .setTitle(`${request.roomTypeEn === 'condolence' ? 'تعزيه' : 'hbd'} **Room**`)
-            .setDescription(request.message)
+            .setTitle(`${request.roomTypeEn === 'condolence' ? 'دعاء' : 'hbd'} : **Room**`)
+            .setDescription(`# ${request.message}`)
             .addFields([
                 { name: 'لـ', value: request.forWho, inline: true },
                 { name: 'بطلب من', value: `<@${request.userId}>`, inline: true }
@@ -1398,14 +1510,16 @@ function registerHandlers(client) {
                                     .setPlaceholder('اختر نوع الروم')
                                     .addOptions([
                                         {
-                                            label: 'روم تعزيه',
-                                            description: 'طلب روم عزاء',
-                                            value: 'condolence',
-                                        },
-                                        {
-                                            label: 'روم ميلاد',
-                                            description: 'طلب روم hbd',
-                                            value: 'birthday',
+                                            label: 'Doaa',
+                        description: 'طلب روم دعاء',
+                        emoji: '<:emoji_5:1430777863363100775>',
+                        value: 'condolence',
+                    },
+                    {
+                        label: 'Birthday ',
+                        description: 'طلب روم ميلاد',
+                        emoji: '<:emoji_4:1430777429235994725>',
+                        value: 'birthday',
                                         }
                                     ])
                             );
@@ -1540,16 +1654,16 @@ async function execute(message, args, { BOT_OWNERS, client }) {
                             .setCustomId('room_type_menu')
                             .setPlaceholder('اختر نوع الروم')
                             .addOptions([
-                                {
-                                    label: 'روم تعزيه',
-                                    description: 'طلب روم عزاء',
-                                    value: 'condolence',
-                            
-                                },
-                                {
-                                    label: 'روم ميلاد',
-                                    description: 'طلب روم hbd',
-                                    value: 'birthday',
+                                {label: 'Doaa',
+                        description: 'طلب روم دعاء',
+                        emoji: '<:emoji_5:1430777863363100775>',
+                        value: 'condolence',
+                    },
+                    {
+                        label: 'Birthday ',
+                        description: 'طلب روم ميلاد',
+                        emoji: '<:emoji_4:1430777429235994725>',
+                        value: 'birthday',
                                     
                                 }
                             ])

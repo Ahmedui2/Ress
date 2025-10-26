@@ -6,7 +6,7 @@ const { getDatabase } = require('../utils/database.js');
 const name = 'تفاعلي';
 
 function formatDuration(milliseconds) {
-    if (!milliseconds || milliseconds <= 0) return 'لا يوجد';
+    if (!milliseconds || milliseconds <= 0) return '0';
 
     const totalSeconds = Math.floor(milliseconds / 1000);
     const totalMinutes = Math.floor(totalSeconds / 60);
@@ -60,12 +60,12 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
 
         if (period === 'daily') {
             stats = await dbManager.getDailyStats(user.id);
-            periodLabel = 'تفاعل اليوم';
+            periodLabel = 'Daily Acrive';
             activeDays = stats.activeDays;
         } else if (period === 'weekly') {
             stats = await dbManager.getWeeklyStats(user.id);
             const weeklyActiveDays = await dbManager.getWeeklyActiveDays(user.id);
-            periodLabel = 'تفاعل الأسبوع';
+            periodLabel = 'Weekly Active';
             activeDays = weeklyActiveDays;
             // إعادة تسمية المتغيرات للتناسق
             stats.voiceTime = stats.weeklyTime;
@@ -74,22 +74,22 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
             stats.voiceJoins = stats.weeklyVoiceJoins;
         } else if (period === 'monthly') {
             stats = await dbManager.getMonthlyStats(user.id);
-            periodLabel = 'تفاعل الشهر';
+            periodLabel = 'Monthly Active';
             activeDays = stats.activeDays;
         }
 
         // جلب أكثر قناة صوتية مع قيمة افتراضية
-        const topVoiceChannel = await dbManager.getMostActiveVoiceChannel(user.id, period) || { channel_id: null, channel_name: 'لا يوجد', total_time: 0, session_count: 0 };
+        const topVoiceChannel = await dbManager.getMostActiveVoiceChannel(user.id, period) || { channel_id: null, channel_name: 'No Data', total_time: 0, session_count: 0 };
         
         // جلب أكثر قناة رسائل مع قيمة افتراضية
-        const topMessageChannel = await dbManager.getMostActiveMessageChannel(user.id) || { channel_id: null, channel_name: 'لا يوجد', message_count: 0 };
+        const topMessageChannel = await dbManager.getMostActiveMessageChannel(user.id) || { channel_id: null, channel_name: 'No Data', message_count: 0 };
 
         // حساب XP (10 رسائل = 1 XP)
         const xp = Math.floor((stats.messages || 0) / 10);
 
         // تحضير منشن القنوات
-        const voiceChannelMention = topVoiceChannel?.channel_id ? `<#${topVoiceChannel.channel_id}>` : 'لا يوجد';
-        const messageChannelMention = topMessageChannel?.channel_id ? `<#${topMessageChannel.channel_id}>` : 'لا يوجد';
+        const voiceChannelMention = topVoiceChannel?.channel_id ? `<#${topVoiceChannel.channel_id}>` : 'No Data';
+        const messageChannelMention = topMessageChannel?.channel_id ? `<#${topMessageChannel.channel_id}>` : 'No Data';
 
         // إنشاء Embed مصغر
         const embed = colorManager.createEmbed()
@@ -98,7 +98,7 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
             .setThumbnail(user.displayAvatarURL({ dynamic: true }))
             .addFields(
                 { 
-                    name: '<:emoji:1428954859989635163> **Voice**', 
+                    name: '# <:emoji:1428954859989635163> **Voice**', 
                     value: '** **', 
                     inline: false 
                 },
@@ -118,7 +118,7 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
                     inline: true 
                 },
                 { 
-                    name: '<:emoji:1428954858278617169> **Chat**', 
+                    name: '# <:emoji:1428954858278617169> **Chat**', 
                     value: '** **', 
                     inline: false 
                 },
@@ -156,15 +156,18 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
             .addComponents(
                 new ButtonBuilder()
                     .setCustomId(`activity_daily_${user.id}`)
-                    .setLabel(' اليوم')
+                    .setLabel('Day')
+.setEmoji('<:emoji_50:1430788365069848596>')
                     .setStyle(period === 'daily' ? ButtonStyle.Primary : ButtonStyle.Secondary),
                 new ButtonBuilder()
                     .setCustomId(`activity_weekly_${user.id}`)
-                    .setLabel(' الأسبوع')
+                    .setLabel('Week')
+.setEmoji('<:emoji_49:1430788330416640000>')
                     .setStyle(period === 'weekly' ? ButtonStyle.Primary : ButtonStyle.Secondary),
                 new ButtonBuilder()
                     .setCustomId(`activity_monthly_${user.id}`)
-                    .setLabel(' الشهر')
+                    .setLabel('Month')
+.setEmoji('<:emoji_48:1430788303317368924>')
                     .setStyle(period === 'monthly' ? ButtonStyle.Primary : ButtonStyle.Secondary)
             );
 
@@ -187,12 +190,12 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
 
                 if (newPeriod === 'daily') {
                     stats = await dbManager.getDailyStats(user.id);
-                    periodLabel = 'تفاعل اليوم';
+                    periodLabel = 'Daily Active';
                     activeDays = stats.activeDays;
                 } else if (newPeriod === 'weekly') {
                     stats = await dbManager.getWeeklyStats(user.id);
                     const weeklyActiveDays = await dbManager.getWeeklyActiveDays(user.id);
-                    periodLabel = 'تفاعل الأسبوع';
+                    periodLabel = 'Weekly Active';
                     activeDays = weeklyActiveDays;
                     stats.voiceTime = stats.weeklyTime;
                     stats.messages = stats.weeklyMessages;
@@ -200,15 +203,15 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
                     stats.voiceJoins = stats.weeklyVoiceJoins;
                 } else if (newPeriod === 'monthly') {
                     stats = await dbManager.getMonthlyStats(user.id);
-                    periodLabel = 'تفاعل الشهر';
+                    periodLabel = 'Monthly Active';
                     activeDays = stats.activeDays;
                 }
 
-                const topVoiceChannel = await dbManager.getMostActiveVoiceChannel(user.id, newPeriod) || { channel_id: null, channel_name: 'لا يوجد', total_time: 0, session_count: 0 };
-                const topMessageChannel = await dbManager.getMostActiveMessageChannel(user.id) || { channel_id: null, channel_name: 'لا يوجد', message_count: 0 };
+                const topVoiceChannel = await dbManager.getMostActiveVoiceChannel(user.id, newPeriod) || { channel_id: null, channel_name: 'No Active Or Leave Channel', total_time: 0, session_count: 0 };
+                const topMessageChannel = await dbManager.getMostActiveMessageChannel(user.id) || { channel_id: null, channel_name: 'No Active In Chat', message_count: 0 };
                 const xp = Math.floor((stats.messages || 0) / 10);
-                const voiceChannelMention = topVoiceChannel?.channel_id ? `<#${topVoiceChannel.channel_id}>` : 'لا يوجد';
-                const messageChannelMention = topMessageChannel?.channel_id ? `<#${topMessageChannel.channel_id}>` : 'لا يوجد';
+                const voiceChannelMention = topVoiceChannel?.channel_id ? `<#${topVoiceChannel.channel_id}>` : 'No Active Or Leave Channel';
+                const messageChannelMention = topMessageChannel?.channel_id ? `<#${topMessageChannel.channel_id}>` : 'No Active In Chat';
 
                 // إنشاء الإمبد المحدث
                 const updatedEmbed = colorManager.createEmbed()
@@ -217,7 +220,7 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
                     .setThumbnail(user.displayAvatarURL({ dynamic: true }))
                     .addFields(
                         { 
-                            name: '<:emoji:1428954859989635163> **Voice**', 
+                            name: '# <:emoji:1428954859989635163> **Voice**', 
                             value: '** **', 
                             inline: false 
                         },
@@ -237,7 +240,7 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
                             inline: true 
                         },
                         { 
-                            name: '<:emoji:1428954858278617169> **Chat**', 
+                            name: '# <:emoji:1428954858278617169> **Chat**', 
                             value: '** **', 
                             inline: false 
                         },
@@ -275,15 +278,18 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
                     .addComponents(
                         new ButtonBuilder()
                             .setCustomId(`activity_daily_${user.id}`)
-                            .setLabel(' اليوم')
+                            .setLabel('Day')
+.setEmoji('<:emoji_50:1430788365069848596>')
                             .setStyle(newPeriod === 'daily' ? ButtonStyle.Primary : ButtonStyle.Secondary),
                         new ButtonBuilder()
                             .setCustomId(`activity_weekly_${user.id}`)
-                            .setLabel(' الأسبوع')
+                            .setLabel('Week')
+.setEmoji('<:emoji_49:1430788330416640000>')
                             .setStyle(newPeriod === 'weekly' ? ButtonStyle.Primary : ButtonStyle.Secondary),
                         new ButtonBuilder()
                             .setCustomId(`activity_monthly_${user.id}`)
-                            .setLabel(' الشهر')
+                            .setLabel('Month')
+.setEmoji('<:emoji_48:1430788303317368924>')
                             .setStyle(newPeriod === 'monthly' ? ButtonStyle.Primary : ButtonStyle.Secondary)
                     );
 

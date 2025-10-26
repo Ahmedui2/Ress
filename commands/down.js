@@ -108,26 +108,31 @@ async function createPermanentMenu(client, channelId) {
             .addOptions([
                 {
                     label: 'Down',
+emoji: '<:emoji_14:1431078507647336560>',
                     value: 'remove_role',
                     description: 'سحب رول إداري من عضو لمدة محددة أو نهائياً'
                 },
                 {
                     label: 'Record',
+emoji: '<:emoji_11:1431078426361598113>',
                     value: 'user_records',
                     description: 'عرض تاريخ الداون لعضو معين'
                 },
                 {
                     label: 'Change',
+emoji: '<:emoji_12:1431078484620345406>',
                     value: 'modify_duration',
                     description: 'تعديل مدة داون حالي'
                 },
                 {
                     label: 'Active',
+emoji: '<:emoji_18:1431079144774565990>',
                     value: 'active_downs',
                     description: 'عرض جميع الداونات الجارية ووقت انتهائها'
                 },
                 {
                     label: 'Finish',
+emoji: '<:emoji_16:1431078587599032421>',
                     value: 'user_downs',
                     description: 'إنهاء أو مراجعة داونات عضو معين'
                 }
@@ -136,6 +141,7 @@ async function createPermanentMenu(client, channelId) {
         const settingsButton = new ButtonBuilder()
             .setCustomId('down_settings_button')
             .setLabel('Settings')
+.setEmoji('<:emoji_17:1431078631131844661>')
             .setStyle(ButtonStyle.Secondary);
 
         const menuRow = new ActionRowBuilder().addComponents(menuSelect);

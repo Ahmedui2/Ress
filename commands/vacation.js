@@ -1,4 +1,4 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, MessageFlags } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const ms = require('ms');
@@ -82,7 +82,7 @@ async function handleInteraction(interaction, context) {
 
     const replyEmbed = new EmbedBuilder().setColor(colorManager.getColor() || '#0099ff');
 
-    if (customId.startsWith('vac_request_start_')) {
+    if (interaction.isButton() && customId.startsWith('vac_request_start_')) {
         const userId = customId.split('_').pop();
         if (interaction.user.id !== userId) {
             replyEmbed.setDescription("You can only request a vacation for yourself.");
@@ -113,7 +113,7 @@ async function handleInteraction(interaction, context) {
             // فحص التنسيق المسموح (رقم + d/h/m فقط)
             const durationRegex = /^(\d+)(d|h|m)$/i;
             const match = durationStr.match(durationRegex);
-            
+
             if (!match) {
                 replyEmbed.setDescription('❌ **صيغة المدة غير صحيحة!** \nيرجى استخدام:\n• `رقم+d` للأيام (مثل: 7d)\n• `رقم+h` للساعات (مثل: 12h)\n• `رقم+m` للدقائق (مثل: 30m)\n\n**مثال:** `3d` للإجازة لمدة 3 أيام');
                 return interaction.reply({ embeds: [replyEmbed], ephemeral: true });
@@ -256,12 +256,106 @@ async function handleInteraction(interaction, context) {
             console.error("Error in vacation modal submission:", error);
             const errorEmbed = new EmbedBuilder().setColor('#FF0000')
                 .setDescription(`**حدث خطأ أثناء إرسال طلبك:**\n\`\`\`${error.message}\`\`\``);
-            
+
             if (interaction.replied || interaction.deferred) {
                 await interaction.editReply({ embeds: [errorEmbed] });
             } else {
                 await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
             }
+        }
+    }
+
+    // Handle regular vacation approvals and rejections
+    if (interaction.isButton() && (interaction.customId.startsWith('vac_approve_') || interaction.customId.startsWith('vac_reject_'))) {
+        // تأجيل الرد فوراً لتجنب خطأ Unknown interaction
+        await interaction.deferUpdate().catch(() => {});
+
+        const parts = interaction.customId.split('_');
+        const action = parts[1]; // approve or reject
+        const userId = parts[2];
+
+        // فحص الصلاحيات قبل السماح بالموافقة/الرفض
+        const vacationSettings = vacationManager.getSettings();
+        const isAuthorizedApprover = await vacationManager.isUserAuthorizedApprover(
+            interaction.user.id,
+            interaction.guild,
+            vacationSettings,
+            BOT_OWNERS
+        );
+
+        if (!isAuthorizedApprover) {
+            const errorEmbed = new EmbedBuilder()
+                .setColor('#FF0000')
+                .setDescription('❌ ** خوي ها؟.**');
+            return interaction.editReply({ embeds: [errorEmbed] });
+        }
+
+        const vacationsData = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
+        const pendingRequest = vacationsData.pending?.[userId];
+
+        if (!pendingRequest) {
+            const errorEmbed = new EmbedBuilder()
+                .setColor('#FF0000')
+                .setDescription('❌ **لم يتم العثور على طلب إجازة معلق لهذا المستخدم.**');
+            return interaction.editReply({ embeds: [errorEmbed] });
+        }
+
+        const member = await interaction.guild.members.fetch(userId);
+        const approverMember = await interaction.guild.members.fetch(interaction.user.id);
+
+        // Update vacation status and save
+        if (action === 'approve') {
+            if (!vacationsData.approved) vacationsData.approved = {};
+            vacationsData.approved[userId] = {
+                reason: pendingRequest.reason,
+                startDate: pendingRequest.startDate,
+                endDate: pendingRequest.endDate,
+                approvedBy: approverMember.user.tag,
+                approvedAt: new Date().toISOString(),
+            };
+            delete vacationsData.pending[userId];
+            vacationManager.saveVacations(vacationsData);
+
+            // Assign role for approved vacation (optional, based on future implementation)
+            // e.g., vacationManager.assignVacationRole(member);
+
+            const successEmbed = new EmbedBuilder()
+                .setColor(colorManager.getColor('approved') || '#2ECC71')
+                .setTitle('✅ تم الموافقة على الإجازة')
+                .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
+                .addFields(
+                    { name: "___المعتمد___", value: `${approverMember}`, inline: true },
+                    { name: "___التاريخ___", value: `<t:${Math.floor(new Date(pendingRequest.startDate).getTime() / 1000)}:R>`, inline: true },
+                    { name: "___السبب___", value: pendingRequest.reason, inline: false }
+                )
+                .setTimestamp();
+
+            await interaction.editReply({ embeds: [successEmbed], components: [] });
+
+        } else if (action === 'reject') {
+            if (!vacationsData.rejected) vacationsData.rejected = {};
+            vacationsData.rejected[userId] = {
+                reason: pendingRequest.reason,
+                startDate: pendingRequest.startDate,
+                endDate: pendingRequest.endDate,
+                rejectedBy: approverMember.user.tag,
+                rejectedAt: new Date().toISOString(),
+            };
+            delete vacationsData.pending[userId];
+            vacationManager.saveVacations(vacationsData);
+
+            const rejectEmbed = new EmbedBuilder()
+                .setColor(colorManager.getColor('rejected') || '#E74C3C')
+                .setTitle('❌ تم رفض الإجازة')
+                .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
+                .addFields(
+                    { name: "___المرفوض___", value: `${approverMember}`, inline: true },
+                    { name: "___التاريخ___", value: `<t:${Math.floor(new Date(pendingRequest.startDate).getTime() / 1000)}:R>`, inline: true },
+                    { name: "___السبب___", value: pendingRequest.reason, inline: false }
+                )
+                .setTimestamp();
+
+            await interaction.editReply({ embeds: [rejectEmbed], components: [] });
         }
     }
 }

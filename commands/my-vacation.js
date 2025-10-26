@@ -1,5 +1,4 @@
-
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const ms = require('ms');
@@ -22,7 +21,7 @@ function readJson(filePath, defaultData = {}) {
 // دالة لتحديث الوقت المتبقي في الإيمبد مع عرض الثواني
 function updateTimeRemaining(embed, activeVacation) {
     const remainingTime = new Date(activeVacation.endDate).getTime() - Date.now();
-    
+
     let timeDisplay;
     if (remainingTime > 0) {
         const totalSeconds = Math.floor(remainingTime / 1000);
@@ -30,7 +29,7 @@ function updateTimeRemaining(embed, activeVacation) {
         const hours = Math.floor((totalSeconds % 86400) / 3600);
         const minutes = Math.floor((totalSeconds % 3600) / 60);
         const seconds = totalSeconds % 60;
-        
+
         if (days > 0) {
             timeDisplay = `${days}d ${hours}h ${minutes}m ${seconds}s`;
         } else if (hours > 0) {
@@ -43,12 +42,12 @@ function updateTimeRemaining(embed, activeVacation) {
     } else {
         timeDisplay = "انتهت الإجازة";
     }
-    
+
     // تحديث الحقل الثاني (Time Remaining)
     if (embed.data.fields && embed.data.fields[1]) {
         embed.data.fields[1].value = timeDisplay;
     }
-    
+
     return embed;
 }
 
@@ -97,12 +96,12 @@ async function execute(message, args, { client, BOT_OWNERS }) {
             { name: "معتمد من", value: activeVacation.approvedBy ? `<@${activeVacation.approvedBy}>` : 'غير معروف', inline: true },
             { name: "الرولات المسحوبة", value: activeVacation.removedRoles?.map(r => `<@&${r}>`).join(', ') || 'لا توجد', inline: false }
         )
-        .setFooter({ text: `تاريخ البداية: ${new Date(activeVacation.startDate).toLocaleString('en-US', { 
+        .setFooter({ text: `تاريخ البداية: ${new Date(activeVacation.startDate).toLocaleString('en-US', {
             timeZone: 'Asia/Riyadh',
-            year: 'numeric', 
-            month: '2-digit', 
-            day: '2-digit', 
-            hour: '2-digit', 
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
             minute: '2-digit'
         })}`})
         .setTimestamp();
@@ -133,7 +132,7 @@ async function execute(message, args, { client, BOT_OWNERS }) {
                 }
 
                 const currentRemaining = new Date(currentVacation.endDate).getTime() - Date.now();
-                
+
                 if (currentRemaining <= 0) {
                     clearInterval(updateInterval);
                     return;
@@ -158,7 +157,7 @@ async function handleInteraction(interaction, context) {
     if (!interaction.isButton()) return;
 
     const { client, BOT_OWNERS } = context || {};
-    
+
     if (interaction.customId.startsWith('vac_end_request_')) {
         const userId = interaction.customId.split('_').pop();
         if (interaction.user.id !== userId) {
@@ -168,9 +167,9 @@ async function handleInteraction(interaction, context) {
         // التحقق من وجود طلب إنهاء معلق مسبقاً
         const vacations = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
         if (vacations.pendingTermination?.[userId]) {
-            return interaction.reply({ 
-                content: '❌ **لديك طلب إنهاء إجازة معلق بالفعل! لا يمكنك تقديم طلب آخر.**', 
-                ephemeral: true 
+            return interaction.reply({
+                content: '❌ **لديك طلب إنهاء إجازة معلق بالفعل! لا يمكنك تقديم طلب آخر.**',
+                ephemeral: true
             });
         }
 
@@ -191,7 +190,7 @@ async function handleInteraction(interaction, context) {
             components: [row],
             ephemeral: true
         });
-        
+
     }
 
     if (interaction.customId.startsWith('vac_end_confirm_')) {
@@ -202,7 +201,7 @@ async function handleInteraction(interaction, context) {
 
         try {
             const vacations = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
-            
+
             // التحقق من وجود طلب إنهاء معلق مسبقاً (حماية إضافية)
             if (vacations.pendingTermination?.[userId]) {
                 return interaction.update({
@@ -211,7 +210,7 @@ async function handleInteraction(interaction, context) {
                 });
             }
             const activeVacation = vacations.active?.[userId];
-            
+
             if (!activeVacation) {
                 return interaction.reply({ content: 'لا توجد إجازة نشطة لك.', ephemeral: true });
             }
@@ -220,23 +219,23 @@ async function handleInteraction(interaction, context) {
             if (!vacations.pendingTermination) {
                 vacations.pendingTermination = {};
             }
-            
+
             vacations.pendingTermination[userId] = {
                 ...activeVacation,
                 terminationRequestedAt: new Date().toISOString(),
                 requestedBy: userId
             };
-            
+
             vacationManager.saveVacations(vacations);
 
             // الحصول على المعتمدين
             const settings = vacationManager.getSettings();
-            
+
             // التحقق من اكتمال إعدادات النظام
             if (!settings.approverType || !settings.notificationMethod) {
-                return interaction.reply({ 
+                return interaction.reply({
                     content: '⚠️ نظام الإجازات غير مكتمل الإعداد. يرجى التواصل مع إدارة البوت.',
-                    ephemeral: true 
+                    ephemeral: true
                 });
             }
 
@@ -256,12 +255,12 @@ async function handleInteraction(interaction, context) {
                 .addFields(
                     { name: "___العضو___", value: `${member}`, inline: true },
                     { name: "___السبب الأصلي___", value: activeVacation.reason || 'غير محدد', inline: false },
-                    { name: "___تاريخ انتهاء الإجازة الأصلي___", value: new Date(activeVacation.endDate).toLocaleString('en-US', { 
+                    { name: "___تاريخ انتهاء الإجازة الأصلي___", value: new Date(activeVacation.endDate).toLocaleString('en-US', {
                         timeZone: 'Asia/Riyadh',
-                        year: 'numeric', 
-                        month: '2-digit', 
-                        day: '2-digit', 
-                        hour: '2-digit', 
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
                         minute: '2-digit'
                     }), inline: true },
                     { name: "___الرولات المسحوبة___", value: activeVacation.removedRoles?.map(r => `<@&${r}>`).join(', ') || 'لا توجد', inline: false }
@@ -280,10 +279,10 @@ async function handleInteraction(interaction, context) {
                 try {
                     const channel = await client.channels.fetch(settings.notificationChannel);
                     if (channel && channel.isTextBased()) {
-                        await channel.send({ 
+                        await channel.send({
                             content: '⏰ **طلب إنهاء إجازة مبكر**',
-                            embeds: [embed], 
-                            components: [buttons] 
+                            embeds: [embed],
+                            components: [buttons]
                         });
                         notificationSent = true;
                         console.log(`تم إرسال طلب إنهاء الإجازة إلى القناة: ${channel.name}`);
@@ -293,16 +292,16 @@ async function handleInteraction(interaction, context) {
                 } catch (error) {
                     console.error('خطأ في إرسال الإشعار للقناة:', error.message);
                 }
-                
+
                 // إذا فشل الإرسال للقناة، استخدم الرسائل الخاصة كبديل
                 if (!notificationSent) {
                     console.log('فشل الإرسال للقناة، جاري المحاولة عبر الرسائل الخاصة...');
                     for (const approver of approvers) {
                         try {
-                            await approver.send({ 
+                            await approver.send({
                                 content: '⏰ **طلب إنهاء إجازة مبكر**',
-                                embeds: [embed], 
-                                components: [buttons] 
+                                embeds: [embed],
+                                components: [buttons]
                             });
                             notificationSent = true;
                             console.log(`تم إرسال رسالة خاصة لـ ${approver.tag}`);
@@ -315,10 +314,10 @@ async function handleInteraction(interaction, context) {
                 // إرسال رسائل خاصة (الافتراضي أو عند عدم تحديد قناة)
                 for (const approver of approvers) {
                     try {
-                        await approver.send({ 
+                        await approver.send({
                             content: '⏰ **طلب إنهاء إجازة مبكر**',
-                            embeds: [embed], 
-                            components: [buttons] 
+                            embeds: [embed],
+                            components: [buttons]
                         });
                         notificationSent = true;
                         console.log(`تم إرسال رسالة خاصة لـ ${approver.tag}`);
@@ -333,10 +332,10 @@ async function handleInteraction(interaction, context) {
                 // إزالة الطلب من قائمة الانتظار إذا فشل الإرسال
                 delete vacations.pendingTermination[userId];
                 vacationManager.saveVacations(vacations);
-                
-                return interaction.reply({ 
+
+                return interaction.reply({
                     content: '❌ فشل في إرسال الإشعار للمعتمدين. يرجى المحاولة مرة أخرى أو التواصل مع الإدارة.',
-                    ephemeral: true 
+                    ephemeral: true
                 });
             }
 
@@ -374,19 +373,19 @@ async function handleInteraction(interaction, context) {
             } catch (error) {
                 console.error('خطأ في تعطيل الزر الأصلي:', error);
             }
-            
+
             // تعطيل الزر الأصلي في رسالة اجازتي
             setTimeout(async () => {
                 try {
                     const channel = interaction.message?.channel;
                     if (channel) {
                         const messages = await channel.messages.fetch({ limit: 10 });
-                        const originalMessage = messages.find(msg => 
-                            msg.author.id === interaction.client.user.id && 
+                        const originalMessage = messages.find(msg =>
+                            msg.author.id === interaction.client.user.id &&
                             msg.components.length > 0 &&
                             msg.components[0].components.some(btn => btn.customId === `vac_end_request_${userId}`)
                         );
-                        
+
                         if (originalMessage) {
                             const disabledButton = new ButtonBuilder()
                                 .setCustomId(`vac_end_sent_${userId}`)
@@ -406,9 +405,9 @@ async function handleInteraction(interaction, context) {
 
         } catch (error) {
             console.error("خطأ في طلب إنهاء الإجازة:", error);
-            await interaction.reply({ 
-                content: `**حدث خطأ أثناء إرسال الطلب:**\n\`\`\`${error.message}\`\`\``, 
-                ephemeral: true 
+            await interaction.reply({
+                content: `**حدث خطأ أثناء إرسال الطلب:**\n\`\`\`${error.message}\`\`\``,
+                ephemeral: true
             });
         }
     }
@@ -433,7 +432,7 @@ async function handleInteraction(interaction, context) {
             content: '❌ تم إلغاء طلب إنهاء الإجازة.',
             components: [disabledRow]
         });
-        
+
         // إعادة تفعيل الزر الأصلي في رسالة اجازتي
         setTimeout(async () => {
             try {
@@ -441,12 +440,12 @@ async function handleInteraction(interaction, context) {
                 const channel = interaction.message?.channel;
                 if (channel) {
                     const messages = await channel.messages.fetch({ limit: 10 });
-                    const originalMessage = messages.find(msg => 
-                        msg.author.id === interaction.client.user.id && 
+                    const originalMessage = messages.find(msg =>
+                        msg.author.id === interaction.client.user.id &&
                         msg.components.length > 0 &&
                         msg.components[0].components.some(btn => btn.customId === `vac_end_processing_${userId}`)
                     );
-                    
+
                     if (originalMessage) {
                         const reactivatedButton = new ButtonBuilder()
                             .setCustomId(`vac_end_request_${userId}`)
@@ -462,6 +461,148 @@ async function handleInteraction(interaction, context) {
                 console.error('خطأ في إعادة تفعيل الزر:', error);
             }
         }, 1000);
+    }
+
+    // معالجة تفاعلات الموافقة والرفض على طلب إنهاء الإجازة
+    if (interaction.customId.startsWith('vac_approve_termination_') || interaction.customId.startsWith('vac_reject_termination_')) {
+        // تأجيل الرد فوراً لتجنب خطأ Unknown interaction
+        await interaction.deferUpdate().catch(() => {});
+
+        const parts = interaction.customId.split('_');
+        const action = parts[1]; // approve or reject
+        const userId = parts[3];
+
+        // فحص الصلاحيات قبل السماح بالموافقة/الرفض على الإنهاء
+        const vacationSettings = vacationManager.getSettings();
+        const isAuthorizedApprover = await vacationManager.isUserAuthorizedApprover(
+            interaction.user.id,
+            interaction.guild,
+            vacationSettings,
+            BOT_OWNERS
+        );
+
+        if (!isAuthorizedApprover) {
+            const errorEmbed = new EmbedBuilder()
+                .setColor('#FF0000')
+                .setDescription('❌ **يعني محد شاف لا تسوي خوي بس**')
+            return interaction.editReply({ embeds: [errorEmbed] });
+        }
+
+        const vacations = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
+        const terminationRequest = vacations.pendingTermination?.[userId];
+
+        if (!terminationRequest) {
+            return interaction.editReply({ content: '❌ **لم يتم العثور على طلب إنهاء إجازة معلق لهذا المستخدم.**', components: [] });
+        }
+
+        const requestedUser = await client.users.fetch(userId).catch(() => null);
+        if (!requestedUser) {
+            return interaction.editReply({ content: '❌ **لم يتمكن البوت من العثور على المستخدم المطلوب.**', components: [] });
+        }
+
+        const originalMessageId = terminationRequest.originalMessageId;
+        const originalMessageChannelId = terminationRequest.originalMessageChannelId;
+        const originalMessage = await client.channels.fetch(originalMessageChannelId)
+            .then(channel => channel.messages.fetch(originalMessageId))
+            .catch(() => null);
+
+        if (action === 'approve') {
+            try {
+                // إزالة الطلب من قائمة الانتظار
+                delete vacations.pendingTermination[userId];
+                vacationManager.saveVacations(vacations);
+
+                // تحديث حالة الإجازة لتصبح منتهية
+                const activeVacations = vacations.active || {};
+                if (activeVacations[userId]) {
+                    delete activeVacations[userId];
+                    vacations.active = activeVacations;
+                    vacationManager.saveVacations(vacations);
+                }
+
+                // إرسال رسالة تأكيد للمستخدم
+                const successEmbed = new EmbedBuilder()
+                    .setColor('#2ECC71')
+                    .setDescription(`✅ **تمت الموافقة على طلب إنهاء إجازتك مبكراً.**`)
+                    .setTimestamp();
+
+                try {
+                    await requestedUser.send({ embeds: [successEmbed] });
+                } catch (dmError) {
+                    console.error(`فشل في إرسال رسالة تأكيد إنهاء الإجازة لـ ${requestedUser.tag}:`, dmError.message);
+                }
+
+                // تحديث الرسالة الأصلية للإشارة إلى الموافقة
+                if (originalMessage) {
+                    const approvedButton = new ButtonBuilder()
+                        .setCustomId(`vac_end_approved_${userId}`)
+                        .setLabel("✅ تمت الموافقة على الإنهاء")
+                        .setStyle(ButtonStyle.Success)
+                        .setDisabled(true);
+
+                    const row = new ActionRowBuilder().addComponents(approvedButton);
+                    const embed = originalMessage.embeds[0];
+                    await originalMessage.edit({ embeds: [embed], components: [row] });
+                }
+
+                // إرسال رد للمعتمد (تأكيد على أنه تم معالجة الطلب)
+                await interaction.editReply({
+                    content: `✅ **تمت الموافقة على طلب إنهاء إجازة ${requestedUser.tag}.**`,
+                    components: []
+                });
+
+            } catch (error) {
+                console.error('خطأ في الموافقة على إنهاء الإجازة:', error);
+                await interaction.editReply({
+                    content: `❌ **حدث خطأ أثناء الموافقة على إنهاء الإجازة:**\n\`\`\`${error.message}\`\`\``,
+                    components: []
+                });
+            }
+        } else if (action === 'reject') {
+            try {
+                // إزالة الطلب من قائمة الانتظار
+                delete vacations.pendingTermination[userId];
+                vacationManager.saveVacations(vacations);
+
+                // إرسال رسالة رفض للمستخدم
+                const rejectEmbed = new EmbedBuilder()
+                    .setColor('#E74C3C')
+                    .setDescription(`❌ **تم رفض طلب إنهاء إجازتك مبكراً.**`)
+                    .setTimestamp();
+
+                try {
+                    await requestedUser.send({ embeds: [rejectEmbed] });
+                } catch (dmError) {
+                    console.error(`فشل في إرسال رسالة رفض إنهاء الإجازة لـ ${requestedUser.tag}:`, dmError.message);
+                }
+
+                // تحديث الرسالة الأصلية للإشارة إلى الرفض
+                if (originalMessage) {
+                    const rejectedButton = new ButtonBuilder()
+                        .setCustomId(`vac_end_rejected_${userId}`)
+                        .setLabel("❌ تم رفض الإنهاء")
+                        .setStyle(ButtonStyle.Danger)
+                        .setDisabled(true);
+
+                    const row = new ActionRowBuilder().addComponents(rejectedButton);
+                    const embed = originalMessage.embeds[0];
+                    await originalMessage.edit({ embeds: [embed], components: [row] });
+                }
+
+                // إرسال رد للمعتمد (تأكيد على أنه تم معالجة الطلب)
+                await interaction.editReply({
+                    content: `❌ **تم رفض طلب إنهاء إجازة ${requestedUser.tag}.**`,
+                    components: []
+                });
+
+            } catch (error) {
+                console.error('خطأ في رفض إنهاء الإجازة:', error);
+                await interaction.editReply({
+                    content: `❌ **حدث خطأ أثناء رفض إنهاء الإجازة:**\n\`\`\`${error.message}\`\`\``,
+                    components: []
+                });
+            }
+        }
     }
 }
 

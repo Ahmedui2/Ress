@@ -7,21 +7,21 @@ const name = 'rooms';
 
 function formatTimeSince(timestamp) {
     if (!timestamp) return 'No Data';
-    
+
     const now = Date.now();
     const diff = now - new Date(timestamp).getTime();
-    
+
     const days = Math.floor(diff / (1000 * 60 * 60 * 24));
     const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
     const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
     const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-    
+
     const parts = [];
     if (days > 0) parts.push(`${days}d`);
     if (hours > 0) parts.push(`${hours}h`);
     if (minutes > 0 && days === 0) parts.push(`${minutes}m`);
     if (seconds > 0 && days === 0 && hours === 0) parts.push(`${seconds}s`);
-    
+
     return parts.length > 0 ? parts.join(' ') + ' ago' : 'Now';
 }
 
@@ -48,10 +48,10 @@ async function getUserActivity(userId) {
     try {
         const { getDatabase } = require('../utils/database');
         const dbManager = getDatabase();
-        
+
         const stats = await dbManager.getUserStats(userId);
         const weeklyStats = await dbManager.getWeeklyStats(userId);
-        
+
         const lastVoiceSession = await dbManager.get(`
             SELECT end_time, channel_name 
             FROM voice_sessions 
@@ -59,7 +59,7 @@ async function getUserActivity(userId) {
             ORDER BY end_time DESC 
             LIMIT 1
         `, [userId]);
-        
+
         const lastMessage = await dbManager.get(`
             SELECT last_message, channel_name 
             FROM message_channels 
@@ -67,7 +67,7 @@ async function getUserActivity(userId) {
             ORDER BY last_message DESC 
             LIMIT 1
         `, [userId]);
-        
+
         return {
             totalMessages: stats.totalMessages || 0,
             totalVoiceTime: stats.totalVoiceTime || 0,
@@ -110,23 +110,51 @@ async function execute(message, args, { client, BOT_OWNERS, ADMIN_ROLES }) {
         return;
     }
 
-    const mentionedRole = message.mentions.roles.first();
-    const mentionedUser = message.mentions.users.first();
+    // التحقق من أمر admin
+    if (args[0] && args[0].toLowerCase() === 'admin') {
+        await showAdminRolesActivity(message, client, ADMIN_ROLES);
+        return;
+    }
 
-    if (!mentionedRole && !mentionedUser) {
+    let targetRole = message.mentions.roles.first();
+    let targetUser = message.mentions.users.first();
+
+    // إذا لم يكن هناك منشن، تحقق من ID
+    if (!targetRole && !targetUser && args[0]) {
+        const id = args[0];
+
+        // محاولة البحث عن رول بالـ ID
+        try {
+            targetRole = await message.guild.roles.fetch(id);
+        } catch (error) {
+            // ليس رول، جرب مستخدم
+        }
+
+        // إذا لم يكن رول، جرب مستخدم
+        if (!targetRole) {
+            try {
+                const fetchedMember = await message.guild.members.fetch(id);
+                targetUser = fetchedMember.user;
+            } catch (error) {
+                // ليس مستخدم أيضاً
+            }
+        }
+    }
+
+    if (!targetRole && !targetUser) {
         const embed = colorManager.createEmbed()
             .setTitle('**Rooms System**')
-            .setDescription('**الرجاء منشن رول أو عضو**\n\n**مثال:**\n`rooms @Role`\n`rooms @User`')
+            .setDescription('**الرجاء منشن رول أو عضو أو كتابة ID**\n\n**أمثلة :**\n`rooms @Role`\n`rooms @User`\n`rooms 636930315503534110`\n`rooms admin` - لعرض جميع الأدمن')
             .setThumbnail(client.user.displayAvatarURL({ format: 'png', size: 128 }));
-        
+
         await message.channel.send({ embeds: [embed] });
         return;
     }
 
-    if (mentionedUser) {
-        await showUserActivity(message, mentionedUser, client);
+    if (targetUser) {
+        await showUserActivity(message, targetUser, client);
     } else {
-        await showRoleActivity(message, mentionedRole, client);
+        await showRoleActivity(message, targetRole, client);
     }
 }
 
@@ -134,7 +162,7 @@ async function showUserActivity(message, user, client) {
     try {
         const member = await message.guild.members.fetch(user.id);
         const activity = await getUserActivity(user.id);
-        
+
         let lastVoiceInfo = '**No Data**';
         if (activity.lastVoiceChannel) {
             const voiceChannel = message.guild.channels.cache.find(ch => ch.name === activity.lastVoiceChannel);
@@ -142,7 +170,7 @@ async function showUserActivity(message, user, client) {
             const timeAgo = formatTimeSince(activity.lastVoiceTime);
             lastVoiceInfo = `${channelMention} - \`${timeAgo}\``;
         }
-        
+
         let lastMessageInfo = '**No Data**';
         if (activity.lastMessageChannel) {
             const textChannel = message.guild.channels.cache.find(ch => ch.name === activity.lastMessageChannel);
@@ -150,7 +178,7 @@ async function showUserActivity(message, user, client) {
             const timeAgo = formatTimeSince(activity.lastMessageTime);
             lastMessageInfo = `${channelMention} - \`${timeAgo}\``;
         }
-        
+
         const embed = colorManager.createEmbed()
             .setTitle(`**User Activity**`)
             .setThumbnail(user.displayAvatarURL({ dynamic: true }))
@@ -169,13 +197,396 @@ async function showUserActivity(message, user, client) {
     }
 }
 
+async function showAdminRolesActivity(message, client, ADMIN_ROLES) {
+    try {
+        // جمع جميع الأعضاء من جميع رولات الأدمن
+        const allAdminMembers = new Map();
+
+        for (const roleId of ADMIN_ROLES) {
+            try {
+                const role = await message.guild.roles.fetch(roleId);
+                if (role && role.members) {
+                    for (const [memberId, member] of role.members) {
+                        if (!member.user.bot) {
+                            allAdminMembers.set(memberId, member);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error(`خطأ في جلب الرول ${roleId}:`, error);
+            }
+        }
+
+        if (allAdminMembers.size === 0) {
+            const embed = colorManager.createEmbed()
+                .setDescription('**No Admins يادلخ**')
+                .setThumbnail(client.user.displayAvatarURL({ format: 'png', size: 128 }));
+            await message.channel.send({ embeds: [embed] });
+            return;
+        }
+
+        const memberActivities = [];
+
+        for (const [userId, member] of allAdminMembers) {
+            const activity = await getUserActivity(userId);
+            const totalActivity = activity.totalMessages + (activity.totalVoiceTime / 60000);
+
+            memberActivities.push({
+                member: member,
+                activity: activity,
+                totalActivity: totalActivity,
+                xp: Math.floor(activity.totalMessages / 10)
+            });
+        }
+
+        memberActivities.sort((a, b) => b.totalActivity - a.totalActivity);
+
+        let currentPage = 0;
+        const itemsPerPage = 10;
+        const totalPages = Math.ceil(memberActivities.length / itemsPerPage);
+
+        const generateEmbed = (page) => {
+            const start = page * itemsPerPage;
+            const end = Math.min(start + itemsPerPage, memberActivities.length);
+            const pageMembers = memberActivities.slice(start, end);
+
+            const embed = colorManager.createEmbed()
+                .setTitle(`**Rooms : Admin Roles**`)
+                .setDescription(`** All members :** ${memberActivities.length}`)
+                .setFooter({ text: `By Ahmed. | صفحة ${page + 1} من ${totalPages}`, iconURL: message.guild.iconURL({ dynamic: true }) })
+                .setTimestamp();
+
+            pageMembers.forEach((data, index) => {
+                const globalRank = start + index + 1;
+                const member = data.member;
+                const activity = data.activity;
+
+                let lastVoiceInfo = '**No Data**';
+                if (activity.lastVoiceChannel) {
+                    const voiceChannel = message.guild.channels.cache.find(ch => ch.name === activity.lastVoiceChannel);
+                    const channelMention = voiceChannel ? `<#${voiceChannel.id}>` : `**${activity.lastVoiceChannel}**`;
+                    const timeAgo = formatTimeSince(activity.lastVoiceTime);
+                    lastVoiceInfo = `${channelMention} - \`${timeAgo}\``;
+                }
+
+                let lastMessageInfo = '**No Data**';
+                if (activity.lastMessageChannel) {
+                    const textChannel = message.guild.channels.cache.find(ch => ch.name === activity.lastMessageChannel);
+                    const channelMention = textChannel ? `<#${textChannel.id}>` : `**${activity.lastMessageChannel}**`;
+                    const timeAgo = formatTimeSince(activity.lastMessageTime);
+                    lastMessageInfo = `${channelMention} - \`${timeAgo}\``;
+                }
+
+                embed.addFields([{
+                    name: `**#${globalRank} - ${member.displayName}**`,
+                    value: `> **<:emoji_7:1429246526949036212> Last Voice :** ${lastVoiceInfo}\n` +
+                           `> **<:emoji_8:1429246555726020699> Last Text :** ${lastMessageInfo}`,
+                    inline: false
+                }]);
+            });
+
+            return embed;
+        };
+
+        const generateButtons = (page) => {
+            const row1 = new ActionRowBuilder();
+
+            const leftButton = new ButtonBuilder()
+                .setCustomId('rooms_previous')
+                .setEmoji('<:emoji_13:1429263136136888501>')
+                .setStyle(ButtonStyle.Primary)
+                .setDisabled(page === 0);
+
+            const rightButton = new ButtonBuilder()
+                .setCustomId('rooms_next')
+                .setEmoji('<:emoji_14:1429263186539974708>')
+                .setStyle(ButtonStyle.Primary)
+                .setDisabled(page === totalPages - 1);
+
+            row1.addComponents(leftButton, rightButton);
+
+            const row2 = new ActionRowBuilder();
+
+            const mentionButton = new ButtonBuilder()
+                .setCustomId('rooms_mention')
+                .setLabel('Mention')
+.setEmoji('<:emoji_52:1430734157885210654>')
+                .setStyle(ButtonStyle.Secondary);
+
+            const notifyButton = new ButtonBuilder()
+                .setCustomId('rooms_notify')
+                .setLabel('Notify')
+.setEmoji('<:emoji_53:1430740078321209365>')
+                .setStyle(ButtonStyle.Secondary);
+
+            row2.addComponents(mentionButton, notifyButton);
+
+            return [row1, row2];
+        };
+
+        const sentMessage = await message.channel.send({
+            embeds: [generateEmbed(currentPage)],
+            components: generateButtons(currentPage)
+        });
+
+        const filter = i => i.user.id === message.author.id;
+        const collector = sentMessage.createMessageComponentCollector({ filter, time: 300000 });
+
+        let isNotifyInProgress = false;
+
+        collector.on('collect', async interaction => {
+            console.log(`🔘 تم الضغط على زر: ${interaction.customId} من قبل ${interaction.user.tag}`);
+
+            try {
+                if (interaction.customId === 'rooms_previous') {
+                    if (interaction.replied || interaction.deferred) return;
+                    currentPage = Math.max(0, currentPage - 1);
+                    await interaction.update({
+                        embeds: [generateEmbed(currentPage)],
+                        components: generateButtons(currentPage)
+                    });
+                } else if (interaction.customId === 'rooms_next') {
+                    if (interaction.replied || interaction.deferred) return;
+                    currentPage = Math.min(totalPages - 1, currentPage + 1);
+                    await interaction.update({
+                        embeds: [generateEmbed(currentPage)],
+                        components: generateButtons(currentPage)
+                    });
+                } else if (interaction.customId === 'rooms_mention') {
+                    if (interaction.replied || interaction.deferred) return;
+                    const mentions = memberActivities.map(data => `<@${data.member.id}>`).join(' ');
+
+                    const mentionEmbed = colorManager.createEmbed()
+                        .setTitle(`**Admin Roles**`)
+                        .setDescription(`**تم منشن جميع أعضاء رولات الأدمن بنجاح**`)
+            .setThumbnail(client.user.displayAvatarURL({ format: 'png', size: 128 }))
+
+                        .setFooter({ text: 'By Ahmed.' })
+                        .setTimestamp();
+
+                    await interaction.update({
+                        content: mentions,
+                        embeds: [mentionEmbed],
+                        components: generateButtons(currentPage)
+                    });
+                } else if (interaction.customId === 'rooms_notify') {
+                    console.log(`🔔 بدء معالجة زر التنبيه للأدمن - حالة: replied=${interaction.replied}, deferred=${interaction.deferred}, inProgress=${isNotifyInProgress}`);
+
+                    if (interaction.replied || interaction.deferred) {
+                        console.log('⚠️ تم تجاهل ضغطة زر تنبيه - التفاعل معالج مسبقاً');
+                        await interaction.reply({ 
+                            content: '**⏳ يوجد عملية إرسال تنبيهات جارية حالياً، الرجاء الانتظار**', 
+                            ephemeral: true 
+                        }).catch(() => {});
+                        return;
+                    }
+
+                    if (isNotifyInProgress) {
+                        console.log('⚠️ عملية تنبيه قيد التنفيذ بالفعل');
+                        await interaction.reply({ 
+                            content: '**⏳ يوجد عملية إرسال تنبيهات جارية حالياً، الرجاء الانتظار**', 
+                            ephemeral: true 
+                        }).catch(() => {});
+                        return;
+                    }
+
+                    isNotifyInProgress = true;
+                    console.log('✅ تم تعيين isNotifyInProgress = true');
+
+                    try {
+                        const updatedButtons = generateButtons(currentPage);
+                        const notifyButtonRow = updatedButtons[1];
+                        const notifyButton = notifyButtonRow.components.find(btn => btn.data.custom_id === 'rooms_notify');
+                        if (notifyButton) {
+                            notifyButton.setLabel('Notified').setEmoji('<:emoji_42:1430334150057001042>').setDisabled(true).setStyle(ButtonStyle.Secondary);
+                        }
+
+                        await interaction.update({
+                            embeds: [generateEmbed(currentPage)],
+                            components: updatedButtons
+                        });
+
+                        await interaction.followUp({
+                            content: '<:emoji_53:1430733925227171980>',
+                            ephemeral: true
+                        });
+
+                        let successCount = 0;
+                        let failCount = 0;
+                        let skippedCount = 0;
+                        let rateLimitedCount = 0;
+                        let processedCount = 0;
+
+                        // نظام Batching - معالجة 5 أعضاء في كل دفعة
+                        const BATCH_SIZE = 5;
+                        const BATCH_DELAY = 3000; // 3 ثواني بين كل دفعة
+                        const MESSAGE_DELAY = 1200; // 1.2 ثانية بين كل رسالة
+                        const MAX_RETRIES = 2;
+
+                        // تقسيم الأعضاء إلى دفعات
+                        const batches = [];
+                        for (let i = 0; i < memberActivities.length; i += BATCH_SIZE) {
+                            batches.push(memberActivities.slice(i, i + BATCH_SIZE));
+                        }
+
+                        console.log(`📦 تم تقسيم ${memberActivities.length} عضو إلى ${batches.length} دفعة`);
+
+                        // دالة لإرسال رسالة مع إعادة محاولة
+                        async function sendDMWithRetry(member, embed, retries = MAX_RETRIES) {
+                            for (let attempt = 0; attempt <= retries; attempt++) {
+                                try {
+                                    await member.send({ embeds: [embed] });
+                                    return { success: true };
+                                } catch (error) {
+                                    if (error.code === 429) {
+                                        const retryAfter = error.retry_after || 2;
+                                        console.warn(`⏳ Rate limit - انتظار ${retryAfter}s قبل إعادة المحاولة ${attempt + 1}/${retries}`);
+                                        if (attempt < retries) {
+                                            await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+                                            continue;
+                                        }
+                                        return { success: false, rateLimited: true };
+                                    } else if (error.code === 50007) {
+                                        // Cannot send messages to this user
+                                        return { success: false, cannotDM: true };
+                                    } else {
+                                        return { success: false, error: error.message };
+                                    }
+                                }
+                            }
+                            return { success: false, rateLimited: true };
+                        }
+
+                        // معالجة كل دفعة
+                        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+                            const batch = batches[batchIndex];
+                            console.log(`📨 معالجة الدفعة ${batchIndex + 1}/${batches.length} (${batch.length} أعضاء)`);
+
+                            // تحديث الرسالة المؤقتة كل 3 دفعات
+                            if (batchIndex % 3 === 0) {
+                                try {
+                                    await interaction.editReply({
+                                        content: `<:emoji_53:1430733925227171980>` ,
+                                                
+                                        ephemeral: true
+                                    }).catch(() => {});
+                                } catch (e) {}
+                            }
+
+                            for (const data of batch) {
+                                try {
+                                    const freshMember = await message.guild.members.fetch(data.member.id, { force: true });
+
+                                    const isInVoice = freshMember.voice && 
+                                                    freshMember.voice.channelId && 
+                                                    freshMember.voice.channel !== null &&
+                                                    message.guild.channels.cache.has(freshMember.voice.channelId);
+
+                                    if (isInVoice) {
+                                        skippedCount++;
+                                        const channelName = freshMember.voice.channel?.name || 'Unknown';
+                                        console.log(`⏭️ تم استبعاد ${freshMember.displayName} لأنه في الرومات الصوتية: ${channelName}`);
+                                    } else {
+                                        const dmEmbed = colorManager.createEmbed()
+                                            .setTitle('**تنبيه من إدارة السيرفر**')
+                                            .setDescription(`**🔔 الرجاء التفاعل في الرومات**\n\n**السيرفر :** ${message.guild.name}\n**الفئة :** **Admin Roles**`)
+                                            .setThumbnail(message.guild.iconURL({ dynamic: true }))
+                                            .setFooter({ text: 'By Ahmed.' })
+                                            .setTimestamp();
+
+                                        const result = await sendDMWithRetry(freshMember, dmEmbed);
+                                        
+                                        if (result.success) {
+                                            successCount++;
+                                            console.log(`✅ تم إرسال تنبيه لـ ${freshMember.displayName}`);
+                                        } else if (result.rateLimited) {
+                                            rateLimitedCount++;
+                                            console.warn(`⚠️ Rate limited - ${freshMember.displayName}`);
+                                        } else if (result.cannotDM) {
+                                            failCount++;
+                                            console.error(`❌ DMs مغلقة - ${freshMember.displayName}`);
+                                        } else {
+                                            failCount++;
+                                            console.error(`❌ فشل الإرسال - ${freshMember.displayName}: ${result.error}`);
+                                        }
+
+                                        // تأخير بين كل رسالة
+                                        await new Promise(resolve => setTimeout(resolve, MESSAGE_DELAY));
+                                    }
+
+                                    processedCount++;
+                                } catch (error) {
+                                    failCount++;
+                                    processedCount++;
+                                    console.error(`❌ فشل معالجة العضو ${data.member.displayName}:`, error.message);
+                                }
+                            }
+
+                            // تأخير بين الدفعات (ما عدا الدفعة الأخيرة)
+                            if (batchIndex < batches.length - 1) {
+                                console.log(`⏸️ انتظار ${BATCH_DELAY / 1000}s قبل الدفعة التالية...`);
+                                await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
+                            }
+                        }
+
+                        const finalMessage = `** Finished ** \n\n` +
+                            `**<:emoji_51:1430733243140931645> sended to :** ${successCount}\n` +
+                            `**<:emoji_2:1430777126570688703> failed to :** ${failCount}\n` +
+                            `**<:emoji_2:1430777099744055346> in rooms :** ${skippedCount}\n` +
+                            (rateLimitedCount > 0 ? `**<:emoji_53:1430733925227171980> Rate Limited :** ${rateLimitedCount}\n` : '') +
+                            `\n**<:emoji_52:1430734346461122654> members :** ${memberActivities.length}\n` +
+                            `**<:emoji_51:1430733172710183103> Final :** ${Math.round((successCount / Math.max(memberActivities.length - skippedCount, 1)) * 100)}%`;
+
+                        try {
+                            await interaction.followUp({
+                                content: finalMessage,
+                                ephemeral: true
+                            });
+                        } catch (error) {
+                            console.error('خطأ في إرسال الرسالة النهائية:', error);
+                        }
+
+                        console.log('✅ تم الانتهاء من إرسال التنبيهات بنجاح');
+                    } catch (notifyError) {
+                        console.error('❌ خطأ في معالج التنبيه:', notifyError);
+                        try {
+                            await interaction.followUp({
+                                content: `**❌ حدث خطأ أثناء إرسال التنبيهات**\n\n**السبب:** ${notifyError.message || 'خطأ غير معروف'}`,
+                                ephemeral: true
+                            });
+                        } catch (editError) {
+                            console.error('خطأ في إرسال رسالة الخطأ:', editError);
+                        }
+                    } finally {
+                        isNotifyInProgress = false;
+                        console.log('🔓 تم إعادة تعيين isNotifyInProgress = false');
+                    }
+                }
+            } catch (error) {
+                console.error('خطأ في معالج الأزرار:', error);
+                if (!interaction.replied && !interaction.deferred) {
+                    await interaction.reply({ content: '**حدث خطأ أثناء معالجة الطلب**', ephemeral: true });
+                }
+            }
+        });
+
+        collector.on('end', () => {
+            sentMessage.edit({ components: [] }).catch(console.error);
+        });
+
+    } catch (error) {
+        console.error('خطأ في عرض نشاط الأدمن:', error);
+        await message.channel.send({ content: '**حدث خطأ أثناء جلب البيانات**' });
+    }
+}
+
 async function showRoleActivity(message, role, client) {
     try {
         const members = role.members;
-        
+
         if (members.size === 0) {
             const embed = colorManager.createEmbed()
-                .setDescription('**⚠️ لا يوجد أعضاء في هذا الرول**')
+                .setDescription('**No one in the role**')
                 .setThumbnail(client.user.displayAvatarURL({ format: 'png', size: 128 }));
             await message.channel.send({ embeds: [embed] });
             return;
@@ -185,11 +596,11 @@ async function showRoleActivity(message, role, client) {
 
         for (const [userId, member] of members) {
             if (member.user.bot) continue;
-            
+
             const activity = await getUserActivity(userId);
-            
+
             const totalActivity = activity.totalMessages + (activity.totalVoiceTime / 60000);
-            
+
             memberActivities.push({
                 member: member,
                 activity: activity,
@@ -219,7 +630,7 @@ async function showRoleActivity(message, role, client) {
                 const globalRank = start + index + 1;
                 const member = data.member;
                 const activity = data.activity;
-                
+
                 let lastVoiceInfo = '**No Data**';
                 if (activity.lastVoiceChannel) {
                     const voiceChannel = message.guild.channels.cache.find(ch => ch.name === activity.lastVoiceChannel);
@@ -227,7 +638,7 @@ async function showRoleActivity(message, role, client) {
                     const timeAgo = formatTimeSince(activity.lastVoiceTime);
                     lastVoiceInfo = `${channelMention} - \`${timeAgo}\``;
                 }
-                
+
                 let lastMessageInfo = '**No Data**';
                 if (activity.lastMessageChannel) {
                     const textChannel = message.guild.channels.cache.find(ch => ch.name === activity.lastMessageChannel);
@@ -235,7 +646,7 @@ async function showRoleActivity(message, role, client) {
                     const timeAgo = formatTimeSince(activity.lastMessageTime);
                     lastMessageInfo = `${channelMention} - \`${timeAgo}\``;
                 }
-                
+
                 embed.addFields([{
                     name: `**#${globalRank} - ${member.displayName}**`,
                     value: `> **<:emoji_7:1429246526949036212> Last Voice :** ${lastVoiceInfo}\n` +
@@ -249,17 +660,17 @@ async function showRoleActivity(message, role, client) {
 
         const generateButtons = (page) => {
             const row1 = new ActionRowBuilder();
-            
+
             const leftButton = new ButtonBuilder()
                 .setCustomId('rooms_previous')
-                .setEmoji('◀️')
-                .setStyle(ButtonStyle.Primary)
+                .setEmoji('<:emoji_13:1429263136136888501>')
+                .setStyle(ButtonStyle.Secondary)
                 .setDisabled(page === 0);
 
             const rightButton = new ButtonBuilder()
                 .setCustomId('rooms_next')
-                .setEmoji('▶️')
-                .setStyle(ButtonStyle.Primary)
+                .setEmoji('<:emoji_14:1429263186539974708>')
+                .setStyle(ButtonStyle.Secondary)
                 .setDisabled(page === totalPages - 1);
 
             row1.addComponents(leftButton, rightButton);
@@ -268,13 +679,15 @@ async function showRoleActivity(message, role, client) {
 
             const mentionButton = new ButtonBuilder()
                 .setCustomId('rooms_mention')
-                .setLabel('منشن')
-                .setStyle(ButtonStyle.Success);
+                .setLabel('Mention')
+.setEmoji('<:emoji_52:1430734157885210654>')
+                .setStyle(ButtonStyle.Secondary);
 
             const notifyButton = new ButtonBuilder()
                 .setCustomId('rooms_notify')
-                .setLabel('تنبيه')
-                .setStyle(ButtonStyle.Danger);
+                .setLabel('Notify')
+.setEmoji('<:emoji_53:1430740078321209365>')
+                .setStyle(ButtonStyle.Secondary);
 
             row2.addComponents(mentionButton, notifyButton);
 
@@ -293,7 +706,7 @@ async function showRoleActivity(message, role, client) {
 
         collector.on('collect', async interaction => {
             console.log(`🔘 تم الضغط على زر: ${interaction.customId} من قبل ${interaction.user.tag}`);
-            
+
             try {
                 if (interaction.customId === 'rooms_previous') {
                     if (interaction.replied || interaction.deferred) return;
@@ -312,13 +725,15 @@ async function showRoleActivity(message, role, client) {
                 } else if (interaction.customId === 'rooms_mention') {
                     if (interaction.replied || interaction.deferred) return;
                     const mentions = memberActivities.map(data => `<@${data.member.id}>`).join(' ');
-                    
+
                     const mentionEmbed = colorManager.createEmbed()
-                        .setTitle(`**تم منشن ${role.name}**`)
+                        .setTitle(`**Mention :  ${role.name}**`)
                         .setDescription(`**تم منشن جميع أعضاء الرول بنجاح**`)
+            .setThumbnail(client.user.displayAvatarURL({ format: 'png', size: 128 }))
+
                         .setFooter({ text: 'By Ahmed.' })
                         .setTimestamp();
-                    
+
                     await interaction.update({
                         content: mentions,
                         embeds: [mentionEmbed],
@@ -326,7 +741,7 @@ async function showRoleActivity(message, role, client) {
                     });
                 } else if (interaction.customId === 'rooms_notify') {
                     console.log(`🔔 بدء معالجة زر التنبيه - حالة: replied=${interaction.replied}, deferred=${interaction.deferred}, inProgress=${isNotifyInProgress}`);
-                    
+
                     if (interaction.replied || interaction.deferred) {
                         console.log('⚠️ تم تجاهل ضغطة زر تنبيه - التفاعل معالج مسبقاً');
                         return;
@@ -343,40 +758,101 @@ async function showRoleActivity(message, role, client) {
 
                     isNotifyInProgress = true;
                     console.log('✅ تم تعيين isNotifyInProgress = true');
-                    
+
                     try {
-                        // تأجيل الرد أولاً
-                        await interaction.deferUpdate();
+                        // تغيير نص الزر إلى "تم التنبيه" وتعطيله
+                        const updatedButtons = generateButtons(currentPage);
+                        const notifyButtonRow = updatedButtons[1];
+                        const notifyButton = notifyButtonRow.components.find(btn => btn.data.custom_id === 'rooms_notify');
+                        if (notifyButton) {
+                            notifyButton.setLabel('Notified').setEmoji('<:emoji_42:1430334150057001042>').setDisabled(true).setStyle(ButtonStyle.Secondary);
+                        }
+
+                        await interaction.update({
+                            embeds: [generateEmbed(currentPage)],
+                            components: updatedButtons
+                        });
+
+                        // إرسال رسالة مخفية للمستخدم
+                        await interaction.followUp({
+                            content: '<:emoji_53:1430733925227171980>',
+                            ephemeral: true
+                        });
 
                         let successCount = 0;
                         let failCount = 0;
                         let skippedCount = 0;
+                        let rateLimitedCount = 0;
                         let processedCount = 0;
 
-                        // إرسال الرسالة الأولية
-                        const initialEmbed = colorManager.createEmbed()
-                            .setTitle('**جاري إرسال التنبيه للأعضاء...**')
-                            .setDescription(`**✅ تم الإرسال :** 0\n**❌ فشل :** 0\n**⏭️ في الرومات :** 0`)
-                            .setFooter({ text: 'By Ahmed.' })
-                            .setTimestamp();
+                        // نظام Batching - معالجة 5 أعضاء في كل دفعة
+                        const BATCH_SIZE = 5;
+                        const BATCH_DELAY = 3000; // 3 ثواني بين كل دفعة
+                        const MESSAGE_DELAY = 1200; // 1.2 ثانية بين كل رسالة
+                        const MAX_RETRIES = 2;
 
-                        await interaction.editReply({ embeds: [initialEmbed], components: [] });
+                        // تقسيم الأعضاء إلى دفعات
+                        const batches = [];
+                        for (let i = 0; i < memberActivities.length; i += BATCH_SIZE) {
+                            batches.push(memberActivities.slice(i, i + BATCH_SIZE));
+                        }
 
-                    for (const data of memberActivities) {
-                            try {
-                                const freshMember = await message.guild.members.fetch(data.member.id, { force: true });
-                                
-                                const isInVoice = freshMember.voice && 
-                                                freshMember.voice.channelId && 
-                                                freshMember.voice.channel !== null &&
-                                                message.guild.channels.cache.has(freshMember.voice.channelId);
-                                
-                                if (isInVoice) {
-                                    skippedCount++;
-                                    const channelName = freshMember.voice.channel?.name || 'Unknown';
-                                    console.log(`⏭️ تم استبعاد ${freshMember.displayName} لأنه في الرومات الصوتية: ${channelName} (ID: ${freshMember.voice.channelId})`);
-                                } else {
-                                    try {
+                        console.log(`📦 تم تقسيم ${memberActivities.length} عضو إلى ${batches.length} دفعة`);
+
+                        // دالة لإرسال رسالة مع إعادة محاولة
+                        async function sendDMWithRetry(member, embed, retries = MAX_RETRIES) {
+                            for (let attempt = 0; attempt <= retries; attempt++) {
+                                try {
+                                    await member.send({ embeds: [embed] });
+                                    return { success: true };
+                                } catch (error) {
+                                    if (error.code === 429) {
+                                        const retryAfter = error.retry_after || 2;
+                                        console.warn(`⏳ Rate limit - انتظار ${retryAfter}s قبل إعادة المحاولة ${attempt + 1}/${retries}`);
+                                        if (attempt < retries) {
+                                            await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+                                            continue;
+                                        }
+                                        return { success: false, rateLimited: true };
+                                    } else if (error.code === 50007) {
+                                        return { success: false, cannotDM: true };
+                                    } else {
+                                        return { success: false, error: error.message };
+                                    }
+                                }
+                            }
+                            return { success: false, rateLimited: true };
+                        }
+
+                        // معالجة كل دفعة
+                        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+                            const batch = batches[batchIndex];
+                            console.log(`📨 معالجة الدفعة ${batchIndex + 1}/${batches.length} (${batch.length} أعضاء)`);
+
+                            // تحديث الرسالة المؤقتة كل 3 دفعات
+                            if (batchIndex % 3 === 0) {
+                                try {
+                                    await interaction.editReply({
+                                        content: `<:emoji_53:1430733925227171980>`,
+                                        ephemeral: true
+                                    }).catch(() => {});
+                                } catch (e) {}
+                            }
+
+                            for (const data of batch) {
+                                try {
+                                    const freshMember = await message.guild.members.fetch(data.member.id, { force: true });
+
+                                    const isInVoice = freshMember.voice && 
+                                                    freshMember.voice.channelId && 
+                                                    freshMember.voice.channel !== null &&
+                                                    message.guild.channels.cache.has(freshMember.voice.channelId);
+
+                                    if (isInVoice) {
+                                        skippedCount++;
+                                        const channelName = freshMember.voice.channel?.name || 'Unknown';
+                                        console.log(`⏭️ تم استبعاد ${freshMember.displayName} لأنه في الرومات الصوتية: ${channelName}`);
+                                    } else {
                                         const dmEmbed = colorManager.createEmbed()
                                             .setTitle('**تنبيه من إدارة السيرفر**')
                                             .setDescription(`**🔔 الرجاء التفاعل في الرومات**\n\n**السيرفر :** ${message.guild.name}\n**الرول :** **${role.name}**`)
@@ -384,74 +860,68 @@ async function showRoleActivity(message, role, client) {
                                             .setFooter({ text: 'By Ahmed.' })
                                             .setTimestamp();
 
-                                        await freshMember.send({ embeds: [dmEmbed] });
-                                        successCount++;
-                                        console.log(`✅ تم إرسال تنبيه لـ ${freshMember.displayName} (ليس في رومات صوتية)`);
-                                    } catch (dmError) {
-                                        failCount++;
-                                        console.error(`❌ فشل إرسال DM لـ ${freshMember.displayName}:`, dmError.message);
-                                    }
-                                }
-                                
-                                processedCount++;
-                                
-                                // تأخير بسيط لتجنب rate limits
-                                await new Promise(resolve => setTimeout(resolve, 300));
-                                
-                                // تحديث كل 3 أعضاء أو عند الانتهاء
-                                if (processedCount % 3 === 0 || processedCount === memberActivities.length) {
-                                    const updateEmbed = colorManager.createEmbed()
-                                        .setTitle('**جاري إرسال التنبيه للأعضاء...**')
-                                        .setDescription(`**✅ Done :** ${successCount}\n**❌ Failed :** ${failCount}\n**⏭️ In rooms :** ${skippedCount}\n\n**Done it :** ${processedCount}/${memberActivities.length}`)
-                                        .setFooter({ text: 'By Ahmed.' })
-                                        .setTimestamp();
+                                        const result = await sendDMWithRetry(freshMember, dmEmbed);
+                                        
+                                        if (result.success) {
+                                            successCount++;
+                                            console.log(`✅ تم إرسال تنبيه لـ ${freshMember.displayName}`);
+                                        } else if (result.rateLimited) {
+                                            rateLimitedCount++;
+                                            console.warn(`⚠️ Rate limited - ${freshMember.displayName}`);
+                                        } else if (result.cannotDM) {
+                                            failCount++;
+                                            console.error(`❌ DMs مغلقة - ${freshMember.displayName}`);
+                                        } else {
+                                            failCount++;
+                                            console.error(`❌ فشل الإرسال - ${freshMember.displayName}: ${result.error}`);
+                                        }
 
-                                    try {
-                                        await interaction.editReply({ embeds: [updateEmbed], components: [] });
-                                    } catch (updateError) {
-                                        console.error('خطأ في تحديث الرسالة:', updateError);
+                                        // تأخير بين كل رسالة
+                                        await new Promise(resolve => setTimeout(resolve, MESSAGE_DELAY));
                                     }
+
+                                    processedCount++;
+                                } catch (error) {
+                                    failCount++;
+                                    processedCount++;
+                                    console.error(`❌ فشل معالجة العضو ${data.member.displayName}:`, error.message);
                                 }
-                            } catch (error) {
-                                failCount++;
-                                processedCount++;
-                                console.error(`❌ فشل معالجة العضو ${data.member.displayName}:`, error.message);
+                            }
+
+                            // تأخير بين الدفعات (ما عدا الدفعة الأخيرة)
+                            if (batchIndex < batches.length - 1) {
+                                console.log(`⏸️ انتظار ${BATCH_DELAY / 1000}s قبل الدفعة التالية...`);
+                                await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
                             }
                         }
 
-                    // الرسالة النهائية
-                        const finalEmbed = colorManager.createEmbed()
-                            .setTitle('**✅ تم الانتهاء من الإرسال**')
-                            .setDescription(`**✅ All done :** ${successCount}\n**❌ Failed:** ${failCount}\n** In rooms :** ${skippedCount}\n\n**All :** ${memberActivities.length}`)
-                            .setFooter({ text: 'By Ahmed.' })
-                            .setTimestamp();
+                        const finalMessage =` ** Finished ** \n\n `+
+                            `**<:emoji_51:1430733243140931645> sended to :** ${successCount}\n` +
+                            `**<:emoji_2:1430777126570688703> failed to :** ${failCount}\n` +
+                            `**<:emoji_2:1430777099744055346> in rooms :** ${skippedCount}\n` +
+                            (rateLimitedCount > 0 ? `**<:emoji_53:1430733925227171980> Rate Limited :** ${rateLimitedCount}\n` : '') +
+                            `\n**<:emoji_52:1430734346461122654> members :** ${memberActivities.length}\n` +
+                            `**<:emoji_51:1430733172710183103> Final :** ${Math.round((successCount / Math.max(memberActivities.length - skippedCount, 1)) * 100)}%`;
 
                         try {
-                            await interaction.editReply({ embeds: [finalEmbed], components: [] });
+                            await interaction.followUp({
+                                content: finalMessage,
+                                ephemeral: true
+                            });
                         } catch (error) {
                             console.error('خطأ في إرسال الرسالة النهائية:', error);
-                            await message.channel.send({ embeds: [finalEmbed] });
                         }
 
                         console.log('✅ تم الانتهاء من إرسال التنبيهات بنجاح');
                     } catch (notifyError) {
                         console.error('❌ خطأ في معالج التنبيه:', notifyError);
                         try {
-                            const errorEmbed = colorManager.createEmbed()
-                                .setTitle('**❌ حدث خطأ**')
-                                .setDescription('**حدث خطأ أثناء إرسال التنبيهات**\n\n**السبب:** ' + (notifyError.message || 'خطأ غير معروف'))
-                                .setFooter({ text: 'By Ahmed.' });
-                            
-                            if (interaction.deferred) {
-                                await interaction.editReply({ embeds: [errorEmbed], components: [] });
-                            } else if (!interaction.replied) {
-                                await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
-                            }
+                            await interaction.followUp({
+                                content: `**❌ حدث خطأ أثناء إرسال التنبيهات**\n\n**السبب:** ${notifyError.message || 'خطأ غير معروف'}`,
+                                ephemeral: true
+                            });
                         } catch (editError) {
                             console.error('خطأ في إرسال رسالة الخطأ:', editError);
-                            await message.channel.send({ 
-                                content: '**❌ حدث خطأ أثناء معالجة التنبيهات**' 
-                            }).catch(() => {});
                         }
                     } finally {
                         isNotifyInProgress = false;

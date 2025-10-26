@@ -170,7 +170,7 @@ async function safeReply(interaction, content, options = {}) {
 function createCallEmbed(responsibilityName, reason, userId) {
   return colorManager.createEmbed()
     .setTitle('استدعاء مسؤول')
-    .setDescription(`**تم استدعاؤك من قِبل أحد الإداريين**\n\n**المسؤولية:** ${responsibilityName}\n**السبب:** ${reason}\n**من قِبل:** <@${userId}>`)
+    .setDescription(`**تم استدعاؤك من قِبل أحد الإداريين**\n\n**المسؤولية :** ${responsibilityName}\n**السبب :** ${reason}\n**من قِبل :** <@${userId}>`)
     .setFooter({ text: ' By Ahmed.' })
     .setThumbnail('https://cdn.discordapp.com/emojis/1303973825591115846.png?v=1')
     .setTimestamp();
@@ -218,6 +218,9 @@ async function handleClaimButton(interaction, context) {
     // منع التكرار
     if (interaction.replied || interaction.deferred) return;
 
+    // ✅ الرد السريع على التفاعل لتجنب انتهاء الصلاحية
+    await interaction.deferUpdate().catch(() => {});
+
     const parts = interaction.customId.split('_');
     if (parts.length < 4) {
       return safeReply(interaction, '**خطأ في معرف المهمة!**');
@@ -262,26 +265,41 @@ async function handleClaimButton(interaction, context) {
     const guild = interaction.guild || client.guilds.cache.first();
     let displayName = interaction.user.username;
 
-    // Extract the reason from the original embed
-    let reason = 'غير محدد';
-    try {
-        const originalEmbed = interaction.message.embeds[0];
-        if (originalEmbed && originalEmbed.description) {
-            const reasonLine = originalEmbed.description.split('\n').find(line => line.includes('**السبب :**'));
-            if (reasonLine) {
-                reason = reasonLine.replace('**السبب :**', '').trim();
-            }
-        }
-    } catch (e) {
-        console.error("Could not parse reason from embed:", e);
-    }
-
     try {
       if (guild) {
         const member = await guild.members.fetch(interaction.user.id);
         displayName = member.displayName || member.user.displayName || member.user.username;
       }
     } catch { /* ignore */ }
+
+    // Extract the reason from the original embed
+    let reason = 'غير محدد';
+    try {
+        const originalEmbed = interaction.message.embeds[0];
+        if (originalEmbed && originalEmbed.description) {
+            // البحث عن السطر الذي يحتوي على السبب
+            const lines = originalEmbed.description.split('\n');
+            for (const line of lines) {
+                if (line.includes('**السبب:**') || line.includes('**السبب :**')) {
+                    // استخراج النص بعد "**السبب:**" أو "**السبب :**"
+                    reason = line.split('**السبب:**')[1] || line.split('**السبب :**')[1] || 'غير محدد';
+                    reason = reason.trim();
+                    break;
+                }
+            }
+        }
+        // إذا لم نجد السبب في الوصف، نحاول البحث في الـ fields
+        if (reason === 'غير محدد' && originalEmbed.fields) {
+            const reasonField = originalEmbed.fields.find(f => f.name && (f.name.includes('السبب') || f.name.includes('Reason')));
+            if (reasonField && reasonField.value) {
+                reason = reasonField.value.trim();
+            }
+        }
+    } catch (e) {
+        console.error("Could not parse reason from embed:", e);
+    }
+
+    console.log(`📝 السبب المستخرج: "${reason}"`);
 
     // CRITICAL: Check if task is already active before proceeding
     if (activeTasks.has(taskId)) {
@@ -362,7 +380,7 @@ async function handleClaimButton(interaction, context) {
                 responsibilityName,
                 requesterId,
                 timestamp,
-                reason: reason,
+                reason: reason, // استخدام السبب المستخرج من الـ Embed
                 originalChannelId: originalChannelId,
                 originalMessageId: originalMessageId,
                 createdAt: Date.now(),
@@ -412,7 +430,7 @@ async function handleClaimButton(interaction, context) {
 
             const row = new ActionRowBuilder().addComponents(components);
 
-            await interaction.update({ embeds: [reportEmbed], components: [row] });
+            await interaction.editReply({ embeds: [reportEmbed], components: [row] });
     } else {
         // --- ORIGINAL LOGIC for tasks NOT requiring a report ---
         // Award points immediately
@@ -446,7 +464,7 @@ async function handleClaimButton(interaction, context) {
           .setDescription(`**✅ تم استلام المهمة من قبل <@${interaction.user.id}> (${displayName})**\n\n**السبب كان :** ${reason}`)
           .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400676711439273994/1320524603868712960.png?ex=688d8157&is=688c2fd7&hm=2f0fcafb0d4dd4fc905d6c5c350cfafe7d68e902b5668117f2e7903a62c8&');
 
-        await interaction.update({ embeds: [claimedEmbed], components: claimedButtonRow ? [claimedButtonRow] : [] });
+        await interaction.editReply({ embeds: [claimedEmbed], components: claimedButtonRow ? [claimedButtonRow] : [] });
 
         // تنبيه الطالب
         try {
@@ -1272,7 +1290,7 @@ async function handleMasoulModal(interaction, context) {
         originalMessageId || 'unknown'
       );
 
-      const claimButton = new ButtonBuilder().setCustomId(claimCustomId).setLabel('Claim').setStyle(ButtonStyle.Success);
+      const claimButton = new ButtonBuilder().setCustomId(claimCustomId).setLabel('Claim').setEmoji('<:emoji_7:1431072296709390388>').setStyle(ButtonStyle.Secondary);
 
       const guildId = interaction.guildId;
       let goToMessageButton = null;
@@ -1281,7 +1299,7 @@ async function handleMasoulModal(interaction, context) {
         guildId && originalChannelId && /^\d{17,19}$/.test(originalMessageId)
       ) {
         const messageUrl = `https://discord.com/channels/${guildId}/${originalChannelId}/${originalMessageId}`;
-        goToMessageButton = new ButtonBuilder().setLabel('🔗 Message Link').setStyle(ButtonStyle.Link).setURL(messageUrl);
+        goToMessageButton = new ButtonBuilder().setLabel('Message Link').setEmoji('<:emoji_7:1431072267068244180>').setStyle(ButtonStyle.Link).setURL(messageUrl);
       }
 
       const buttonRow = new ActionRowBuilder().addComponents(
@@ -1500,7 +1518,14 @@ async function handleInteraction(interaction, context) {
       if (interaction.replied || interaction.deferred) return;
 
       try {
-        const reason = interaction.fields.getTextInputValue('reason').trim() || 'لا يوجد سبب محدد';
+        let reason = 'لا يوجد سبب محدد';
+        try {
+          reason = interaction.fields.getTextInputValue('reason').trim();
+          if (!reason) reason = 'لا يوجد سبب محدد';
+        } catch (fieldError) {
+          console.error('خطأ في قراءة حقل السبب:', fieldError);
+        }
+        console.log(`📝 السبب من الـ Modal: "${reason}"`);
 
         // إعادة تحميل المسؤوليات من الملف للتأكد من أحدث البيانات
         let currentResponsibilities = {};

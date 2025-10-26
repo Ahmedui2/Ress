@@ -119,8 +119,8 @@ async function createPermanentMenu(client, channelId) {
             .setDescription('** منيو الترقية للمسؤولين **\n\n')
             .addFields([
                 { name: 'Up', value: 'ترقية اداري وإعطاؤه رول إداري لمدة محددة أو نهائياً', inline: false },
-                { name: 'Up log', value: 'عرض الترقيات لإداري معين', inline: false },
-                { name: 'Block', value: 'منع عضو من الحصول على ترقيات', inline: false },
+                { name: 'Up log', value: 'عرض الترقيات لإداري معين',  inline: false },
+                { name: 'Block', value: 'منع عضو من الحصول على ترقيات',  inline: false },
                 { name: 'Unblock', value: 'إزالة منع الترقية عن إداري', inline: false },
                 { name: 'Admins active', value: 'فحص إحصائيات تفاعل الادارة قبل الترقية', inline: false }
             ])
@@ -135,22 +135,26 @@ async function createPermanentMenu(client, channelId) {
                 {
                     label: 'Up',
                     value: 'promote_user_or_role',
+emoji: '<:emoji_21:1431084793063538800>',
                     description: 'ترقية لاداري وإعطاؤه رول إداري لمدة محددة أو نهائياً',
                               },
                 {
                     label: 'Record',
+emoji: '<:emoji_19:1431084764349333534>',
                     value: 'promotion_records',
                     description: 'عرض تاريخ الترقيات لاداري معين',
 
                 },
                 {
                     label: 'Block',
+emoji: '<:emoji_22:1431084863586566294>',
                     value: 'ban_from_promotion',
                     description: 'منع اداري من الحصول على ترقيات',
 
                 },
                 {
                     label: 'Unblock',
+emoji: '<:emoji_22:1431084827267956816>',
                     value: 'unban_promotion',
                     description: 'إزالة حظر الترقية عن عضو',
 
@@ -158,13 +162,15 @@ async function createPermanentMenu(client, channelId) {
                 {
                     label: 'Check Admin',
                     value: 'check_admin_activity',
+emoji: '<:emoji_19:1431084718060732446>',
                     description: 'فحص إحصائيات تفاعل الادارة قبل الترقية',
                            }
             ]);
 
         const settingsButton = new ButtonBuilder()
             .setCustomId('promote_settings_button')
-            .setLabel(' الإعدادات')
+            .setLabel(' Settings')
+.setEmoji('<:emoji_23:1431084907337093227>')
             .setStyle(ButtonStyle.Secondary);
 
         const menuRow = new ActionRowBuilder().addComponents(menuSelect);

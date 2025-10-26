@@ -176,9 +176,9 @@ async function execute(message, args, { client }) {
         const topChat = await getTopUsers(db, 'chat', currentPeriod, 5);
 
         const periodNames = {
-            daily: 'اليوم',
-            weekly: 'الأسبوع',
-            monthly: 'الشهر'
+            daily: 'Daily',
+            weekly: 'Weekly',
+            monthly: 'Monthly'
         };
 
         const embed = colorManager.createEmbed()
@@ -229,9 +229,9 @@ async function execute(message, args, { client }) {
         };
 
         const periodNames = {
-            daily: 'اليوم',
-            weekly: 'الأسبوع',
-            monthly: 'الشهر'
+            daily: 'Daily',
+            weekly: 'Weekly',
+            monthly: 'Monthly'
         };
 
         const embed = colorManager.createEmbed()
@@ -253,7 +253,7 @@ async function execute(message, args, { client }) {
         let description = '';
         
         if (currentCategory === 'voice') {
-            embed.setTitle(`**top voice*`);
+            embed.setTitle(`*top voice*`);
             const showSeconds = shouldShowSeconds(pageUsers);
             description = pageUsers.map((user, idx) => {
                 const rank = startIndex + idx + 1;
@@ -261,20 +261,20 @@ async function execute(message, args, { client }) {
                 return `**#${rank}** - <@${user.user_id}> : **${time}**`;
             }).join('\n');
         } else if (currentCategory === 'chat') {
-            embed.setTitle(`**top chat**`);
+            embed.setTitle(`*top chat*`);
             description = pageUsers.map((user, idx) => {
                 const rank = startIndex + idx + 1;
                 const xp = Math.floor(user.value / 10);
                 return `**#${rank}** - <@${user.user_id}> : **${xp}xp**`;
             }).join('\n');
         } else if (currentCategory === 'reactions') {
-            embed.setTitle(`**Reactions**`);
+            embed.setTitle(`*Reactions*`);
             description = pageUsers.map((user, idx) => {
                 const rank = startIndex + idx + 1;
                 return `**#${rank}** - <@${user.user_id}> : **${user.value}R**`;
             }).join('\n');
         } else if (currentCategory === 'joins') {
-            embed.setTitle(`**Joins**`);
+            embed.setTitle(`*Joins*`);
             description = pageUsers.map((user, idx) => {
                 const rank = startIndex + idx + 1;
                 return `**#${rank}** - <@${user.user_id}> : **${user.value}J**`;
@@ -291,10 +291,10 @@ async function execute(message, args, { client }) {
         .setCustomId('tops_category_select')
         .setPlaceholder('اختر القسم...')
         .addOptions([
-            { label: 'Voice', value: 'voice', description: 'توب الفويس', emoji: '<:emoji_15:1429266644466798592>' },
-            { label: 'Chat', value: 'chat', description: 'توب الشات', emoji: '<:emoji_17:1429266743309893682>' },
-            { label: 'Reactions', value: 'reactions', description: 'توب الرياكتات', emoji: '<:emoji_19:1429266802239602830>' },
-            { label: 'Joins', value: 'joins', description: 'توب الجوين فويس', emoji: '<:emoji_16:1429266685214457856>' }
+            { label: 'voice', value: 'voice', description: 'توب الفويس', emoji: '<:emoji_1:1430777062662209608>' },
+            { label: 'chat', value: 'chat', description: 'توب الشات', emoji: '<:emoji_17:1429266743309893682>' },
+            { label: 'reactions', value: 'reactions', description: 'توب الرياكتات', emoji: '<:emoji_19:1429266802239602830>' },
+            { label: 'joins', value: 'joins', description: 'توب الجوين فويس', emoji: '<:emoji_53:1430791989959594094>' }
         ]);
 
     const selectRow = new ActionRowBuilder().addComponents(categorySelect);
@@ -303,15 +303,18 @@ async function execute(message, args, { client }) {
         const periodRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId('tops_daily')
-                .setLabel('يوم')
+                .setLabel('Day')
+.setEmoji('<:emoji_53:1430788459630563418>')
                 .setStyle(currentPeriod === 'daily' ? ButtonStyle.Primary : ButtonStyle.Secondary),
             new ButtonBuilder()
                 .setCustomId('tops_weekly')
-                .setLabel('اسبوع')
+                .setLabel('Week')
+.setEmoji('<:emoji_51:1430788420891840585>')
                 .setStyle(currentPeriod === 'weekly' ? ButtonStyle.Primary : ButtonStyle.Secondary),
             new ButtonBuilder()
                 .setCustomId('tops_monthly')
-                .setLabel('شهر')
+                .setLabel('Month')
+.setEmoji('<:emoji_50:1430788392018382909>')
                 .setStyle(currentPeriod === 'monthly' ? ButtonStyle.Primary : ButtonStyle.Secondary)
         );
 

@@ -118,8 +118,9 @@ function createSuggestionButton() {
         .addComponents(
             new ButtonBuilder()
                 .setCustomId('suggestion_button')
-                .setLabel('اقتراحات')
-                .setStyle(ButtonStyle.Primary)
+                .setLabel('Suggestion')
+.setEmoji('<:emoji_10:1431078389078298686>')
+                .setStyle(ButtonStyle.Secondary)
         );
     return row;
 }

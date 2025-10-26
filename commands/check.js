@@ -293,17 +293,18 @@ async function showRoleActivityStats(message, role, client) {
     const warningButton = new ButtonBuilder()
         .setCustomId('send_warning')
         .setLabel('Alert')
+.setEmoji('<:emoji_6:1430836100745662554>')
         .setStyle(ButtonStyle.Danger);
 
     const prevButton = new ButtonBuilder()
         .setCustomId('prev_page')
-        .setLabel('🔙')
+        .setEmoji('<:emoji_13:1429263136136888501>')
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(currentPage === 0);
 
     const nextButton = new ButtonBuilder()
         .setCustomId('next_page')
-        .setLabel('🔜')
+        .setEmoji('<:emoji_14:1429263186539974708>')
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(currentPage >= maxPages - 1);
 
@@ -454,37 +455,104 @@ async function showRoleActivityStats(message, role, client) {
                         const date = moment().tz('Asia/Riyadh').format('YYYY-MM-DD HH:mm');
                         let successCount = 0;
                         let failCount = 0;
+                        let rateLimitedCount = 0;
                         let processedCount = 0;
 
-                        for (const userId of selectedUserIds) {
-                            try {
-                                const user = await client.users.fetch(userId);
-                                const warningEmbed = colorManager.createEmbed()
-                                    .setTitle('Alert')
-                                    .setDescription(`**تم تنبيهك بواسطة :** ${sender}\n**بتاريخ :** ${date}\n\n**التنبيه :**\n${warningText}`)
-                                
-                                    .setTimestamp();
+                        // نظام Batching - معالجة 5 أعضاء في كل دفعة
+                        const BATCH_SIZE = 5;
+                        const BATCH_DELAY = 3000; // 3 ثواني بين كل دفعة
+                        const MESSAGE_DELAY = 1200; // 1.2 ثانية بين كل رسالة
+                        const MAX_RETRIES = 2;
 
-                                await user.send({ embeds: [warningEmbed] });
-                                successCount++;
-                                console.log(`✅ تم إرسال تنبيه لـ ${user.tag}`);
-                                
-                                await new Promise(resolve => setTimeout(resolve, 200));
-                            } catch (error) {
-                                failCount++;
-                                console.error(`❌ فشل إرسال رسالة إلى ${userId}:`, error.message);
+                        // تقسيم الأعضاء إلى دفعات
+                        const batches = [];
+                        for (let i = 0; i < selectedUserIds.length; i += BATCH_SIZE) {
+                            batches.push(selectedUserIds.slice(i, i + BATCH_SIZE));
+                        }
+
+                        console.log(`📦 تم تقسيم ${selectedUserIds.length} عضو إلى ${batches.length} دفعة`);
+
+                        // دالة لإرسال رسالة مع إعادة محاولة
+                        async function sendDMWithRetry(user, embed, retries = MAX_RETRIES) {
+                            for (let attempt = 0; attempt <= retries; attempt++) {
+                                try {
+                                    await user.send({ embeds: [embed] });
+                                    return { success: true };
+                                } catch (error) {
+                                    if (error.code === 429) {
+                                        const retryAfter = error.retry_after || 2;
+                                        console.warn(`⏳ Rate limit - انتظار ${retryAfter}s قبل إعادة المحاولة ${attempt + 1}/${retries}`);
+                                        if (attempt < retries) {
+                                            await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+                                            continue;
+                                        }
+                                        return { success: false, rateLimited: true };
+                                    } else if (error.code === 50007) {
+                                        // Cannot send messages to this user
+                                        return { success: false, cannotDM: true };
+                                    } else {
+                                        return { success: false, error: error.message };
+                                    }
+                                }
                             }
+                            return { success: false, rateLimited: true };
+                        }
 
-                            processedCount++;
+                        // معالجة كل دفعة
+                        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+                            const batch = batches[batchIndex];
+                            console.log(`📨 معالجة الدفعة ${batchIndex + 1}/${batches.length} (${batch.length} أعضاء)`);
 
-                            if (processedCount % 3 === 0 || processedCount === selectedUserIds.length) {
+                            // تحديث الرسالة كل 3 دفعات
+                            if (batchIndex % 3 === 0) {
                                 const updateEmbed = colorManager.createEmbed()
                                     .setTitle('**جاري إرسال التنبيه للأعضاء...**')
-                                    .setDescription(`**✅ Done Send :** ${successCount}\n**❌ Failed :** ${failCount}`)
+                                    .setDescription(`**✅ Done Send :** ${successCount}\n**❌ Failed :** ${failCount}` + 
+                                        (rateLimitedCount > 0 ? `\n**<:emoji_53:1430733925227171980> Rate Limited :** ${rateLimitedCount}` : ''))
                                     .setFooter({ text: 'By Ahmed.' })
                                     .setTimestamp();
 
                                 await sentMessage.edit({ embeds: [updateEmbed] }).catch(() => {});
+                            }
+
+                            for (const userId of batch) {
+                                try {
+                                    const user = await client.users.fetch(userId);
+                                    const warningEmbed = colorManager.createEmbed()
+                                        .setTitle('Alert')
+                                        .setDescription(`**تم تنبيهك بواسطة :** ${sender}\n**بتاريخ :** ${date}\n\n**التنبيه :**\n${warningText}`)
+                                        .setTimestamp();
+
+                                    const result = await sendDMWithRetry(user, warningEmbed);
+                                    
+                                    if (result.success) {
+                                        successCount++;
+                                        console.log(`✅ تم إرسال تنبيه لـ ${user.tag}`);
+                                    } else if (result.rateLimited) {
+                                        rateLimitedCount++;
+                                        console.warn(`⚠️ Rate limited - ${user.tag}`);
+                                    } else if (result.cannotDM) {
+                                        failCount++;
+                                        console.error(`❌ DMs مغلقة - ${user.tag}`);
+                                    } else {
+                                        failCount++;
+                                        console.error(`❌ فشل الإرسال - ${user.tag}: ${result.error}`);
+                                    }
+
+                                    // تأخير بين كل رسالة
+                                    await new Promise(resolve => setTimeout(resolve, MESSAGE_DELAY));
+                                } catch (error) {
+                                    failCount++;
+                                    console.error(`❌ فشل إرسال رسالة إلى ${userId}:`, error.message);
+                                }
+
+                                processedCount++;
+                            }
+
+                            // تأخير بين الدفعات (ما عدا الدفعة الأخيرة)
+                            if (batchIndex < batches.length - 1) {
+                                console.log(`⏸️ انتظار ${BATCH_DELAY / 1000}s قبل الدفعة التالية...`);
+                                await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
                             }
                         }
 
@@ -496,7 +564,9 @@ async function showRoleActivityStats(message, role, client) {
 
                         const finalEmbed = colorManager.createEmbed()
                             .setTitle('** Done sended ✅️**')
-                            .setDescription(`**✅  Done to :** ${successCount}\n**❌ Failed :** ${failCount}\n**Colors :** ${colorNames}`)
+                            .setDescription(`**✅  Done to :** ${successCount}\n**❌ Failed :** ${failCount}` +
+                                (rateLimitedCount > 0 ? `\n**<:emoji_53:1430733925227171980> Rate Limited :** ${rateLimitedCount}` : '') +
+                                `\n**Colors :** ${colorNames}\n**<:emoji_51:1430733172710183103> Final :** ${Math.round((successCount / Math.max(selectedUserIds.length, 1)) * 100)}%`)
                             .setFooter({ text: 'By Ahmed.' })
                             .setTimestamp();
 

@@ -81,6 +81,15 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
         }
       } catch (error) {
         console.error('خطأ في تحديث منيو السيتب:', error);
+}
+try {
+        const respCommand = client.commands.get('resp');
+        if (respCommand && respCommand.updateEmbedMessage) {
+          await respCommand.updateEmbedMessage(client);
+          console.log('✅ [SETTINGS] تم تحديث إيمبد Resp');
+        }
+      } catch (error) {
+        console.error('خطأ في تحديث إيمبد Resp:', error);
       }
 
       return true;
