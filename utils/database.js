@@ -31,6 +31,22 @@ class DatabaseManager {
 
             this.db = new sqlite3.Database(dbPath);
 
+            // تحسينات PRAGMA للأداء العالي والسيرفرات الكبيرة
+            await this.run('PRAGMA journal_mode=WAL');
+            await this.run('PRAGMA page_size=4096');
+            await this.run('PRAGMA synchronous=NORMAL');
+            await this.run('PRAGMA auto_vacuum=INCREMENTAL');
+            
+            // تحسينات إضافية للأداء
+            await this.run('PRAGMA cache_size=-64000');
+            await this.run('PRAGMA temp_store=MEMORY');
+            await this.run('PRAGMA mmap_size=268435456');
+            await this.run('PRAGMA wal_autocheckpoint=1000');
+            
+            // تحسين القراءة والكتابة
+            await this.run('PRAGMA busy_timeout=5000');
+            await this.run('PRAGMA locking_mode=NORMAL');
+
             // تهيئة الجداول
             await this.createTables();
 
@@ -38,7 +54,7 @@ class DatabaseManager {
             await this.createIndexes();
 
             this.isInitialized = true;
-            console.log('✅ تم تهيئة قاعدة البيانات بنجاح');
+            console.log('✅ تم تهيئة قاعدة البيانات بنجاح مع تحسينات الأداء');
         } catch (error) {
             console.error('❌ خطأ في تهيئة قاعدة البيانات:', error);
             throw error;
@@ -658,21 +674,44 @@ class DatabaseManager {
         }
     }
 
-    // تنظيف البيانات القديمة
+    // تنظيف البيانات القديمة (حذف الجلسات التفصيلية فقط، الاحتفاظ بالإجماليات)
     async cleanupOldData(daysToKeep = 60) {
         try {
+            const cutoffDate = moment().tz('Asia/Riyadh').subtract(daysToKeep, 'days').format('YYYY-MM-DD');
             const cutoffTime = Date.now() - (daysToKeep * 24 * 60 * 60 * 1000);
 
-            const result = await this.run(`
+            // حذف الجلسات التفصيلية القديمة فقط (voice_sessions)
+            const sessionsResult = await this.run(`
                 DELETE FROM voice_sessions WHERE start_time < ?
             `, [cutoffTime]);
 
-            console.log(`🧹 تم حذف ${result.changes} جلسة قديمة`);
-            return result.changes;
+            // حذف بيانات النشاط اليومي القديمة (أقدم من 90 يوماً بدلاً من 6 أشهر)
+            const ninetyDaysAgo = moment().tz('Asia/Riyadh').subtract(90, 'days').format('YYYY-MM-DD');
+            const dailyResult = await this.run(`
+                DELETE FROM daily_activity WHERE date < ?
+            `, [ninetyDaysAgo]);
+
+            // حذف بيانات القنوات غير النشطة (آخر رسالة أقدم من 90 يوماً)
+            const channelCleanup = await this.run(`
+                DELETE FROM message_channels WHERE last_message < ?
+            `, [Date.now() - (90 * 24 * 60 * 60 * 1000)]);
+
+            console.log(`🧹 تنظيف تلقائي: ${sessionsResult.changes || 0} جلسة، ${dailyResult.changes || 0} نشاط يومي، ${channelCleanup.changes || 0} قناة`);
+            console.log(`📊 الإحصائيات الإجمالية محفوظة - البيانات التفصيلية لآخر ${daysToKeep} يوم محفوظة`);
+            
+            // ضغط تلقائي قوي بعد التنظيف
+            await this.run('PRAGMA incremental_vacuum');
+            await this.run('ANALYZE');
+            
+            return {
+                sessions: sessionsResult.changes || 0,
+                dailyActivity: dailyResult.changes || 0,
+                channels: channelCleanup.changes || 0
+            };
 
         } catch (error) {
             console.error('❌ خطأ في تنظيف البيانات القديمة:', error);
-            return 0;
+            return { sessions: 0, dailyActivity: 0, channels: 0 };
         }
     }
 
@@ -876,6 +915,53 @@ class DatabaseManager {
         } catch (error) {
             console.error('Error resetting all activity:', error);
             return { success: false, error: error.message };
+        }
+    }
+
+    // ضغط وتنظيف قاعدة البيانات
+    async compressDatabase() {
+        try {
+            console.log('🗜️ بدء عملية ضغط قاعدة البيانات...');
+            
+            // تنفيذ VACUUM لضغط الملف
+            await this.run('VACUUM');
+            
+            // تنفيذ incremental vacuum
+            await this.run('PRAGMA incremental_vacuum');
+            
+            // إعادة تحليل الإحصائيات
+            await this.run('ANALYZE');
+            
+            console.log('✅ تم ضغط قاعدة البيانات بنجاح');
+            return { success: true };
+        } catch (error) {
+            console.error('❌ خطأ في ضغط قاعدة البيانات:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    // الحصول على حجم قاعدة البيانات
+    async getDatabaseSize() {
+        try {
+            const fs = require('fs');
+            const stats = fs.statSync(dbPath);
+            const sizeInMB = (stats.size / (1024 * 1024)).toFixed(2);
+            
+            // حساب عدد السجلات
+            const counts = {
+                voice_sessions: (await this.get('SELECT COUNT(*) as count FROM voice_sessions')).count,
+                daily_activity: (await this.get('SELECT COUNT(*) as count FROM daily_activity')).count,
+                user_totals: (await this.get('SELECT COUNT(*) as count FROM user_totals')).count
+            };
+            
+            return {
+                sizeInMB: sizeInMB,
+                sizeInBytes: stats.size,
+                counts: counts
+            };
+        } catch (error) {
+            console.error('❌ خطأ في الحصول على حجم القاعدة:', error);
+            return null;
         }
     }
 
