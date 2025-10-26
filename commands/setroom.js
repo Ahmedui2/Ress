@@ -2068,7 +2068,8 @@ async function execute(message, args, { BOT_OWNERS, client }) {
                 let colorRoleData = [];
 
                 // جمع الأدوار التي أسماؤها أرقام صافية فقط (مثل "1", "2", "3")
-                const usedNumbers = new Set(); // لتتبع الأرقام المستخدمة
+                const usedNumbers = new Set();
+                const tempRoleData = [];
                 
                 allRoles.forEach(role => {
                     // التحقق من أن الاسم بالكامل رقم فقط (لا يحتوي على أحرف أو مسافات)
@@ -2080,17 +2081,38 @@ async function execute(message, args, { BOT_OWNERS, client }) {
                         
                         // تجاهل الرول إذا كان الرقم مستخدم بالفعل (رول مكرر)
                         if (!usedNumbers.has(roleNumber)) {
-                            colorRoleData.push({
+                            tempRoleData.push({
                                 id: role.id,
                                 number: roleNumber
                             });
                             usedNumbers.add(roleNumber);
-                            console.log(`✅ تم إضافة رول اللون: ${role.name} (${role.id})`);
-                        } else {
-                            console.warn(`⚠️ تم تجاهل رول مكرر: ${role.name} (${role.id}) - الرقم ${roleNumber} موجود بالفعل`);
                         }
                     }
                 });
+
+                // ترتيب الأرقام تصاعدياً
+                tempRoleData.sort((a, b) => a.number - b.number);
+
+                // فلترة الأرقام البعيدة (الحد الأقصى: 10 أرقام عن آخر رقم مقبول)
+                const MAX_GAP = 10;
+                if (tempRoleData.length > 0) {
+                    let lastAcceptedNumber = tempRoleData[0].number;
+                    colorRoleData.push(tempRoleData[0]);
+                    console.log(`✅ تم إضافة رول اللون: ${tempRoleData[0].number} (${tempRoleData[0].id})`);
+
+                    for (let i = 1; i < tempRoleData.length; i++) {
+                        const currentNumber = tempRoleData[i].number;
+                        const gap = currentNumber - lastAcceptedNumber;
+
+                        if (gap <= MAX_GAP) {
+                            colorRoleData.push(tempRoleData[i]);
+                            lastAcceptedNumber = currentNumber;
+                            console.log(`✅ تم إضافة رول اللون: ${currentNumber} (${tempRoleData[i].id})`);
+                        } else {
+                            console.warn(`⚠️ تم تجاهل رول بعيد: ${currentNumber} - الفرق ${gap} أرقام عن آخر رقم مقبول (${lastAcceptedNumber})`);
+                        }
+                    }
+                }
 
                 // إذا لم يكن هناك رولات ألوان، قم بإنشاء 7 ألوان عشوائية
                 if (colorRoleData.length === 0) {
@@ -2241,6 +2263,179 @@ async function execute(message, args, { BOT_OWNERS, client }) {
     });
 }
 
+async function handleRoleUpdate(oldRole, newRole, client) {
+    try {
+        const guildId = newRole.guild.id;
+        const config = loadRoomConfig();
+        const guildConfig = config[guildId];
+
+        if (!guildConfig || !guildConfig.colorRoleIds || guildConfig.colorRoleIds.length === 0) {
+            return;
+        }
+
+        const roleId = newRole.id;
+        const wasColorRole = guildConfig.colorRoleIds.includes(roleId);
+        
+        const oldName = oldRole.name.trim();
+        const newName = newRole.name.trim();
+        const oldColor = oldRole.hexColor;
+        const newColor = newRole.hexColor;
+
+        const isOldNumber = /^\d+$/.test(oldName);
+        const isNewNumber = /^\d+$/.test(newName);
+
+        let needsUpdate = false;
+
+        if (wasColorRole && isOldNumber && !isNewNumber) {
+            console.log(`⚠️ رول ${oldName} تم تغيير اسمه إلى نص (${newName}) - سيتم إزالته من النظام`);
+            guildConfig.colorRoleIds = guildConfig.colorRoleIds.filter(id => id !== roleId);
+            config[guildId] = guildConfig;
+            saveRoomConfig(config);
+            needsUpdate = true;
+        }
+        else if (wasColorRole && isNewNumber) {
+            if (oldName !== newName) {
+                console.log(`🔄 رول ${oldName} تم تغيير رقمه إلى ${newName} - سيتم إعادة الترتيب والفحص`);
+                needsUpdate = true;
+            }
+            if (oldColor !== newColor) {
+                console.log(`🎨 رول ${newName} تم تغيير لونه من ${oldColor} إلى ${newColor}`);
+                needsUpdate = true;
+            }
+        }
+        else if (!wasColorRole && isNewNumber) {
+            console.log(`➕ رول جديد برقم ${newName} - سيتم التحقق منه وإضافته إذا كان ضمن النطاق`);
+            needsUpdate = true;
+        }
+
+        if (needsUpdate) {
+            await updateSetupEmbed(guildId, client);
+        }
+
+    } catch (error) {
+        console.error('❌ خطأ في معالجة تحديث الرول:', error);
+    }
+}
+
+async function updateSetupEmbed(guildId, client) {
+    try {
+        const config = loadRoomConfig();
+        const guildConfig = config[guildId];
+
+        if (!guildConfig || !guildConfig.embedChannelId || !guildConfig.imageUrl) {
+            return;
+        }
+
+        const guild = await client.guilds.fetch(guildId).catch(() => null);
+        if (!guild) {
+            console.error(`❌ السيرفر ${guildId} غير موجود`);
+            return;
+        }
+
+        const allRoles = guild.roles.cache;
+        let colorRoleData = [];
+
+        const usedNumbers = new Set();
+        const tempRoleData = [];
+        
+        allRoles.forEach(role => {
+            const trimmedName = role.name.trim();
+            const isNumberOnly = /^\d+$/.test(trimmedName);
+
+            if (isNumberOnly && !role.managed && role.id !== guild.id) {
+                const roleNumber = parseInt(trimmedName);
+                
+                if (!usedNumbers.has(roleNumber)) {
+                    tempRoleData.push({
+                        id: role.id,
+                        number: roleNumber
+                    });
+                    usedNumbers.add(roleNumber);
+                }
+            }
+        });
+
+        tempRoleData.sort((a, b) => a.number - b.number);
+
+        const MAX_GAP = 10;
+        if (tempRoleData.length > 0) {
+            let lastAcceptedNumber = tempRoleData[0].number;
+            colorRoleData.push(tempRoleData[0]);
+
+            for (let i = 1; i < tempRoleData.length; i++) {
+                const currentNumber = tempRoleData[i].number;
+                const gap = currentNumber - lastAcceptedNumber;
+
+                if (gap <= MAX_GAP) {
+                    colorRoleData.push(tempRoleData[i]);
+                    lastAcceptedNumber = currentNumber;
+                } else {
+                    console.log(`⚠️ تم تجاهل رول بعيد: ${currentNumber} (الفرق: ${gap})`);
+                }
+            }
+        }
+
+        colorRoleData.sort((a, b) => a.number - b.number);
+        const colorRoleIds = colorRoleData.map(r => r.id);
+
+        guildConfig.colorRoleIds = colorRoleIds;
+        config[guildId] = guildConfig;
+        saveRoomConfig(config);
+
+        const setupData = setupEmbedMessages.get(guildId);
+        if (!setupData) {
+            console.log(`⚠️ لا توجد رسالة setup للسيرفر ${guildId}`);
+            return;
+        }
+
+        const embedChannel = await client.channels.fetch(guildConfig.embedChannelId).catch(() => null);
+        if (!embedChannel) {
+            console.error(`❌ قناة الإيمبد ${guildConfig.embedChannelId} غير موجودة`);
+            return;
+        }
+
+        const existingMessage = await embedChannel.messages.fetch(setupData.messageId).catch(() => null);
+        if (!existingMessage) {
+            console.log(`⚠️ رسالة الإيمبد ${setupData.messageId} غير موجودة - سيتم إعادة الإرسال`);
+            await resendSetupEmbed(guildId, client);
+            return;
+        }
+
+        const mergedImagePath = await createColorsImage(guild, guildConfig);
+        const colorDescription = createColorDescription(guild, guildConfig);
+        const imageToUse = mergedImagePath ? `attachment://colors_merged.png` : guildConfig.imageUrl;
+
+        const finalEmbed = colorManager.createEmbed()
+            .setTitle('**Rooms & Colors**')
+            .setDescription('**اختر لونك او نوع الروم التي تريد طلبها :**' + colorDescription)
+            .setImage(imageToUse)
+            .setFooter({ text: 'System' });
+
+        const menus = createSetupMenus(guild, guildConfig);
+
+        const messageOptions = { 
+            embeds: [finalEmbed], 
+            components: menus 
+        };
+
+        if (mergedImagePath) {
+            const attachment = new AttachmentBuilder(mergedImagePath, { name: 'colors_merged.png' });
+            messageOptions.files = [attachment];
+        }
+
+        await existingMessage.edit(messageOptions);
+
+        if (mergedImagePath && fs.existsSync(mergedImagePath)) {
+            fs.unlinkSync(mergedImagePath);
+        }
+
+        console.log(`✅ تم تحديث setup embed تلقائياً للسيرفر ${guildId} (${colorRoleIds.length} رول)`);
+
+    } catch (error) {
+        console.error('❌ خطأ في تحديث setup embed:', error);
+    }
+}
+
 module.exports = { 
     name,
     execute,
@@ -2252,5 +2447,6 @@ module.exports = {
     restoreSchedules,
     checkAndRestoreSetupEmbed,
     startContinuousSetupEmbedCheck,
-    startAutoMessageDeletion
+    startAutoMessageDeletion,
+    handleRoleUpdate
 };
