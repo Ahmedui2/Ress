@@ -290,6 +290,13 @@ try {
       setroomCommand.startContinuousSetupEmbedCheck(client);
     }, 10000); // بدء بعد 10 ثواني من تشغيل البوت
   }
+
+  // تشغيل نظام الحذف التلقائي للرسائل
+  if (setroomCommand.startAutoMessageDeletion) {
+    setTimeout(() => {
+      setroomCommand.startAutoMessageDeletion(client);
+    }, 15000); // بدء بعد 15 ثانية من تشغيل البوت
+  }
 } catch (error) {
   console.error('❌ خطأ في تسجيل معالجات setroom:', error);
 }
