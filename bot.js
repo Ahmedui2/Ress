@@ -570,6 +570,20 @@ client.once(Events.ClientReady, async () => {
         return;
     }
 
+    // تشغيل نظام الأرشفة والصيانة التلقائية
+    try {
+        const { startScheduler } = require('./utils/database-scheduler');
+        const { archiver } = require('./utils/database-archiver');
+        
+        console.log('🔍 فحص مساحة القرص عند بدء التشغيل...');
+        await archiver.checkAndHandleDiskSpace();
+        
+        startScheduler();
+        console.log('✅ تم تشغيل نظام الأرشفة والصيانة التلقائية');
+    } catch (error) {
+        console.error('❌ خطأ في تشغيل نظام الأرشفة:', error);
+    }
+
     // تهيئة نظام تتبع الجلسات الصوتية (إذا لم يكن موجود)
     if (!client.voiceSessions) {
         client.voiceSessions = new Map();
@@ -897,6 +911,16 @@ client.once(Events.ClientReady, async () => {
   */
 
 }); // إغلاق client.once('ready')
+
+// مراقبة تحديثات الرولات لنظام setroom
+client.on('roleUpdate', async (oldRole, newRole) => {
+    try {
+        const { handleRoleUpdate } = require('./commands/setroom.js');
+        await handleRoleUpdate(oldRole, newRole, client);
+    } catch (error) {
+        console.error('❌ خطأ في معالجة تحديث الرول:', error);
+    }
+});
 
 // تتبع التفاعلات - معالج محسن ومحدث
 client.on('messageReactionAdd', async (reaction, user) => {
