@@ -995,7 +995,7 @@ async function handleRoomRequestMenu(interaction, client) {
 
     await interaction.showModal(modal);
 
-    // إعادة تعيين المنيو فورًا بعد فتح المودال
+    // إعادة تعيين جميع المنيوهات (الروم + الألوان) فورًا بعد فتح المودال
     try {
         const config = loadRoomConfig();
         const guildConfig = config[interaction.guild.id];
@@ -1007,33 +1007,15 @@ async function handleRoomRequestMenu(interaction, client) {
                 const embedChannel = await client.channels.fetch(guildConfig.embedChannelId);
                 const setupMessage = await embedChannel.messages.fetch(setupData.messageId);
 
-                // إعادة بناء المنيو بدون اختيار افتراضي
-                const freshMenu = new ActionRowBuilder().addComponents(
-                    new StringSelectMenuBuilder()
-                        .setCustomId('room_type_menu')
-                        .setPlaceholder('اختر نوع الروم')
-                        .addOptions([
-                            {
-                                label: 'Doaa',
-                        description: 'طلب روم دعاء',
-                        emoji: '<:emoji_5:1430777863363100775>',
-                        value: 'condolence',
-                    },
-                    {
-                        label: 'Birthday ',
-                        description: 'طلب روم ميلاد',
-                        emoji: '<:emoji_4:1430777429235994725>',
-                        value: 'birthday',
-                            }
-                        ])
-                );
+                // إعادة بناء جميع المنيوهات (الروم + الألوان) بدون اختيار افتراضي
+                const freshMenus = createSetupMenus(interaction.guild, guildConfig);
 
-                await setupMessage.edit({ components: [freshMenu] });
-                console.log('✅ تم إعادة تعيين المنيو فورًا بعد فتح المودال');
+                await setupMessage.edit({ components: freshMenus });
+                console.log('✅ تم إعادة تعيين جميع المنيوهات (الروم + الألوان) فورًا بعد فتح المودال');
             }
         }
     } catch (updateError) {
-        console.error('❌ خطأ في إعادة تعيين المنيو:', updateError);
+        console.error('❌ خطأ في إعادة تعيين المنيوهات:', updateError);
     }
 }
 
@@ -1247,7 +1229,7 @@ async function handleEmojiMessage(message, client) {
 
     await requestsChannel.send({ embeds: [requestEmbed], components: [buttons] });
 
-    // تحديث رسالة السيتب لإعادة تعيين المنيو
+    // تحديث رسالة السيتب لإعادة تعيين جميع المنيوهات (الروم + الألوان)
     try {
         const embedChannel = await client.channels.fetch(guildConfig.embedChannelId);
         const setupData = setupEmbedMessages.get(requestData.guildId);
@@ -1255,32 +1237,14 @@ async function handleEmojiMessage(message, client) {
         if (setupData && setupData.messageId && setupData.channelId === guildConfig.embedChannelId) {
             const setupMessage = await embedChannel.messages.fetch(setupData.messageId);
 
-            // إعادة بناء المنيو بدون اختيار افتراضي
-            const freshMenu = new ActionRowBuilder().addComponents(
-                new StringSelectMenuBuilder()
-                    .setCustomId('room_type_menu')
-                    .setPlaceholder('اختر نوع الروم')
-                    .addOptions([
-                        {
-                            label: 'Doaa',
-                        description: 'طلب روم دعاء',
-                        emoji: '<:emoji_5:1430777863363100775>',
-                        value: 'condolence',
-                    },
-                    {
-                        label: 'Birthday ',
-                        description: 'طلب روم ميلاد',
-                        emoji: '<:emoji_4:1430777429235994725>',
-                        value: 'birthday',
-                        }
-                    ])
-            );
+            // إعادة بناء جميع المنيوهات (الروم + الألوان) بدون اختيار افتراضي
+            const freshMenus = createSetupMenus(message.guild, guildConfig);
 
-            await setupMessage.edit({ components: [freshMenu] });
-            console.log('✅ تم تحديث منيو السيتب لإعادة تعيينه');
+            await setupMessage.edit({ components: freshMenus });
+            console.log('✅ تم تحديث جميع منيوهات السيتب (الروم + الألوان) لإعادة تعيينها');
         }
     } catch (updateError) {
-        console.error('❌ خطأ في تحديث منيو السيتب:', updateError);
+        console.error('❌ خطأ في تحديث منيوهات السيتب:', updateError);
     }
 
     // حذف رسالة الإيموجيات من المستخدم
