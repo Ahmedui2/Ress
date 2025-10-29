@@ -3,8 +3,128 @@ const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
 const { getDatabase } = require('../utils/database.js');
 const moment = require('moment-timezone');
+const sqlite3 = require('sqlite3').verbose();
+const path = require('path');
+const fs = require('fs');
 
 const name = 'توب';
+
+const streakDbPath = path.join(__dirname, '..', 'database', 'streak.db');
+let streakDb = null;
+
+function initializeStreakDatabase() {
+    return new Promise((resolve, reject) => {
+        const dbDir = path.dirname(streakDbPath);
+        if (!fs.existsSync(dbDir)) {
+            fs.mkdirSync(dbDir, { recursive: true });
+        }
+
+        streakDb = new sqlite3.Database(streakDbPath, async (err) => {
+            if (err) {
+                console.error('خطأ في فتح قاعدة بيانات streak:', err);
+                return reject(err);
+            }
+            console.log('✅ تم فتح قاعدة بيانات Streak في tops');
+            
+            // إنشاء الجداول إذا لم تكن موجودة
+            try {
+                await streakRunQuery(`CREATE TABLE IF NOT EXISTS streak_settings (
+                    guild_id TEXT PRIMARY KEY,
+                    approver_type TEXT,
+                    approver_targets TEXT,
+                    locked_channel_id TEXT,
+                    divider_image_url TEXT,
+                    reaction_emojis TEXT
+                )`);
+
+                await streakRunQuery(`CREATE TABLE IF NOT EXISTS streak_users (
+                    guild_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    current_streak INTEGER DEFAULT 0,
+                    longest_streak INTEGER DEFAULT 0,
+                    last_post_date TEXT,
+                    total_posts INTEGER DEFAULT 0,
+                    is_active BOOLEAN DEFAULT 1,
+                    created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                    PRIMARY KEY (guild_id, user_id)
+                )`);
+
+                await streakRunQuery(`CREATE TABLE IF NOT EXISTS streak_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    message_id TEXT,
+                    post_date TEXT NOT NULL,
+                    streak_count INTEGER,
+                    created_at INTEGER DEFAULT (strftime('%s', 'now'))
+                )`);
+
+                await streakRunQuery(`CREATE TABLE IF NOT EXISTS streak_restore_requests (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    previous_streak INTEGER,
+                    request_message TEXT,
+                    status TEXT DEFAULT 'pending',
+                    approver_id TEXT,
+                    created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                    resolved_at INTEGER
+                )`);
+
+                await streakRunQuery(`CREATE TABLE IF NOT EXISTS streak_dividers (
+                    guild_id TEXT NOT NULL,
+                    channel_id TEXT NOT NULL,
+                    message_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    user_message_ids TEXT,
+                    created_at INTEGER DEFAULT (strftime('%s', 'now'))
+                )`);
+
+                console.log('✅ تم التحقق من جداول Streak في tops');
+                resolve();
+            } catch (tableError) {
+                console.error('❌ خطأ في إنشاء جداول Streak:', tableError);
+                reject(tableError);
+            }
+        });
+    });
+}
+
+function streakRunQuery(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        if (!streakDb) {
+            return reject(new Error('قاعدة البيانات غير مهيأة'));
+        }
+        streakDb.run(sql, params, function(err) {
+            if (err) reject(err);
+            else resolve(this);
+        });
+    });
+}
+
+function streakAllQuery(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        if (!streakDb) {
+            return reject(new Error('قاعدة البيانات غير مهيأة'));
+        }
+        streakDb.all(sql, params, (err, rows) => {
+            if (err) reject(err);
+            else resolve(rows);
+        });
+    });
+}
+
+function streakGetQuery(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        if (!streakDb) {
+            return reject(new Error('قاعدة البيانات غير مهيأة'));
+        }
+        streakDb.get(sql, params, (err, row) => {
+            if (err) reject(err);
+            else resolve(row);
+        });
+    });
+}
 
 function formatDuration(milliseconds, showSeconds = false) {
     if (!milliseconds || milliseconds <= 0) return 'لا يوجد';
@@ -150,6 +270,45 @@ async function getTopUsers(db, category, period, limit = 50) {
     }
 }
 
+async function getStreakUsers(guildId) {
+    try {
+        if (!streakDb) {
+            await initializeStreakDatabase();
+        }
+
+        const allStreaks = await streakAllQuery(`
+            SELECT * FROM streak_users 
+            WHERE guild_id = ? AND current_streak > 0 
+            ORDER BY current_streak DESC, last_post_date ASC
+        `, [guildId]);
+        
+        return allStreaks || [];
+    } catch (error) {
+        if (error.code === 'SQLITE_ERROR' && error.message.includes('no such table')) {
+            return [];
+        }
+        console.error('خطأ في جلب بيانات Streaks:', error);
+        return [];
+    }
+}
+
+async function isStreakSystemEnabled(guildId) {
+    try {
+        if (!streakDb) {
+            await initializeStreakDatabase();
+        }
+
+        const settings = await streakGetQuery('SELECT * FROM streak_settings WHERE guild_id = ?', [guildId]);
+        return settings !== undefined && settings !== null;
+    } catch (error) {
+        if (error.code === 'SQLITE_ERROR' && error.message.includes('no such table')) {
+            return false;
+        }
+        console.error('خطأ في فحص نظام Streaks:', error);
+        return false;
+    }
+}
+
 async function execute(message, args, { client }) {
     if (isUserBlocked(message.author.id)) {
         const blockedEmbed = colorManager.createEmbed()
@@ -182,7 +341,7 @@ async function execute(message, args, { client }) {
         };
 
         const embed = colorManager.createEmbed()
-            .setTitle('**Top**')
+            .setTitle('**Rank**')
             .setTimestamp()
             .setThumbnail(client.user.displayAvatarURL({ format: 'png', size: 128 }));
 
@@ -215,6 +374,57 @@ async function execute(message, args, { client }) {
         embed.setDescription(description)
             .setFooter({ text: `${periodNames[currentPeriod]}` });
 
+        return embed;
+    }
+
+    async function buildStreakEmbed() {
+        const isEnabled = await isStreakSystemEnabled(message.guild.id);
+        
+        const embed = colorManager.createEmbed()
+            .setTimestamp()
+            .setThumbnail(client.user.displayAvatarURL({ format: 'png', size: 128 }));
+
+        if (!isEnabled) {
+            embed.setTitle('**نظام Streak غير مُفعّل**')
+                .setDescription('** يرجى التواصل مع المسؤولين لتفعيله **')
+                .setFooter({ text: 'الصفحة 1 من 1' });
+            return embed;
+        }
+
+        const allStreaks = await getStreakUsers(message.guild.id);
+
+        if (allStreaks.length === 0) {
+            embed.setTitle('**Rank Streak**')
+                .setDescription('لا يوجد أحد لديه Streak حالياً!\n\n**كن أول من يبدأ**')
+                .setFooter({ text: 'الصفحة 1 من 1' });
+            return embed;
+        }
+
+        const totalPages = Math.ceil(allStreaks.length / pageSize);
+        const startIndex = currentPage * pageSize;
+        const endIndex = Math.min(startIndex + pageSize, allStreaks.length);
+        const pageStreaks = allStreaks.slice(startIndex, endIndex);
+
+        const today = moment().tz('Asia/Riyadh').format('YYYY-MM-DD');
+        let description = '';
+        
+        for (let i = 0; i < pageStreaks.length; i++) {
+            const streak = pageStreaks[i];
+            const globalRank = startIndex + i + 1;
+            const isActiveToday = streak.last_post_date === today;
+            const statusEmoji = isActiveToday ? '<:emoji_28:1432242139948908564>' : '<:emoji_29:1432242189869514753>';
+            const fireEmojis = '🔥'.repeat(Math.min(Math.floor(streak.current_streak / 5) + 1, 3));
+            
+            description += `**#${globalRank} -** <@${streak.user_id}> **${streak.current_streak}** Status : ${statusEmoji}\n`;
+        }
+
+        embed.setTitle('**Top Streak**')
+            .setDescription(description.trim())
+            .addFields([
+                { name: '\u200b', value: '<:emoji_28:1432242139948908564> Active  •  <:emoji_29:1432242189869514753> Not Active', inline: false }
+            ])
+            .setFooter({ text: `الصفحة ${currentPage + 1} من ${totalPages} • إجمالي ${allStreaks.length} عضو ؛` });
+        
         return embed;
     }
 
@@ -294,39 +504,49 @@ async function execute(message, args, { client }) {
             { label: 'voice', value: 'voice', description: 'توب الفويس', emoji: '<:emoji_1:1430777062662209608>' },
             { label: 'chat', value: 'chat', description: 'توب الشات', emoji: '<:emoji_17:1429266743309893682>' },
             { label: 'reactions', value: 'reactions', description: 'توب الرياكتات', emoji: '<:emoji_19:1429266802239602830>' },
-            { label: 'joins', value: 'joins', description: 'توب الجوين فويس', emoji: '<:emoji_53:1430791989959594094>' }
+            { label: 'joins', value: 'joins', description: 'توب الجوين فويس', emoji: '<:emoji_53:1430791989959594094>' },
+            { label: 'Streaks', value: 'streaks', description: 'توب الستريك', emoji: '<:emoji_32:1432260412073705503>' }
         ]);
 
     const selectRow = new ActionRowBuilder().addComponents(categorySelect);
 
     async function buildButtons() {
+        const isStreakCategory = currentCategory === 'streaks';
+        
         const periodRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId('tops_daily')
                 .setLabel('Day')
-.setEmoji('<:emoji_53:1430788459630563418>')
-                .setStyle(currentPeriod === 'daily' ? ButtonStyle.Primary : ButtonStyle.Secondary),
+                .setEmoji('<:emoji_53:1430788459630563418>')
+                .setStyle(currentPeriod === 'daily' ? ButtonStyle.Primary : ButtonStyle.Secondary)
+                .setDisabled(isStreakCategory),
             new ButtonBuilder()
                 .setCustomId('tops_weekly')
                 .setLabel('Week')
-.setEmoji('<:emoji_51:1430788420891840585>')
-                .setStyle(currentPeriod === 'weekly' ? ButtonStyle.Primary : ButtonStyle.Secondary),
+                .setEmoji('<:emoji_51:1430788420891840585>')
+                .setStyle(currentPeriod === 'weekly' ? ButtonStyle.Primary : ButtonStyle.Secondary)
+                .setDisabled(isStreakCategory),
             new ButtonBuilder()
                 .setCustomId('tops_monthly')
                 .setLabel('Month')
-.setEmoji('<:emoji_50:1430788392018382909>')
+                .setEmoji('<:emoji_50:1430788392018382909>')
                 .setStyle(currentPeriod === 'monthly' ? ButtonStyle.Primary : ButtonStyle.Secondary)
+                .setDisabled(isStreakCategory)
         );
 
-        // Only show navigation if we're in category view
         if (currentCategory === null) {
             return [selectRow, periodRow];
         }
 
-        const topUsers = await getTopUsers(db, currentCategory, currentPeriod, 100);
-        const totalPages = Math.ceil(topUsers.length / pageSize);
+        let totalPages;
+        if (isStreakCategory) {
+            const allStreaks = await getStreakUsers(message.guild.id);
+            totalPages = Math.ceil(allStreaks.length / pageSize);
+        } else {
+            const topUsers = await getTopUsers(db, currentCategory, currentPeriod, 100);
+            totalPages = Math.ceil(topUsers.length / pageSize);
+        }
 
-        // Only show arrows if there are more than 10 users
         if (totalPages <= 1) {
             return [selectRow, periodRow];
         }
@@ -374,8 +594,14 @@ async function execute(message, args, { client }) {
             } else if (interaction.customId === 'tops_prev' && currentPage > 0) {
                 currentPage--;
             } else if (interaction.customId === 'tops_next') {
-                const topUsers = await getTopUsers(db, currentCategory, currentPeriod, 100);
-                const totalPages = Math.ceil(topUsers.length / pageSize);
+                let totalPages;
+                if (currentCategory === 'streaks') {
+                    const allStreaks = await getStreakUsers(message.guild.id);
+                    totalPages = Math.ceil(allStreaks.length / pageSize);
+                } else {
+                    const topUsers = await getTopUsers(db, currentCategory, currentPeriod, 100);
+                    totalPages = Math.ceil(topUsers.length / pageSize);
+                }
                 if (currentPage < totalPages - 1) {
                     currentPage++;
                 }
@@ -384,6 +610,8 @@ async function execute(message, args, { client }) {
             let newEmbed;
             if (currentCategory === null) {
                 newEmbed = await buildInitialEmbed();
+            } else if (currentCategory === 'streaks') {
+                newEmbed = await buildStreakEmbed();
             } else {
                 newEmbed = await buildCategoryEmbed();
             }

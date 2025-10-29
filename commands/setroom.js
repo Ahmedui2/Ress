@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const schedule = require('node-schedule');
 const { createCanvas, registerFont, loadImage } = require('canvas');
-const fetch = require('node-fetch');
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
 const name = 'setroom';
 
@@ -26,6 +26,10 @@ const activeRoomsPath = path.join(__dirname, '..', 'data', 'activeRooms.json');
 const roomDeletionJobs = new Map();
 // تخزين جدولات الفحص الدورية للرسائل
 const messageVerificationJobs = new Map();
+// تخزين آخر وقت تم فيه إرسال الإيمبد لكل سيرفر (لمنع التعارض)
+const lastEmbedSentTime = new Map();
+// تخزين حالة الحذف التلقائي للبوت (لتجنب إعادة الإرسال المزدوجة)
+const botDeletionInProgress = new Map();
 
 // حفظ الجدولات
 function saveSchedules() {
@@ -168,39 +172,7 @@ async function resendSetupEmbed(guildId, client) {
             return false;
         }
 
-        // إنشاء صورة الألوان المدمجة مع الصورة الأصلية
-        const mergedImagePath = await createColorsImage(guild, guildConfig);
-
-        const colorDescription = createColorDescription(guild, guildConfig);
-
-        // استخدام الصورة المدمجة أو الصورة الأصلية
-        const imageToUse = mergedImagePath ? `attachment://colors_merged.png` : guildConfig.imageUrl;
-
-        const finalEmbed = colorManager.createEmbed()
-            .setTitle('**Rooms & Colors**')
-            .setDescription('**اختر لونك او نوع الروم التي تريد طلبها :**' + colorDescription)
-            .setImage(imageToUse)
-            .setFooter({ text: 'System' });
-
-        const menus = createSetupMenus(guild, guildConfig);
-
-        const messageOptions = { 
-            embeds: [finalEmbed], 
-            components: menus 
-        };
-
-        // إضافة الصورة المدمجة
-        if (mergedImagePath) {
-            const attachment = new AttachmentBuilder(mergedImagePath, { name: 'colors_merged.png' });
-            messageOptions.files = [attachment];
-        }
-
-        const newMessage = await embedChannel.send(messageOptions);
-
-        // حذف الصورة المؤقتة
-        if (mergedImagePath && fs.existsSync(mergedImagePath)) {
-            fs.unlinkSync(mergedImagePath);
-        }
+        const newMessage = await sendSetupMessage(embedChannel, guild, guildConfig);
 
         // تحديث معلومات الرسالة
         setupEmbedMessages.set(guildId, {
@@ -397,52 +369,167 @@ function startAutoMessageDeletion(client) {
             for (const [guildId, guildConfig] of Object.entries(config)) {
                 if (!guildConfig.embedChannelId) continue;
                 
+                // التحقق من عدم التعارض: إذا تم إرسال الإيمبد يدوياً قبل أقل من دقيقتين، نتخطى
+                const lastSent = lastEmbedSentTime.get(guildId);
+                if (lastSent && (Date.now() - lastSent) < 120000) { // 2 دقيقة
+                    console.log(`⏭️ [3 دقائق] تخطي الحذف - تم إرسال الإيمبد يدوياً قبل ${Math.round((Date.now() - lastSent) / 1000)} ثانية`);
+                    continue;
+                }
+                
                 try {
-                    const setupData = setupEmbedMessages.get(guildId);
-                    if (!setupData || !setupData.messageId) continue;
-                    
                     const embedChannel = await client.channels.fetch(guildConfig.embedChannelId);
                     if (!embedChannel) continue;
                     
-                    // جلب آخر 100 رسالة
-                    const messages = await embedChannel.messages.fetch({ limit: 100 });
-                    
-                    // تصفية الرسائل: حذف كل شيء عدا رسالة الإيمبد
-                    const messagesToDelete = messages.filter(msg => 
-                        msg.id !== setupData.messageId && 
-                        !msg.pinned // عدم حذف الرسائل المثبتة
+                    // فحص إذا كان هناك إيمبد موجود بالفعل من البوت
+                    const existingMessages = await embedChannel.messages.fetch({ limit: 10 });
+                    const botEmbeds = existingMessages.filter(msg => 
+                        msg.author.id === client.user.id && 
+                        msg.embeds.length > 0
                     );
                     
-                    if (messagesToDelete.size > 0) {
+                    // إذا وجدنا أكثر من إيمبد واحد، نحذف الزائدة فوراً
+                    if (botEmbeds.size > 1) {
+                        console.log(`⚠️ [فحص] وجدنا ${botEmbeds.size} إيمبد - سيتم حذف الزائدة`);
+                        const embeds = Array.from(botEmbeds.values());
+                        // نحتفظ بالأحدث ونحذف الباقي
+                        for (let i = 1; i < embeds.length; i++) {
+                            try {
+                                await embeds[i].delete();
+                                console.log(`🗑️ تم حذف إيمبد زائد`);
+                            } catch (err) {
+                                console.error('خطأ في حذف إيمبد زائد:', err);
+                            }
+                        }
+                    }
+                    
+                    // إذا كان هناك إيمبد واحد صحيح، نتخطى العملية
+                    if (botEmbeds.size === 1) {
+                        console.log(`✅ [فحص] يوجد إيمبد واحد صحيح - تخطي العملية`);
+                        continue;
+                    }
+                    
+                    // حذف كل الرسائل (حتى لو كانت أكثر من 100)
+                    let totalDeleted = 0;
+                    let hasMoreMessages = true;
+                    
+                    console.log(`🗑️ [3 دقائق] بدء حذف كل الرسائل من ${embedChannel.name}...`);
+                    
+                    while (hasMoreMessages) {
+                        // جلب آخر 100 رسالة
+                        const messages = await embedChannel.messages.fetch({ limit: 100 });
+                        
+                        if (messages.size === 0) {
+                            hasMoreMessages = false;
+                            break;
+                        }
+                        
+                        // حذف كل الرسائل عدا المثبتة
+                        const messagesToDelete = messages.filter(msg => !msg.pinned);
+                        
+                        if (messagesToDelete.size === 0) {
+                            hasMoreMessages = false;
+                            break;
+                        }
+                        
                         try {
                             // حذف جميع الرسائل دفعة واحدة باستخدام bulkDelete
                             const deleted = await embedChannel.bulkDelete(messagesToDelete, true);
+                            totalDeleted += deleted.size;
                             
-                            if (deleted.size > 0) {
-                                console.log(`🗑️ تم حذف ${deleted.size} رسالة دفعة واحدة من قناة الإيمبد في ${embedChannel.name}`);
+                            // إذا تم حذف أقل من 100، معناه ما فيه رسائل إضافية
+                            if (deleted.size < 100) {
+                                hasMoreMessages = false;
                             }
                         } catch (bulkError) {
-                            // إذا فشل الحذف الجماعي (مثلاً رسائل أقدم من 14 يوم)، احذف واحدة تلو الأخرى
+                            // إذا فشل الحذف الجماعي، احذف واحدة تلو الأخرى
                             console.log(`⚠️ فشل الحذف الجماعي، محاولة الحذف الفردي...`);
                             
-                            let deletedCount = 0;
                             for (const message of messagesToDelete.values()) {
                                 try {
                                     await message.delete();
-                                    deletedCount++;
-                                    // تأخير بسيط لتجنب rate limit
+                                    totalDeleted++;
                                     await new Promise(resolve => setTimeout(resolve, 100));
                                 } catch (deleteError) {
-                                    // تجاهل الأخطاء (قد تكون الرسالة محذوفة بالفعل)
-                                    if (deleteError.code !== 10008) { // 10008 = Unknown Message
+                                    if (deleteError.code !== 10008) {
                                         console.error(`خطأ في حذف رسالة: ${deleteError.message}`);
                                     }
                                 }
                             }
+                            hasMoreMessages = false;
+                        }
+                        
+                        // تأخير صغير بين الدفعات لتجنب rate limit
+                        if (hasMoreMessages) {
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                        }
+                    }
+                    
+                    if (totalDeleted > 0) {
+                        console.log(`✅ [3 دقائق] تم حذف ${totalDeleted} رسالة بالكامل من ${embedChannel.name}`);
+                    }
+                    
+                    // تعليم أن البوت يقوم بعملية حذف وإعادة إرسال
+                    botDeletionInProgress.set(guildId, true);
+                    
+                    // انتظار قليل قبل إعادة الإرسال للتأكد من اكتمال الحذف
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    
+                    // الآن إعادة إرسال الإيمبد بعد الحذف الكامل
+                    if (guildConfig.imageUrl) {
+                        const guild = client.guilds.cache.get(guildId);
+                        if (guild) {
+                            const newMessage = await sendSetupMessage(embedChannel, guild, guildConfig);
                             
-                            if (deletedCount > 0) {
-                                console.log(`🗑️ تم حذف ${deletedCount} رسالة بشكل فردي من قناة الإيمبد في ${embedChannel.name}`);
-                            }
+                            // تحديث معلومات الرسالة
+                            setupEmbedMessages.set(guildId, {
+                                messageId: newMessage.id,
+                                channelId: embedChannel.id,
+                                imageUrl: guildConfig.imageUrl
+                            });
+                            saveSetupEmbedMessages(setupEmbedMessages);
+                            
+                            // تسجيل الوقت الحالي لمنع التعارض مع الفحوصات الأخرى
+                            lastEmbedSentTime.set(guildId, Date.now());
+                            
+                            console.log(`✅ [3 دقائق] تم إعادة إرسال الإيمبد بعد الحذف الكامل في ${embedChannel.name}`);
+                            
+                            // فحص بعد 3 ثوانٍ للتأكد من عدم وجود إيمبدات مكررة (الفحص الأول)
+                            setTimeout(async () => {
+                                try {
+                                    console.log(`🔍 [فحص 3 ثوانٍ - الأول] بدء فحص الإيمبدات المكررة في ${embedChannel.name}`);
+                                    const checkMessages = await embedChannel.messages.fetch({ limit: 10 });
+                                    const botEmbeds = checkMessages.filter(msg => 
+                                        msg.author.id === client.user.id && 
+                                        msg.embeds.length > 0
+                                    );
+                                    
+                                    if (botEmbeds.size > 1) {
+                                        console.log(`⚠️ [فحص 3 ثوانٍ - الأول] وجدنا ${botEmbeds.size} إيمبد - سيتم حذف الزائدة`);
+                                        const embeds = Array.from(botEmbeds.values());
+                                        // ترتيب حسب الوقت (الأقدم أولاً)
+                                        embeds.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+                                        // نحتفظ بالأحدث ونحذف الباقي
+                                        for (let i = 0; i < embeds.length - 1; i++) {
+                                            try {
+                                                await embeds[i].delete();
+                                                console.log(`🗑️ [فحص 3 ثوانٍ - الأول] تم حذف إيمبد زائد (${i + 1}/${embeds.length - 1})`);
+                                            } catch (err) {
+                                                console.error(`❌ [فحص 3 ثوانٍ - الأول] خطأ في حذف إيمبد زائد:`, err);
+                                            }
+                                        }
+                                        console.log(`✅ [فحص 3 ثوانٍ - الأول] تم حذف ${embeds.length - 1} إيمبد زائد`);
+                                    } else {
+                                        console.log(`✅ [فحص 3 ثوانٍ - الأول] يوجد إيمبد واحد فقط - كل شيء على ما يرام`);
+                                    }
+                                } catch (checkError) {
+                                    console.error('❌ [فحص 3 ثوانٍ - الأول] خطأ في فحص الإيمبدات المكررة:', checkError);
+                                }
+                            }, 3000);
+                            
+                            // إزالة علامة عملية الحذف بعد 10 ثواني
+                            setTimeout(() => {
+                                botDeletionInProgress.delete(guildId);
+                            }, 10000);
                         }
                     }
                 } catch (channelError) {
@@ -568,42 +655,16 @@ async function checkAndRestoreSetupEmbed(client) {
                 }
 
                 if (needsNewMessage) {
+                    // التحقق من عدم التعارض: إذا تم إرسال الإيمبد قبل أقل من 30 ثانية، نتخطى
+                    const lastSent = lastEmbedSentTime.get(guildId);
+                    if (lastSent && (Date.now() - lastSent) < 30000) {
+                        console.log(`⏭️ [فحص دوري] تخطي إعادة الإرسال - تم إرسال الإيمبد قبل ${Math.round((Date.now() - lastSent) / 1000)} ثانية`);
+                        continue;
+                    }
                     const guild = client.guilds.cache.get(guildId);
                     if (!guild) continue;
 
-                    // إنشاء صورة الألوان المدمجة مع الصورة الأصلية
-                    const mergedImagePath = await createColorsImage(guild, guildConfig);
-
-                    const colorDescription = createColorDescription(guild, guildConfig);
-
-                    // استخدام الصورة المدمجة أو الصورة الأصلية
-                    const imageToUse = mergedImagePath ? `attachment://colors_merged.png` : guildConfig.imageUrl;
-
-                    const finalEmbed = colorManager.createEmbed()
-                        .setTitle('**Rooms & Colors**')
-                        .setDescription('**اختر لونك او نوع الروم التي تريد طلبها :**' + colorDescription)
-                        .setImage(imageToUse)
-                        .setFooter({ text: 'System' });
-
-                    const menus = createSetupMenus(guild, guildConfig);
-
-                    const messageOptions = { 
-                        embeds: [finalEmbed], 
-                        components: menus 
-                    };
-
-                    // إضافة الصورة المدمجة كملف مرفق
-                    if (mergedImagePath) {
-                        const attachment = new AttachmentBuilder(mergedImagePath, { name: 'colors_merged.png' });
-                        messageOptions.files = [attachment];
-                    }
-
-                    const newMessage = await embedChannel.send(messageOptions);
-
-                    // حذف الصورة المؤقتة بعد الإرسال
-                    if (mergedImagePath && fs.existsSync(mergedImagePath)) {
-                        fs.unlinkSync(mergedImagePath);
-                    }
+                    const newMessage = await sendSetupMessage(embedChannel, guild, guildConfig);
 
                     setupEmbedMessages.set(guildId, {
                         messageId: newMessage.id,
@@ -612,6 +673,9 @@ async function checkAndRestoreSetupEmbed(client) {
                     });
 
                     saveSetupEmbedMessages(setupEmbedMessages);
+                    
+                    // تسجيل الوقت الحالي لمنع التعارض مع الفحوصات الأخرى
+                    lastEmbedSentTime.set(guildId, Date.now());
 
                     // فحص فوري بعد ثانية واحدة
                     setTimeout(async () => {
@@ -621,7 +685,7 @@ async function checkAndRestoreSetupEmbed(client) {
                         }
                     }, 1000);
 
-                    console.log(`✅ تم إرسال setup embed في السيرفر ${guildId}`);
+                    console.log(`✅ [فحص دوري] تم إرسال setup embed في السيرفر ${guildId}`);
                 }
             } catch (channelError) {
                 console.error(`❌ خطأ في فحص/استعادة الإيمبد للسيرفر ${guildId}:`, channelError);
@@ -640,6 +704,107 @@ const roomEmbedMessages = new Map();
 
 // تخزين رسائل إيمبد السيتب للحماية من الحذف - يتم تحميلها من الملف
 let setupEmbedMessages = loadSetupEmbedMessages();
+
+// دالة مساعدة لإرسال رسالة Setup حسب إعدادات الإيمبد
+async function sendSetupMessage(channel, guild, guildConfig) {
+    const embedEnabled = guildConfig.embedEnabled !== false; // افتراضياً مفعّل
+    
+    // إنشاء صورة الألوان المدمجة
+    const mergedImagePath = await createColorsImage(guild, guildConfig);
+    const colorDescription = createColorDescription(guild, guildConfig);
+    
+    const menus = createSetupMenus(guild, guildConfig);
+    
+    let messageOptions;
+    
+    if (embedEnabled) {
+        // إرسال مع Embed (مع النص/الكونتنت)
+        const finalEmbed = colorManager.createEmbed()
+            .setTitle('**Rooms & Colors**')
+            .setDescription('**اختر لونك او نوع الروم التي تريد طلبها :**' + colorDescription)
+            .setImage('attachment://colors_merged.png')
+            .setFooter({ text: 'System' });
+        
+        messageOptions = { 
+            embeds: [finalEmbed], 
+            components: menus,
+            files: []
+        };
+    } else {
+        // إرسال بدون Embed (صورة فقط بدون أي نص)
+        messageOptions = { 
+            components: menus,
+            files: []
+        };
+    }
+    
+    // إضافة الصورة المدمجة كملف مرفق (في كلا الحالتين)
+    if (mergedImagePath && fs.existsSync(mergedImagePath)) {
+        const attachment = new AttachmentBuilder(mergedImagePath, { name: 'colors_merged.png' });
+        messageOptions.files.push(attachment);
+        console.log('✅ تم إرفاق الصورة المدمجة بنجاح');
+    } else {
+        // إذا فشلت الصورة المدمجة، حاول تحميل الصورة الأصلية
+        console.warn('⚠️ فشل إنشاء الصورة المدمجة، جاري تحميل الصورة الأصلية...');
+        
+        if (!guildConfig.imageUrl) {
+            console.error('❌ لا يوجد رابط صورة في الإعدادات');
+            // إرسال بدون صورة
+            if (embedEnabled && messageOptions.embeds && messageOptions.embeds[0]) {
+                messageOptions.embeds[0].setImage(null);
+            }
+        } else {
+            try {
+                const response = await fetch(guildConfig.imageUrl);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const arrayBuffer = await response.arrayBuffer();
+                const buffer = Buffer.from(arrayBuffer);
+                const urlParts = guildConfig.imageUrl.split('.');
+                const extension = urlParts[urlParts.length - 1].split('?')[0] || 'png';
+                const imageName = embedEnabled ? 'colors_merged.png' : `setup_image.${extension}`;
+                const attachment = new AttachmentBuilder(buffer, { name: imageName });
+                messageOptions.files.push(attachment);
+                
+                // تحديث الإيمبد ليستخدم الصورة الأصلية إذا كان مفعّل
+                if (embedEnabled && messageOptions.embeds && messageOptions.embeds[0]) {
+                    messageOptions.embeds[0].setImage(`attachment://${imageName}`);
+                }
+                console.log('✅ تم تحميل الصورة الأصلية كـ fallback');
+            } catch (fetchError) {
+                console.error('❌ فشل في تحميل الصورة الأصلية:', fetchError.message);
+                console.error(`رابط الصورة: ${guildConfig.imageUrl}`);
+                
+                // إرسال بدون صورة
+                if (embedEnabled && messageOptions.embeds && messageOptions.embeds[0]) {
+                    messageOptions.embeds[0].setImage(null);
+                    messageOptions.embeds[0].setFooter({ text: '⚠️ فشل تحميل الصورة - يرجى تحديث رابط الصورة' });
+                }
+            }
+        }
+    }
+    
+    const newMessage = await channel.send(messageOptions);
+    
+    // حذف الصورة المؤقتة بعد تأخير للتأكد من اكتمال الإرسال
+    if (mergedImagePath && fs.existsSync(mergedImagePath)) {
+        setTimeout(() => {
+            try {
+                if (fs.existsSync(mergedImagePath)) {
+                    fs.unlinkSync(mergedImagePath);
+                    console.log('🗑️ تم حذف الصورة المؤقتة بنجاح');
+                }
+            } catch (err) {
+                console.error('خطأ في حذف الصورة المؤقتة:', err);
+            }
+        }, 3000); // انتظار 3 ثواني
+    }
+    
+    return newMessage;
+}
 
 // قراءة وحفظ الإعدادات
 function loadRoomConfig() {
@@ -795,9 +960,22 @@ async function createColorsImage(guild, guildConfig) {
         // تحميل الصورة الأصلية
         let backgroundImage;
         try {
-            backgroundImage = await loadImage(guildConfig.imageUrl);
+            if (!guildConfig.imageUrl) {
+                console.error('❌ لا يوجد رابط صورة في الإعدادات');
+                return null;
+            }
+            
+            // تحميل الصورة باستخدام fetch ثم تحويلها لـ buffer
+            const response = await fetch(guildConfig.imageUrl);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const arrayBuffer = await response.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            backgroundImage = await loadImage(buffer);
         } catch (imgError) {
-            console.error('❌ فشل في تحميل الصورة الأصلية:', imgError);
+            console.error('❌ فشل في تحميل الصورة الأصلية:', imgError.message);
+            console.error(`رابط الصورة الفاشل: ${guildConfig.imageUrl}`);
             return null;
         }
 
@@ -834,12 +1012,12 @@ async function createColorsImage(guild, guildConfig) {
         
         // إضافة نص "COLORS LIST:" يبدأ من نفس موضع المربعات الأفقي
         ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 20px Arial';
+        ctx.font = 'bold 26px Arial';
         ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
         ctx.shadowBlur = 10;
         ctx.textAlign = 'left';
         // النص يبدأ من نفس موضع startX (بداية المربعات)
-        ctx.fillText('Colors List :', startX - 150, startY - 30);
+        ctx.fillText('Colors List :', startX - 150, startY - 33);
         ctx.shadowBlur = 20;
         
         // رسم المربعات
@@ -1876,7 +2054,13 @@ function registerHandlers(client) {
             // التحقق من أن الرسالة هي رسالة سيتب روم
             for (const [guildId, setupData] of setupEmbedMessages.entries()) {
                 if (message.id === setupData.messageId && message.channel.id === setupData.channelId) {
-                    console.log(`⚠️ تم حذف رسالة سيتب الروم - سيتم إعادة الإرسال بعد 5 ثواني`);
+                    // تحقق: إذا كان البوت هو من يقوم بالحذف، لا تعيد الإرسال
+                    if (botDeletionInProgress.get(guildId)) {
+                        console.log(`🤖 [حذف البوت] تجاهل إعادة الإرسال - البوت يقوم بعملية حذف تلقائي`);
+                        break;
+                    }
+                    
+                    console.log(`⚠️ [حذف يدوي] تم حذف رسالة سيتب الروم - سيتم إعادة الإرسال بعد 5 ثواني`);
 
                     // الانتظار 5 ثواني ثم إعادة الإرسال
                     setTimeout(async () => {
@@ -1884,45 +2068,35 @@ function registerHandlers(client) {
                             const channel = await client.channels.fetch(setupData.channelId);
                             if (!channel) return;
 
+                            // فحص إذا كان هناك إيمبد موجود بالفعل
+                            const existingMessages = await channel.messages.fetch({ limit: 5 });
+                            const botEmbeds = existingMessages.filter(msg => 
+                                msg.author.id === client.user.id && 
+                                msg.embeds.length > 0
+                            );
+
+                            // إذا وجدنا إيمبد، نحذف الزائدة ونتوقف
+                            if (botEmbeds.size > 0) {
+                                console.log(`✅ [فحص] يوجد ${botEmbeds.size} إيمبد بالفعل - تخطي إعادة الإرسال`);
+                                if (botEmbeds.size > 1) {
+                                    const embeds = Array.from(botEmbeds.values());
+                                    for (let i = 1; i < embeds.length; i++) {
+                                        try {
+                                            await embeds[i].delete();
+                                            console.log(`🗑️ تم حذف إيمبد زائد`);
+                                        } catch (err) {}
+                                    }
+                                }
+                                return;
+                            }
+
                             const guild = client.guilds.cache.get(guildId);
                             if (!guild) return;
 
                             const config = loadRoomConfig();
                             const guildConfig = config[guildId];
 
-                            // إنشاء صورة الألوان المدمجة مع الصورة الأصلية
-                            const mergedImagePath = await createColorsImage(guild, guildConfig);
-
-                            const colorDescription = createColorDescription(guild, guildConfig);
-
-                            // استخدام الصورة المدمجة أو الصورة الأصلية
-                            const imageToUse = mergedImagePath ? `attachment://colors_merged.png` : setupData.imageUrl;
-
-                            const finalEmbed = colorManager.createEmbed()
-                                .setTitle('**Rooms & Colors**')
-                                .setDescription('**اختر لونك او نوع الروم اللي تبيها :**' + colorDescription)
-                                .setImage(imageToUse)
-                                .setFooter({ text: 'System' });
-
-                            const menus = createSetupMenus(guild, guildConfig);
-
-                            const messageOptions = { 
-                                embeds: [finalEmbed], 
-                                components: menus 
-                            };
-
-                            // إضافة الصورة المدمجة
-                            if (mergedImagePath) {
-                                const attachment = new AttachmentBuilder(mergedImagePath, { name: 'colors_merged.png' });
-                                messageOptions.files = [attachment];
-                            }
-
-                            const newMessage = await channel.send(messageOptions);
-
-                            // حذف الصورة المؤقتة
-                            if (mergedImagePath && fs.existsSync(mergedImagePath)) {
-                                fs.unlinkSync(mergedImagePath);
-                            }
+                            const newMessage = await sendSetupMessage(channel, guild, guildConfig);
 
                             console.log(`✅ تم إعادة إرسال رسالة سيتب الروم`);
 
@@ -1934,6 +2108,9 @@ function registerHandlers(client) {
                             });
 
                             saveSetupEmbedMessages(setupEmbedMessages);
+                            
+                            // تسجيل وقت الإرسال
+                            lastEmbedSentTime.set(guildId, Date.now());
 
                         } catch (error) {
                             console.error('❌ فشل في إعادة إرسال رسالة سيتب الروم:', error);
@@ -1961,6 +2138,57 @@ async function execute(message, args, { BOT_OWNERS, client }) {
     }
 
     const guildId = message.guild.id;
+    
+    // فحص sub-command
+    const subCommand = args[0]?.toLowerCase();
+    
+    // معالجة sub-command "embed"
+    if (subCommand === 'embed') {
+        const config = loadRoomConfig();
+        const guildConfig = config[guildId];
+        
+        if (!guildConfig) {
+            await message.reply('❌ **لم يتم إعداد نظام الرومات بعد. استخدم `/setroom` لإعداد النظام أولاً**');
+            return;
+        }
+        
+        // تبديل حالة الإيمبد
+        const currentState = guildConfig.embedEnabled !== false; // افتراضياً مفعّل
+        const newState = !currentState;
+        
+        config[guildId].embedEnabled = newState;
+        saveRoomConfig(config);
+        
+        // إرسال رسالة التأكيد
+        const statusEmoji = newState ? '✅' : '☑️';
+        const statusText = newState ? 'مفعّل' : 'ملغي';
+        const statusDesc = newState 
+            ? '**سيتم إرسال الصورة داخل Embed**' 
+            : '**سيتم إرسال الصورة عادية فقط (بدون Embed)**';
+        
+        const toggleEmbed = colorManager.createEmbed()
+            .setTitle(`${statusEmoji} **تم ${newState ? 'تفعيل' : 'إلغاء'} وضع Embed**`)
+            .setDescription(`${statusDesc}\n\nالحالة: **${statusText}**`)
+            .setFooter({ text: 'سيتم تطبيق التغيير في الإيمبد التالي' });
+        
+        const sentMsg = await message.reply({ embeds: [toggleEmbed] });
+        
+        // إضافة الرياكشن
+        await sentMsg.react(statusEmoji);
+        
+        // إعادة إرسال الإيمبد بالإعدادات الجديدة
+        if (guildConfig.embedChannelId) {
+            try {
+                await resendSetupEmbed(guildId, client);
+                await message.channel.send('✅ **تم تحديث الإيمبد بنجاح**');
+            } catch (error) {
+                console.error('خطأ في إعادة إرسال الإيمبد:', error);
+                await message.channel.send('⚠️ **تم حفظ الإعدادات، لكن فشل تحديث الإيمبد. سيتم تحديثه تلقائياً قريباً**');
+            }
+        }
+        
+        return;
+    }
 
     // الخطوة 1: طلب روم الطلبات
     const step1Embed = colorManager.createEmbed()
@@ -2137,40 +2365,7 @@ async function execute(message, args, { BOT_OWNERS, client }) {
                 };
 
                 if (saveRoomConfig(config)) {
-                        // إنشاء صورة الألوان المدمجة مع الصورة الأصلية
-                        const mergedImagePath = await createColorsImage(message.guild, config[guildId]);
-
-                        // إرسال الإيمبد في روم الإيمبد
-                        const colorDescription = createColorDescription(message.guild, config[guildId]);
-
-                        // استخدام الصورة المدمجة أو الصورة الأصلية
-                        const imageToUse = mergedImagePath ? `attachment://colors_merged.png` : imageUrl;
-
-                        const finalEmbed = colorManager.createEmbed()
-                            .setTitle('**Rooms & Colors**')
-                            .setDescription('**اختر لوونك او نوع الروم التي تريد طلبها :**' + colorDescription)
-                            .setImage(imageToUse)
-                            .setFooter({ text: 'System' });
-
-                        const menus = createSetupMenus(message.guild, config[guildId]);
-
-                        const messageOptions = { 
-                            embeds: [finalEmbed], 
-                            components: menus 
-                        };
-
-                        // إضافة الصورة المدمجة
-                        if (mergedImagePath) {
-                            const attachment = new AttachmentBuilder(mergedImagePath, { name: 'colors_merged.png' });
-                            messageOptions.files = [attachment];
-                        }
-
-                        const setupMessage = await embedChannel.send(messageOptions);
-
-                        // حذف الصورة المؤقتة
-                        if (mergedImagePath && fs.existsSync(mergedImagePath)) {
-                            fs.unlinkSync(mergedImagePath);
-                        }
+                        const setupMessage = await sendSetupMessage(embedChannel, message.guild, config[guildId]);
                         console.log(`📤 تم إرسال setup embed للمرة الأولى - جاري التحقق...`);
 
                         // حفظ رسالة السيتب للحماية من الحذف
@@ -2365,33 +2560,18 @@ async function updateSetupEmbed(guildId, client) {
             return;
         }
 
-        const mergedImagePath = await createColorsImage(guild, guildConfig);
-        const colorDescription = createColorDescription(guild, guildConfig);
-        const imageToUse = mergedImagePath ? `attachment://colors_merged.png` : guildConfig.imageUrl;
-
-        const finalEmbed = colorManager.createEmbed()
-            .setTitle('**Rooms & Colors**')
-            .setDescription('**اختر لونك او نوع الروم التي تريد طلبها :**' + colorDescription)
-            .setImage(imageToUse)
-            .setFooter({ text: 'System' });
-
-        const menus = createSetupMenus(guild, guildConfig);
-
-        const messageOptions = { 
-            embeds: [finalEmbed], 
-            components: menus 
-        };
-
-        if (mergedImagePath) {
-            const attachment = new AttachmentBuilder(mergedImagePath, { name: 'colors_merged.png' });
-            messageOptions.files = [attachment];
-        }
-
-        await existingMessage.edit(messageOptions);
-
-        if (mergedImagePath && fs.existsSync(mergedImagePath)) {
-            fs.unlinkSync(mergedImagePath);
-        }
+        // حذف الرسالة القديمة وإرسال رسالة جديدة (لأن edit لا يمكنه تغيير بين embed وصورة عادية)
+        await existingMessage.delete().catch(() => {});
+        
+        const newMessage = await sendSetupMessage(embedChannel, guild, guildConfig);
+        
+        // تحديث معلومات الرسالة
+        setupEmbedMessages.set(guildId, {
+            messageId: newMessage.id,
+            channelId: embedChannel.id,
+            imageUrl: guildConfig.imageUrl
+        });
+        saveSetupEmbedMessages(setupEmbedMessages);
 
         console.log(`✅ تم تحديث setup embed تلقائياً للسيرفر ${guildId} (${colorRoleIds.length} رول)`);
 

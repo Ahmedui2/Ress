@@ -472,16 +472,18 @@ try {
                   await saveResponsibilities();
 
                   // إعطاء المسؤول جميع رولات المسؤولية تلقائياً
+                  let rolesAdded = 0;
                   if (responsibility.roles && responsibility.roles.length > 0) {
                     for (const roleId of responsibility.roles) {
                       try {
-                        const role = message.guild.roles.cache.get(roleId);
+                        const role = await message.guild.roles.fetch(roleId);
                         if (role && !member.roles.cache.has(roleId)) {
-                          await member.roles.add(roleId);
+                          await member.roles.add(roleId, `إضافة رول المسؤولية: ${responsibilityName}`);
+                          rolesAdded++;
                           console.log(`✅ تم إعطاء ${member.displayName} رول ${role.name}`);
                         }
                       } catch (error) {
-                        console.log(`لا يمكن إضافة رول ${roleId} لـ ${userId}: ${error.message}`);
+                        console.log(`❌ لا يمكن إضافة رول ${roleId} لـ ${userId}: ${error.message}`);
                       }
                     }
                   }
@@ -502,7 +504,8 @@ try {
                     console.log(`لا يمكن إرسال رسالة للمستخدم ${userId}: ${error.message}`);
                   }
 
-                  await safeFollowUp(interaction, `**✅ تم إضافة ${member.displayName || member.user.username} كمسؤول**`);
+                  const rolesMessage = rolesAdded > 0 ? `\n**تم إضافة ${rolesAdded} رول تلقائياً**` : '';
+                  await safeFollowUp(interaction, `**✅ تم إضافة ${member.displayName || member.user.username} كمسؤول**${rolesMessage}`);
 
                   logEvent(client, message.guild, {
                     type: 'RESPONSIBILITY_MANAGEMENT',
