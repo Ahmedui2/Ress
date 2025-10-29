@@ -673,6 +673,17 @@ client.once(Events.ClientReady, async () => {
         console.error('❌ خطأ في تهيئة نظام تذكير الصلاة:', error);
     }
 
+    // Initialize Streak system
+    try {
+        const streakCommand = require('./commands/streak.js');
+        if (streakCommand && streakCommand.initialize) {
+            await streakCommand.initialize(client);
+            console.log('✅ تم تهيئة نظام Streak بنجاح');
+        }
+    } catch (error) {
+        console.error('❌ خطأ في تهيئة نظام Streak:', error);
+    }
+
     // تتبع النشاط الصوتي باستخدام client.voiceSessions المحسّن
     client.on('voiceStateUpdate', async (oldState, newState) => {
         // تجاهل البوتات
@@ -1030,6 +1041,16 @@ client.on('messageCreate', async message => {
     } catch (error) {
       console.error('❌ خطأ في تتبع الرسالة:', error);
     }
+
+    // Handle Streak system message processing
+    try {
+      const streakCommand = require('./commands/streak.js');
+      if (streakCommand && streakCommand.handleMessage) {
+        await streakCommand.handleMessage(message, client, BOT_OWNERS);
+      }
+    } catch (error) {
+      console.error('❌ خطأ في معالجة رسالة Streak:', error);
+    }
   }
 
   // فحص البلوك قبل معالجة أي أمر
@@ -1126,8 +1147,8 @@ client.on('messageCreate', async message => {
     const CURRENT_ADMIN_ROLES = getCachedAdminRoles();
     const hasAdminRole = CURRENT_ADMIN_ROLES.length > 0 && member.roles.cache.some(role => CURRENT_ADMIN_ROLES.includes(role.id));
 
-    // Commands for everyone (help, tops, تفاعلي)
-    if (commandName === 'help' || commandName === 'tops' || commandName === 'توب' || commandName === 'تفاعلي') {
+    // Commands for everyone (help, tops, تفاعلي, ستريكي)
+    if (commandName === 'help' || commandName === 'tops' || commandName === 'توب' || commandName === 'تفاعلي' || commandName === 'ستريكي') {
       if (commandName === 'مسؤولياتي') {
         await showUserResponsibilities(message, message.author, responsibilities, client);
       } else {
@@ -1184,6 +1205,19 @@ client.on('messageCreate', async message => {
     }
   } catch (error) {
     console.error('خطأ في معالج الرسائل:', error);
+  }
+});
+
+// معالج حذف الرسائل - لنظام Streak
+client.on('messageDelete', async message => {
+  try {
+    // Handle Streak system message deletion
+    const streakCommand = require('./commands/streak.js');
+    if (streakCommand && streakCommand.handleMessageDelete) {
+      await streakCommand.handleMessageDelete(message, client);
+    }
+  } catch (error) {
+    console.error('❌ خطأ في معالجة حذف رسالة:', error);
   }
 });
 
@@ -1457,9 +1491,10 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
             }
         }
 
-        // 4. حماية رولات المسؤوليات - إزالة تلقائية من غير المسؤولين
+        // 4. حماية رولات المسؤوليات - إزالة تلقائية من غير المسؤولين والحماية من الإزالة
         const responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
         
+        // فحص الرولات المضافة
         for (const [roleId, role] of addedRoles) {
             // البحث عن المسؤولية التي تحتوي هذا الرول
             let foundResp = null;
@@ -1512,6 +1547,49 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
                 }
             }
         }
+        
+        // فحص الرولات المحذوفة (حماية ضد الإزالة اليدوية)
+        const removedRoles = oldRoles.filter(role => !newRoles.has(role.id));
+        for (const [roleId, role] of removedRoles) {
+            // البحث عن المسؤولية التي تحتوي هذا الرول
+            let foundResp = null;
+            for (const [respName, resp] of Object.entries(responsibilities)) {
+                if (resp.roles && resp.roles.includes(roleId)) {
+                    foundResp = { name: respName, data: resp };
+                    break;
+                }
+            }
+
+            if (foundResp) {
+                // التحقق من أن المستخدم مسؤول في هذه المسؤولية
+                const isResponsible = foundResp.data.responsibles && foundResp.data.responsibles.includes(userId);
+                
+                if (isResponsible) {
+                    // مسؤول تم إزالة رول المسؤولية منه - يجب إعادته
+                    console.log(`🔄 إعادة رول مسؤولية تم إزالته: ${role.name} للمسؤول ${newMember.displayName}`);
+                    
+                    try {
+                        await newMember.roles.add(role, `إعادة رول المسؤولية: ${foundResp.name}`);
+                        console.log(`✅ تم إعادة رول ${role.name} للمسؤول ${newMember.displayName}`);
+                        
+                        logEvent(client, newMember.guild, {
+                            type: 'SECURITY_ACTIONS',
+                            title: 'إعادة رول مسؤولية محذوف',
+                            description: 'تم إعادة رول مسؤولية تمت إزالته من مسؤول',
+                            user: newMember.user,
+                            fields: [
+                                { name: '👤 المسؤول', value: `<@${userId}>`, inline: true },
+                                { name: '🏷️ الرول المُعاد', value: `<@&${roleId}> (${role.name})`, inline: true },
+                                { name: '📂 المسؤولية', value: foundResp.name, inline: true },
+                                { name: '✅ الإجراء', value: 'تمت إعادة الرول تلقائياً', inline: false }
+                            ]
+                        });
+                    } catch (addError) {
+                        console.error(`❌ خطأ في إعادة رول المسؤولية:`, addError);
+                    }
+                }
+            }
+        }
 
     } catch (error) {
         console.error('خطأ في نظام الحماية:', error);
@@ -1538,7 +1616,7 @@ client.on('guildMemberRemove', async (member) => {
     }
 });
 
-// نظام حماية عند العودة - إعادة تطبيق الداون والترقيات
+// نظام حماية عند العودة - إعادة تطبيق الداون والترقيات ورولات المسؤوليات
 client.on('guildMemberAdd', async (member) => {
     try {
         console.log(`📥 عضو انضم للسيرفر: ${member.displayName} (${member.id})`);
@@ -1552,6 +1630,48 @@ client.on('guildMemberAdd', async (member) => {
 
         // Handle vacation system member join
         await vacationManager.handleMemberJoin(member);
+
+        // Handle responsibility roles restoration
+        const responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
+        const userId = member.id;
+        let rolesRestored = 0;
+        
+        for (const [respName, respData] of Object.entries(responsibilities)) {
+            // التحقق من أن العضو مسؤول في هذه المسؤولية
+            if (respData.responsibles && respData.responsibles.includes(userId)) {
+                // إعادة جميع رولات المسؤولية
+                if (respData.roles && respData.roles.length > 0) {
+                    for (const roleId of respData.roles) {
+                        try {
+                            const role = await member.guild.roles.fetch(roleId);
+                            if (role && !member.roles.cache.has(roleId)) {
+                                await member.roles.add(role, `إعادة رول المسؤولية عند العودة: ${respName}`);
+                                rolesRestored++;
+                                console.log(`✅ تم إعادة رول ${role.name} للمسؤول ${member.displayName}`);
+                            }
+                        } catch (roleError) {
+                            console.error(`❌ خطأ في إعادة رول ${roleId}:`, roleError.message);
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (rolesRestored > 0) {
+            console.log(`✅ تم إعادة ${rolesRestored} رول مسؤولية للعضو ${member.displayName}`);
+            
+            logEvent(client, member.guild, {
+                type: 'RESPONSIBILITY_MANAGEMENT',
+                title: 'إعادة رولات المسؤولية عند العودة',
+                description: `تم إعادة رولات المسؤولية للعضو عند عودته للسيرفر`,
+                user: member.user,
+                fields: [
+                    { name: '👤 العضو', value: `<@${userId}>`, inline: true },
+                    { name: '🔢 عدد الرولات', value: rolesRestored.toString(), inline: true },
+                    { name: '✅ الإجراء', value: 'تمت إعادة الرولات تلقائياً', inline: false }
+                ]
+            });
+        }
 
     } catch (error) {
         console.error('خطأ في معالج العودة:', error);
@@ -1821,6 +1941,16 @@ client.on('interactionCreate', async (interaction) => {
         logConfig: client.logConfig,
         colorManager
     };
+
+    // Handle Streak system interactions
+    if (interaction.customId && interaction.customId.startsWith('streak_')) {
+        console.log(`معالجة تفاعل Streak: ${interaction.customId}`);
+        const streakCommand = client.commands.get('streak');
+        if (streakCommand && streakCommand.handleInteraction) {
+            await streakCommand.handleInteraction(interaction, context);
+        }
+        return;
+    }
 
     // Handle log system interactions
     if (interaction.customId && (interaction.customId.startsWith('log_') ||
@@ -2526,6 +2656,37 @@ client.on('interactionCreate', async (interaction) => {
         const vipCommand = client.commands.get('vip');
         if (vipCommand && vipCommand.handleModalSubmit) {
             await vipCommand.handleModalSubmit(interaction, client);
+        }
+        return;
+    }
+
+    // Handle Streak system interactions
+    if (interaction.customId && (
+        interaction.customId.startsWith('streak_') ||
+        interaction.customId === 'streak_divider_modal' ||
+        interaction.customId === 'streak_emojis_modal'
+    )) {
+        console.log(`🔍 معالجة تفاعل Streak: ${interaction.customId}`);
+        
+        try {
+            const streakCommand = client.commands.get('streak');
+            if (streakCommand && streakCommand.handleInteraction) {
+                await streakCommand.handleInteraction(interaction, { client, BOT_OWNERS });
+            } else {
+                console.log('⚠️ لم يتم العثور على معالج Streak');
+                await interaction.reply({
+                    content: '❌ معالج Streak غير متوفر حالياً',
+                    flags: MessageFlags.Ephemeral
+                });
+            }
+        } catch (error) {
+            console.error('❌ خطأ في معالجة تفاعل Streak:', error);
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({
+                    content: '❌ حدث خطأ في معالجة الطلب',
+                    flags: MessageFlags.Ephemeral
+                });
+            }
         }
         return;
     }
