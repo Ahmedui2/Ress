@@ -1093,7 +1093,8 @@ client.on('messageCreate', async message => {
             channel: message.channel,
             message: message,
             reply: async (options) => {
-              if (options.ephemeral) {
+              // flags: 64 تعني ephemeral
+              if (options.flags === 64 || options.ephemeral) {
                 // للرسائل الخاصة، أرسلها للمستخدم مباشرة
                 try {
                   await message.author.send(options.content || { embeds: options.embeds });
