@@ -13,6 +13,7 @@ const name = 'setroom';
 const roomConfigPath = path.join(__dirname, '..', 'data', 'roomConfig.json');
 const roomRequestsPath = path.join(__dirname, '..', 'data', 'roomRequests.json');
 const setupEmbedMessagesPath = path.join(__dirname, '..', 'data', 'setupEmbedMessages.json');
+const setupImagesPath = path.join(__dirname, '..', 'data', 'setup_images');
 
 // تخزين الجدولات النشطة
 const activeSchedules = new Map();
@@ -30,6 +31,8 @@ const messageVerificationJobs = new Map();
 const lastEmbedSentTime = new Map();
 // تخزين حالة الحذف التلقائي للبوت (لتجنب إعادة الإرسال المزدوجة)
 const botDeletionInProgress = new Map();
+// تخزين آخر وقت تم فيه طباعة خطأ تحميل الصورة (لتقليل الرسائل المكررة)
+const lastImageErrorLog = new Map();
 
 // حفظ الجدولات
 function saveSchedules() {
@@ -83,6 +86,39 @@ function loadActiveRooms() {
     } catch (error) {
         console.error('خطأ في تحميل الرومات النشطة:', error);
         return new Map();
+    }
+}
+
+// دالة لحفظ الصورة محلياً
+async function saveImageLocally(imageUrl, guildId) {
+    try {
+        // إنشاء المجلد إذا لم يكن موجوداً
+        if (!fs.existsSync(setupImagesPath)) {
+            fs.mkdirSync(setupImagesPath, { recursive: true });
+        }
+
+        // تحميل الصورة
+        const response = await fetch(imageUrl);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        
+        // تحديد امتداد الملف
+        const urlParts = imageUrl.split('.');
+        const extension = urlParts[urlParts.length - 1].split('?')[0] || 'png';
+        
+        // حفظ الصورة
+        const imagePath = path.join(setupImagesPath, `setup_${guildId}.${extension}`);
+        fs.writeFileSync(imagePath, buffer);
+        
+        console.log(`✅ تم حفظ الصورة محلياً: ${imagePath}`);
+        return imagePath;
+    } catch (error) {
+        console.error('❌ فشل في حفظ الصورة محلياً:', error);
+        return null;
     }
 }
 async function deleteRoom(channelId, client) {
@@ -747,14 +783,19 @@ async function sendSetupMessage(channel, guild, guildConfig) {
         // إذا فشلت الصورة المدمجة، حاول تحميل الصورة الأصلية
         console.warn('⚠️ فشل إنشاء الصورة المدمجة، جاري تحميل الصورة الأصلية...');
         
-        if (!guildConfig.imageUrl) {
-            console.error('❌ لا يوجد رابط صورة في الإعدادات');
-            // إرسال بدون صورة
-            if (embedEnabled && messageOptions.embeds && messageOptions.embeds[0]) {
-                messageOptions.embeds[0].setImage(null);
-            }
-        } else {
-            try {
+        try {
+            let buffer = null;
+            let imageName = 'setup_image.png';
+            
+            // محاولة استخدام الصورة المحفوظة محلياً أولاً
+            if (guildConfig.localImagePath && fs.existsSync(guildConfig.localImagePath)) {
+                buffer = fs.readFileSync(guildConfig.localImagePath);
+                const extension = path.extname(guildConfig.localImagePath).slice(1) || 'png';
+                imageName = embedEnabled ? 'colors_merged.png' : `setup_image.${extension}`;
+                console.log('✅ تم تحميل الصورة من المسار المحلي');
+            } 
+            // في حالة عدم وجود صورة محلية، استخدام الرابط
+            else if (guildConfig.imageUrl) {
                 const response = await fetch(guildConfig.imageUrl);
                 
                 if (!response.ok) {
@@ -762,10 +803,16 @@ async function sendSetupMessage(channel, guild, guildConfig) {
                 }
                 
                 const arrayBuffer = await response.arrayBuffer();
-                const buffer = Buffer.from(arrayBuffer);
+                buffer = Buffer.from(arrayBuffer);
                 const urlParts = guildConfig.imageUrl.split('.');
                 const extension = urlParts[urlParts.length - 1].split('?')[0] || 'png';
-                const imageName = embedEnabled ? 'colors_merged.png' : `setup_image.${extension}`;
+                imageName = embedEnabled ? 'colors_merged.png' : `setup_image.${extension}`;
+                console.log('✅ تم تحميل الصورة من الرابط');
+            } else {
+                throw new Error('لا توجد صورة في الإعدادات');
+            }
+            
+            if (buffer) {
                 const attachment = new AttachmentBuilder(buffer, { name: imageName });
                 messageOptions.files.push(attachment);
                 
@@ -773,16 +820,22 @@ async function sendSetupMessage(channel, guild, guildConfig) {
                 if (embedEnabled && messageOptions.embeds && messageOptions.embeds[0]) {
                     messageOptions.embeds[0].setImage(`attachment://${imageName}`);
                 }
-                console.log('✅ تم تحميل الصورة الأصلية كـ fallback');
-            } catch (fetchError) {
-                console.error('❌ فشل في تحميل الصورة الأصلية:', fetchError.message);
-                console.error(`رابط الصورة: ${guildConfig.imageUrl}`);
-                
-                // إرسال بدون صورة
-                if (embedEnabled && messageOptions.embeds && messageOptions.embeds[0]) {
-                    messageOptions.embeds[0].setImage(null);
-                    messageOptions.embeds[0].setFooter({ text: '⚠️ فشل تحميل الصورة - يرجى تحديث رابط الصورة' });
-                }
+            }
+        } catch (fetchError) {
+            // تقليل الرسائل المكررة - طباعة الخطأ مرة واحدة كل ساعة فقط
+            const imageKey = guildConfig.localImagePath || guildConfig.imageUrl || 'unknown';
+            const now = Date.now();
+            const lastLog = lastImageErrorLog.get(imageKey) || 0;
+            if (now - lastLog > 3600000) { // ساعة واحدة
+                console.error('❌ فشل في تحميل الصورة:', fetchError.message);
+                console.error('💡 يرجى تحديث الصورة باستخدام أمر setroom');
+                lastImageErrorLog.set(imageKey, now);
+            }
+            
+            // إرسال بدون صورة
+            if (embedEnabled && messageOptions.embeds && messageOptions.embeds[0]) {
+                messageOptions.embeds[0].setImage(null);
+                messageOptions.embeds[0].setFooter({ text: '⚠️ فشل تحميل الصورة - يرجى تحديث الصورة' });
             }
         }
     }
@@ -960,22 +1013,33 @@ async function createColorsImage(guild, guildConfig) {
         // تحميل الصورة الأصلية
         let backgroundImage;
         try {
-            if (!guildConfig.imageUrl) {
-                console.error('❌ لا يوجد رابط صورة في الإعدادات');
+            // محاولة استخدام الصورة المحفوظة محلياً أولاً
+            if (guildConfig.localImagePath && fs.existsSync(guildConfig.localImagePath)) {
+                backgroundImage = await loadImage(guildConfig.localImagePath);
+            } 
+            // في حالة عدم وجود صورة محلية، استخدام الرابط
+            else if (guildConfig.imageUrl) {
+                const response = await fetch(guildConfig.imageUrl);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const arrayBuffer = await response.arrayBuffer();
+                const buffer = Buffer.from(arrayBuffer);
+                backgroundImage = await loadImage(buffer);
+            } else {
+                console.error('❌ لا توجد صورة في الإعدادات');
                 return null;
             }
-            
-            // تحميل الصورة باستخدام fetch ثم تحويلها لـ buffer
-            const response = await fetch(guildConfig.imageUrl);
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            const arrayBuffer = await response.arrayBuffer();
-            const buffer = Buffer.from(arrayBuffer);
-            backgroundImage = await loadImage(buffer);
         } catch (imgError) {
-            console.error('❌ فشل في تحميل الصورة الأصلية:', imgError.message);
-            console.error(`رابط الصورة الفاشل: ${guildConfig.imageUrl}`);
+            // تقليل الرسائل المكررة - طباعة الخطأ مرة واحدة كل ساعة فقط
+            const now = Date.now();
+            const lastLog = lastImageErrorLog.get(guildConfig.imageUrl) || 0;
+            if (now - lastLog > 3600000) { // ساعة واحدة
+                console.error('❌ فشل في تحميل الصورة الأصلية:', imgError.message);
+                console.error(`رابط الصورة الفاشل: ${guildConfig.imageUrl}`);
+                console.error('💡 يرجى تحديث رابط الصورة باستخدام أمر setroom');
+                lastImageErrorLog.set(guildConfig.imageUrl, now);
+            }
             return null;
         }
 
@@ -1251,7 +1315,7 @@ async function handleRoomModalSubmit(interaction, client) {
             .setDescription(validationErrors.join('\n'))
             .setColor('#ff0000');
 
-        await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+        await interaction.reply({ embeds: [errorEmbed], flags: 64 });
         return;
     }
 
@@ -1262,7 +1326,7 @@ async function handleRoomModalSubmit(interaction, client) {
     const guildConfig = config[interaction.guild.id];
 
     if (!guildConfig) {
-        await interaction.reply({ content: '❌ **لم يتم إعداد نظام الغرف بعد**', ephemeral: true });
+        await interaction.reply({ content: '❌ **لم يتم إعداد نظام الغرف بعد**', flags: 64 });
         return;
     }
 
@@ -1272,7 +1336,7 @@ async function handleRoomModalSubmit(interaction, client) {
         .setDescription('**الرجاء إرسال الإيموجيات التي تريد إضافتها للروم**\n\nأرسل الإيموجيات (لازم من السيرفر)')
         .setFooter({ text: 'لديك 60 ثانية للرد' });
 
-    await interaction.reply({ embeds: [emojiPrompt], ephemeral: true });
+    await interaction.reply({ embeds: [emojiPrompt], flags: 64 });
 
     // حفظ بيانات الطلب مؤقتاً في انتظار الإيموجي
     awaitingEmojis.set(interaction.user.id, {
@@ -1465,7 +1529,7 @@ async function handleRoomRequestAction(interaction, client) {
 
     // التحقق من الصلاحيات
     if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-        await interaction.reply({ content: '❌ **ليس لديك صلاحية لهذا الإجراء**', ephemeral: true });
+        await interaction.reply({ content: '❌ **ليس لديك صلاحية لهذا الإجراء**', flags: 64 });
         return;
     }
 
@@ -1477,14 +1541,14 @@ async function handleRoomRequestAction(interaction, client) {
     if (requestIndex === -1) {
         console.log(`❌ لم يتم العثور على الطلب: ${requestId}`);
         console.log(`📋 الطلبات المتاحة: ${requests.map(r => r.id).join(', ')}`);
-        await interaction.reply({ content: '❌ **لم يتم العثور على الطلب**', ephemeral: true });
+        await interaction.reply({ content: '❌ **لم يتم العثور على الطلب**', flags: 64 });
         return;
     }
 
     const request = requests[requestIndex];
 
     if (request.status !== 'pending') {
-        await interaction.reply({ content: `**هذا الطلب تم ${request.status === 'accepted' ? 'قبوله' : 'رفضه'} مسبقاً**`, ephemeral: true });
+        await interaction.reply({ content: `**هذا الطلب تم ${request.status === 'accepted' ? 'قبوله' : 'رفضه'} مسبقاً**`, flags: 64 });
         return;
     }
 
@@ -1814,7 +1878,7 @@ async function handleColorSelection(interaction, client) {
         const guildConfig = config[guild.id];
 
         if (!guildConfig || !guildConfig.colorRoleIds) {
-            await interaction.reply({ content: '❌ **النظام غير مُعد بعد!**', ephemeral: true });
+            await interaction.reply({ content: '❌ **النظام غير مُعد بعد!**', flags: 64 });
             return;
         }
 
@@ -1827,7 +1891,7 @@ async function handleColorSelection(interaction, client) {
             if (currentColorRoles.size === 0) {
                 await interaction.reply({ 
                     content: '✅ **ليس لديك أي رولات ألوان حالياً**', 
-                    ephemeral: true 
+                    flags: 64 
                 });
                 return;
             }
@@ -1846,7 +1910,7 @@ async function handleColorSelection(interaction, client) {
                 .setTitle('✅ Done')
                 .setDescription(`تم إزالة ${removedCount} رول لون من حسابك`);
 
-            await interaction.reply({ embeds: [successEmbed], ephemeral: true });
+            await interaction.reply({ embeds: [successEmbed], flags: 64 });
 
             // تحديث منيو الألوان بعد إزالة جميع الألوان
             try {
@@ -1869,7 +1933,7 @@ async function handleColorSelection(interaction, client) {
         // اختيار لون جديد
         const selectedRole = guild.roles.cache.get(selectedValue);
         if (!selectedRole) {
-            await interaction.reply({ content: '❌ **الدور غير موجود!**', ephemeral: true });
+            await interaction.reply({ content: '❌ **الدور غير موجود!**', flags: 64 });
             return;
         }
 
@@ -1880,7 +1944,7 @@ async function handleColorSelection(interaction, client) {
         if (currentColorRoles.has(selectedValue)) {
             await interaction.reply({ 
                 content: `✅ **لديك هذا اللون بالفعل : ${selectedRole.name}**`, 
-                ephemeral: true 
+                flags: 64 
             });
             return;
         }
@@ -1904,7 +1968,7 @@ async function handleColorSelection(interaction, client) {
                 .setDescription(`**اللون الجديد :** ${selectedRole.name}\n**الكود :** ${selectedRole.hexColor}`)
                 .setColor(selectedRole.color);
 
-            await interaction.reply({ embeds: [successEmbed], ephemeral: true });
+            await interaction.reply({ embeds: [successEmbed], flags: 64 });
             console.log(`✅ تم إضافة الدور ${selectedRole.name} لـ ${member.user.tag}`);
 
             // تحديث منيو الألوان في رسالة السيتب ليعود لحالته الافتراضية
@@ -1928,14 +1992,14 @@ async function handleColorSelection(interaction, client) {
             console.error(`فشل إضافة الدور ${selectedRole.name}:`, error.message);
             await interaction.reply({ 
                 content: '❌ **فشل تغيير اللون! تأكد من أن البوت لديه الصلاحيات المناسبة.**', 
-                ephemeral: true 
+                flags: 64 
             });
         }
 
     } catch (error) {
         console.error('خطأ في معالجة اختيار اللون:', error);
         if (!interaction.replied && !interaction.deferred) {
-            await interaction.reply({ content: '❌ **حدث خطأ!**', ephemeral: true }).catch(() => {});
+            await interaction.reply({ content: '❌ **حدث خطأ!**', flags: 64 }).catch(() => {});
         }
     }
 }
@@ -2353,12 +2417,24 @@ async function execute(message, args, { BOT_OWNERS, client }) {
 
                 const colorRoleIds = colorRoleData.map(r => r.id);
 
+                // حفظ الصورة محلياً
+                const savingMsg = await message.channel.send('⏳ **جاري حفظ الصورة...**');
+                const localImagePath = await saveImageLocally(imageUrl, guildId);
+                
+                if (!localImagePath) {
+                    await savingMsg.edit('❌ **فشل في حفظ الصورة محلياً. حاول مرة أخرى**');
+                    return;
+                }
+                
+                await savingMsg.delete().catch(() => {});
+
                 // حفظ الإعدادات
                 const config = loadRoomConfig();
                 config[guildId] = {
                     requestsChannelId: requestsChannel.id,
                     embedChannelId: embedChannel.id,
                     imageUrl: imageUrl,
+                    localImagePath: localImagePath,
                     colorRoleIds: colorRoleIds,
                     setupBy: message.author.id,
                     setupAt: Date.now()

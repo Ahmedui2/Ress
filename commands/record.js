@@ -105,7 +105,7 @@ async function handleRecordStart(interaction, user, config, client) {
   if (!voiceChannel) {
     await interaction.reply({ 
       content: '**❌ يجب أن تكون في قناة صوتية لاستخدام هذا الأمر**', 
-      ephemeral: true 
+      flags: 64 
     });
     return;
   }
@@ -113,7 +113,7 @@ async function handleRecordStart(interaction, user, config, client) {
   if (voiceRecorder.isRecording(voiceChannel.id)) {
     await interaction.reply({ 
       content: '**❌ يوجد تسجيل نشط بالفعل في هذه القناة**', 
-      ephemeral: true 
+      flags: 64 
     });
     return;
   }
@@ -121,7 +121,7 @@ async function handleRecordStart(interaction, user, config, client) {
   if (activeSessions.has(user.id)) {
     await interaction.reply({ 
       content: '**❌ لديك تسجيل نشط بالفعل! لا يمكن تسجيل أكثر من تسجيل واحد في نفس الوقت**', 
-      ephemeral: true 
+      flags: 64 
     });
     return;
   }
@@ -143,7 +143,7 @@ async function handleRecordStart(interaction, user, config, client) {
 
   const row = new ActionRowBuilder().addComponents(endButton, abuseButton);
 
-  await interaction.reply({ embeds: [progressEmbed], components: [row], ephemeral: true });
+  await interaction.reply({ embeds: [progressEmbed], components: [row], flags: 64 });
 
   try {
     const recordingId = await voiceRecorder.startRecording(voiceChannel, user.id);
@@ -209,7 +209,7 @@ async function handleRecordStart(interaction, user, config, client) {
         session.abuseTimes.push(abuseTime);
         await btnInteraction.reply({ 
           content: `✅ تم تسجيل وقت السب (${Math.floor(abuseTime / 1000)} ثانية من البداية)`, 
-          ephemeral: true 
+          flags: 64 
         });
       }
     });
@@ -229,7 +229,15 @@ async function handleRecordEnd(session, config, client, autoEnded) {
     const processingEmbed = colorManager.createEmbed()
       .setDescription('**⏳ جاري معالجة التسجيل...**');
 
-    await session.progressMessage.edit({ embeds: [processingEmbed], components: [] });
+    // محاولة تعديل الرسالة مع معالجة الخطأ
+    try {
+      await session.progressMessage.edit({ embeds: [processingEmbed], components: [] });
+    } catch (editError) {
+      // تجاهل أخطاء الرسالة المحذوفة
+      if (editError.code !== 10008) {
+        console.error('خطأ في تعديل رسالة التقدم:', editError);
+      }
+    }
 
     const recordingData = await voiceRecorder.stopRecording(session.recordingId);
     
@@ -241,10 +249,30 @@ async function handleRecordEnd(session, config, client, autoEnded) {
     console.error('خطأ في إنهاء التسجيل:', error);
     activeSessions.delete(session.userId);
     
-    const errorEmbed = colorManager.createEmbed()
-      .setDescription(`**❌ حدث خطأ أثناء معالجة التسجيل**\n\`\`\`${error.message}\`\`\``);
+    // معالجة خاصة لحالة عدم وجود بيانات صوتية
+    let errorMessage = `**❌ حدث خطأ أثناء معالجة التسجيل**\n\`\`\`${error.message}\`\`\``;
     
-    await session.progressMessage.edit({ embeds: [errorEmbed], components: [] });
+    if (error.message.includes('لا توجد بيانات صوتية للدمج') || error.message.includes('لم يتحدث أحد')) {
+      errorMessage = '**❌ لا يوجد صوت مسجل**\nلم يتحدث أحد في القناة الصوتية أثناء التسجيل.\n\n💡 **نصيحة:** تأكد من التحدث في الميكروفون قبل إنهاء التسجيل';
+    }
+    
+    // محاولة إرسال رسالة خطأ للمستخدم
+    try {
+      const errorEmbed = colorManager.createEmbed()
+        .setDescription(errorMessage);
+      
+      await session.progressMessage.edit({ embeds: [errorEmbed], components: [] });
+    } catch (finalError) {
+      // إذا فشل حتى إرسال رسالة الخطأ، أرسل DM للمستخدم
+      if (finalError.code === 10008) {
+        try {
+          const user = await client.users.fetch(session.userId);
+          await user.send({ embeds: [colorManager.createEmbed().setDescription(errorMessage)] });
+        } catch (dmError) {
+          console.error('فشل في إرسال رسالة خاصة للمستخدم:', dmError);
+        }
+      }
+    }
   }
 }
 
@@ -328,14 +356,14 @@ async function handlePreviewPlay(interaction, session, recordingData) {
   if (!voiceChannel) {
     await interaction.reply({ 
       content: '**❌ يجب أن تكون في قناة صوتية للاستماع للتسجيل**', 
-      ephemeral: true 
+      flags: 64 
     });
     return;
   }
 
   await interaction.reply({ 
     content: '**🎵 جاري تشغيل المعاينة...**', 
-    ephemeral: true 
+    flags: 64 
   });
 
   try {
@@ -636,12 +664,12 @@ async function handlePlay(interaction, channelId, playerData, recordingMessage) 
   if (!voiceChannel) {
     await interaction.reply({ 
       content: '**❌ يجب أن تكون في قناة صوتية للتشغيل**', 
-      ephemeral: true 
+      flags: 64 
     });
     return;
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: 64 });
 
   try {
     const { joinVoiceChannel } = require('@discordjs/voice');
@@ -696,7 +724,7 @@ async function handlePlay(interaction, channelId, playerData, recordingMessage) 
 
 async function handlePause(interaction, channelId, playerData, recordingMessage) {
   if (!playerData.player || !playerData.isPlaying) {
-    await interaction.reply({ content: '**❌ لا يوجد تشغيل نشط**', ephemeral: true });
+    await interaction.reply({ content: '**❌ لا يوجد تشغيل نشط**', flags: 64 });
     return;
   }
 
@@ -704,7 +732,7 @@ async function handlePause(interaction, channelId, playerData, recordingMessage)
   playerData.isPaused = true;
 
   await updatePlayerButtons(recordingMessage, playerData, channelId);
-  await interaction.reply({ content: '**⏸️ تم إيقاف التشغيل مؤقتاً**', ephemeral: true });
+  await interaction.reply({ content: '**⏸️ تم إيقاف التشغيل مؤقتاً**', flags: 64 });
 }
 
 async function handleStop(interaction, channelId, playerData, recordingMessage) {
@@ -722,16 +750,16 @@ async function handleStop(interaction, channelId, playerData, recordingMessage) 
   playerData.isPaused = false;
 
   await updatePlayerButtons(recordingMessage, playerData, channelId);
-  await interaction.reply({ content: '**⏹️ تم إيقاف التشغيل**', ephemeral: true });
+  await interaction.reply({ content: '**⏹️ تم إيقاف التشغيل**', flags: 64 });
 }
 
 async function handleSkip(interaction, channelId, playerData) {
-  await interaction.reply({ content: '**⏩ التقديم غير مدعوم حالياً في MP3 streams**', ephemeral: true });
+  await interaction.reply({ content: '**⏩ التقديم غير مدعوم حالياً في MP3 streams**', flags: 64 });
 }
 
 async function handleAbuseJump(interaction, channelId, playerData, recordingMessage) {
   if (!playerData.abuseTimes || playerData.abuseTimes.length === 0) {
-    await interaction.reply({ content: '**❌ لا توجد أوقات سب مسجلة**', ephemeral: true });
+    await interaction.reply({ content: '**❌ لا توجد أوقات سب مسجلة**', flags: 64 });
     return;
   }
 
@@ -741,7 +769,7 @@ async function handleAbuseJump(interaction, channelId, playerData, recordingMess
   if (!voiceChannel) {
     await interaction.reply({ 
       content: '**❌ يجب أن تكون في قناة صوتية للانتقال لوقت السب**', 
-      ephemeral: true 
+      flags: 64 
     });
     return;
   }
@@ -753,7 +781,7 @@ async function handleAbuseJump(interaction, channelId, playerData, recordingMess
 
   await interaction.reply({ 
     content: `**⚠️ وقت السب المسجل: ${seconds} ثانية من البداية**\n*ملاحظة: الانتقال المباشر غير مدعوم في MP3 streams*`, 
-    ephemeral: true 
+    flags: 64 
   });
 }
 
@@ -817,7 +845,10 @@ async function updatePlayerButtons(message, playerData, channelId) {
 
     await message.edit({ components: [row1, row2] });
   } catch (error) {
-    console.error('خطأ في تحديث الأزرار:', error);
+    // تجاهل أخطاء الرسائل المحذوفة بصمت
+    if (error.code !== 10008) {
+      console.error('خطأ في تحديث الأزرار:', error);
+    }
   }
 }
 
@@ -850,7 +881,7 @@ async function handleAddMember(interaction, channelId) {
       SendMessages: true
     });
 
-    await modalSubmit.reply({ content: `✅ تمت إضافة <@${memberId}> للقناة`, ephemeral: true });
+    await modalSubmit.reply({ content: `✅ تمت إضافة <@${memberId}> للقناة`, flags: 64 });
   } catch (error) {
     console.error('خطأ في إضافة عضو:', error);
   }
@@ -882,7 +913,7 @@ async function handleRemoveMember(interaction, channelId) {
     const channel = interaction.guild.channels.cache.get(channelId);
     await channel.permissionOverwrites.delete(memberId);
 
-    await modalSubmit.reply({ content: `✅ تمت إزالة <@${memberId}> من القناة`, ephemeral: true });
+    await modalSubmit.reply({ content: `✅ تمت إزالة <@${memberId}> من القناة`, flags: 64 });
   } catch (error) {
     console.error('خطأ في إزالة عضو:', error);
   }
@@ -961,7 +992,7 @@ async function handleClose(interaction, channelId, playerData, client) {
 
     buttonCollector.on('collect', async (btnInt) => {
       if (btnInt.customId.startsWith(`delete_channel_${channelId}`)) {
-        await btnInt.reply({ content: '🗑️ جاري حذف القناة والملفات...', ephemeral: true });
+        await btnInt.reply({ content: '🗑️ جاري حذف القناة والملفات...', flags: 64 });
         
         // إيقاف التشغيل إن كان نشطاً
         if (playerData.player) {
@@ -1000,7 +1031,7 @@ async function handleClose(interaction, channelId, playerData, client) {
 
         finalCollector.on('collect', async (finalInt) => {
           if (finalInt.customId.startsWith(`final_delete_${channelId}`)) {
-            await finalInt.reply({ content: '🗑️ جاري حذف القناة والملفات...', ephemeral: true });
+            await finalInt.reply({ content: '🗑️ جاري حذف القناة والملفات...', flags: 64 });
             
             cleanupRecording(playerData.filePath);
             audioPlayers.delete(channelId);

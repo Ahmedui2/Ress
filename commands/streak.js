@@ -650,7 +650,7 @@ async function handleDividerDelete(interaction, client, botOwners) {
     const isAdmin = await hasPermission(interaction.user.id, guildId, interaction.guild, botOwners);
 
     if (!isAdmin) {
-        return interaction.reply({ content: '**تبي تحذف صور الناس؟ باند**', ephemeral: true });
+        return interaction.reply({ content: '**تبي تحذف صور الناس؟ باند**', flags: 64 });
     }
 
     const userId = interaction.customId.split('_')[2];
@@ -678,7 +678,7 @@ async function handleDeleteReasonModal(interaction, client) {
     const divider = await getQuery('SELECT * FROM streak_dividers WHERE message_id = ?', [dividerMessageId]);
     
     if (!divider) {
-        return interaction.reply({ content: '**لم يتم العثور على معلومات الخط الفاصل**', ephemeral: true });
+        return interaction.reply({ content: '**لم يتم العثور على معلومات الخط الفاصل**', flags: 64 });
     }
 
     const userMessageIds = JSON.parse(divider.user_message_ids || '[]');
@@ -718,7 +718,7 @@ async function handleDeleteReasonModal(interaction, client) {
         }
     }
 
-    await interaction.reply({ content: '**تم حذف الصورة وإرسال السبب للعضو**', ephemeral: true });
+    await interaction.reply({ content: '**تم حذف الصورة وإرسال السبب للعضو**', flags: 64 });
 }
 
 async function handleRestoreRequest(interaction, client, botOwners) {
@@ -727,7 +727,7 @@ async function handleRestoreRequest(interaction, client, botOwners) {
 
     const userStreak = await getUserStreak(guildId, userId);
     if (!userStreak || userStreak.current_streak > 0) {
-        return interaction.reply({ content: '**لا يمكن طلب استعادة الـ Streak حالياً**', ephemeral: true });
+        return interaction.reply({ content: '**لا يمكن طلب استعادة الـ Streak حالياً**', flags: 64 });
     }
 
     const existingRequest = await getQuery(
@@ -736,7 +736,7 @@ async function handleRestoreRequest(interaction, client, botOwners) {
     );
 
     if (existingRequest) {
-        return interaction.reply({ content: '**لديك طلب استعادة قيد الانتظار بالفعل**', ephemeral: true });
+        return interaction.reply({ content: '**لديك طلب استعادة قيد الانتظار بالفعل**', flags: 64 });
     }
 
     await createRestoreRequest(guildId, userId, userStreak.longest_streak);
@@ -778,7 +778,7 @@ async function handleRestoreRequest(interaction, client, botOwners) {
         }
     }
 
-    await interaction.reply({ content: '**تم إرسال طلب استعادة الـ Streak للمسؤولين**', ephemeral: true });
+    await interaction.reply({ content: '**تم إرسال طلب استعادة الـ Streak للمسؤولين**', flags: 64 });
 }
 
 async function getApprovers(settings, guild, botOwners) {
@@ -820,7 +820,7 @@ async function handleApproveRestore(interaction, client) {
     );
 
     if (!request) {
-        return interaction.reply({ content: '**لا يوجد طلب استعادة قيد الانتظار لهذا المستخدم**', ephemeral: true });
+        return interaction.reply({ content: '**لا يوجد طلب استعادة قيد الانتظار لهذا المستخدم**', flags: 64 });
     }
 
     await runQuery('UPDATE streak_restore_requests SET status = ?, approver_id = ?, resolved_at = strftime("%s", "now") WHERE id = ?',
@@ -862,7 +862,7 @@ async function handleRejectRestore(interaction, client) {
     );
 
     if (!request) {
-        return interaction.reply({ content: '**لا يوجد طلب استعادة قيد الانتظار لهذا المستخدم**', ephemeral: true });
+        return interaction.reply({ content: '**لا يوجد طلب استعادة قيد الانتظار لهذا المستخدم**', flags: 64 });
     }
 
     await runQuery('UPDATE streak_restore_requests SET status = ?, approver_id = ?, resolved_at = strftime("%s", "now") WHERE id = ?',
@@ -986,10 +986,32 @@ module.exports = {
         
         const { client, BOT_OWNERS } = context;
         const customId = interaction.customId;
-        const guildId = interaction.guild?.id;
         
-        if (!guildId) {
-            console.log('❌ لا يوجد guildId في التفاعل');
+        // استخراج guildId من customId إذا كان التفاعل من DM
+        let guildId = interaction.guild?.id;
+        
+        // للتفاعلات التي تأتي من DM (مثل طلب استعادة Streak)
+        if (!guildId && customId.includes('_')) {
+            const parts = customId.split('_');
+            // محاولة استخراج guildId من آخر جزء من customId
+            const potentialGuildId = parts[parts.length - 1];
+            // التحقق من أن الجزء الأخير يبدو كـ guild ID (رقم طويل)
+            if (potentialGuildId && /^\d{17,19}$/.test(potentialGuildId)) {
+                guildId = potentialGuildId;
+                console.log(`✅ تم استخراج guildId من customId: ${guildId}`);
+            }
+        }
+        
+        // التحقق من وجود guildId للتفاعلات التي تحتاج إليه
+        const needsGuildId = !customId.startsWith('streak_request_restore_') || customId.includes('approve') || customId.includes('reject');
+        if (!guildId && needsGuildId) {
+            console.log(`❌ لا يوجد guildId في التفاعل: ${customId}`);
+            if (!interaction.replied && !interaction.deferred) {
+                return interaction.reply({
+                    content: '❌ حدث خطأ في معالجة التفاعل',
+                    flags: 64
+                }).catch(() => {});
+            }
             return;
         }
         
@@ -1069,7 +1091,7 @@ module.exports = {
             !customId.startsWith('streak_reject_restore_')) {
             if (!BOT_OWNERS.includes(interaction.user.id)) {
                 if (!interaction.replied && !interaction.deferred) {
-                    return interaction.reply({ content: '** يالليل لا تضغط **', ephemeral: true });
+                    return interaction.reply({ content: '** يالليل لا تضغط **', flags: 64 });
                 }
                 return;
             }
