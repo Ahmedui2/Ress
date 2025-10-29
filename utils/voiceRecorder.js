@@ -16,6 +16,9 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
+// تعيين opusscript كمحرك opus افتراضي
+process.env.OPUS_IMPLEMENTATION = 'opusscript';
+
 class VoiceRecorder {
   constructor() {
     this.recordings = new Map();
@@ -27,9 +30,10 @@ class VoiceRecorder {
       fs.mkdirSync(this.recordingsDir, { recursive: true });
     }
 
+    // تشغيل التنظيف كل 4 ساعات بدلاً من ساعة لتقليل الحمل
     setInterval(() => {
       this.cleanupOldRecordings();
-    }, 60 * 60 * 1000);
+    }, 4 * 60 * 60 * 1000);
   }
 
   cleanupOldRecordings() {
@@ -145,16 +149,18 @@ class VoiceRecorder {
                   }
                 });
 
+                // استخدام إعدادات أخف للتقليل من استهلاك الموارد
                 const opusDecoder = new prism.opus.Decoder({
                   rate: 48000,
-                  channels: 2,
-                  frameSize: 960,
-                  fec: true, // Forward Error Correction لتحسين جودة الصوت
-                  plc: true  // Packet Loss Concealment للتعامل مع فقدان الحزم
+                  channels: 1, // Mono بدلاً من Stereo لتقليل الحمل
+                  frameSize: 960
                 });
 
                 const userPcmPath = path.join(this.recordingsDir, `${recordingId}_user_${speakingUserId}.pcm`);
-                const fileStream = fs.createWriteStream(userPcmPath);
+                // استخدام buffer أصغر لتقليل استهلاك الذاكرة
+                const fileStream = fs.createWriteStream(userPcmPath, { 
+                  highWaterMark: 16 * 1024 // 16KB بدلاً من الافتراضي 64KB
+                });
 
                 audioStream.pipe(opusDecoder).pipe(fileStream);
 
@@ -315,13 +321,16 @@ class VoiceRecorder {
         `-f s16le -ar 48000 -ac 2 -i "${file}"`
       ).join(' ');
 
+      // تقليل bitrate والمعالجة لتوفير الموارد
       const filterComplex = pcmFiles.length > 1 
-        ? `-filter_complex "amix=inputs=${pcmFiles.length}:duration=longest:dropout_transition=2,volume=2,highpass=f=80,lowpass=f=15000"` 
-        : `-filter:a "volume=2,highpass=f=80,lowpass=f=15000"`;
+        ? `-filter_complex "amix=inputs=${pcmFiles.length}:duration=longest:dropout_transition=2,volume=1.5"` 
+        : `-filter:a "volume=1.5"`;
 
-      const ffmpegCommand = `ffmpeg ${filterInputs} ${filterComplex} -acodec libmp3lame -b:a 320k -ar 48000 -q:a 0 "${outputMp3}"`;
+      // استخدام 192k بدلاً من 320k لتوفير الموارد مع جودة ممتازة
+      // إضافة حدود للذاكرة وعدد الخيوط
+      const ffmpegCommand = `ffmpeg -threads 2 ${filterInputs} ${filterComplex} -acodec libmp3lame -b:a 192k -ar 48000 -ac 1 -q:a 2 "${outputMp3}"`;
 
-      console.log(`🔄 تحويل الملفات إلى MP3...`);
+      console.log(`🔄 تحويل الملفات إلى MP3 (محسّن)...`);
 
       const ffmpeg = spawn('sh', ['-c', ffmpegCommand]);
       let errorOutput = '';
