@@ -6,6 +6,7 @@ const { logEvent } = require('./utils/logs_system.js');
 const { startReminderSystem } = require('./commands/notifications.js');
 // تعريف downManager في المستوى العلوي للوصول عبر جميع معالجات الأحداث
 const downManager = require('./utils/downManager');
+const warnManager = require('./utils/warnManager');
 const { checkCooldown, startCooldown } = require('./commands/cooldown.js');
 const colorManager = require('./utils/colorManager.js');
 const vacationManager = require('./utils/vacationManager');
@@ -406,6 +407,65 @@ function getCachedPrefix() {
     return prefix;
 }
 
+// دالة للفحص التلقائي للترقيات
+async function checkAutoLevelUp(userId, type, client) {
+    try {
+        const { getDatabase, getUserLevel, updateUserLevel, updateLastNotified } = require('./utils/database');
+        const dbManager = getDatabase();
+
+        // جلب الإحصائيات الحالية
+        const userStats = await dbManager.getUserStats(userId);
+        if (!userStats) return;
+
+        // حساب المستويات الحالية
+        const voiceXP = Math.floor(userStats.totalVoiceTime / 5);
+        const chatXP = Math.floor(userStats.totalMessages / 10);
+        
+        const currentVoiceLevel = Math.floor(Math.pow(voiceXP / 100, 0.5));
+        const currentChatLevel = Math.floor(Math.pow(chatXP / 100, 0.5));
+
+        // جلب المستوى السابق
+        const previousLevel = await getUserLevel(userId);
+        const oldVoiceLevel = previousLevel.voice_level || 0;
+        const oldChatLevel = previousLevel.chat_level || 0;
+        const lastNotified = previousLevel.last_notified || 0;
+
+        // التحقق من وجود ترقية
+        const hasVoiceLevelUp = currentVoiceLevel > oldVoiceLevel;
+        const hasChatLevelUp = currentChatLevel > oldChatLevel;
+
+        if (!hasVoiceLevelUp && !hasChatLevelUp) return;
+
+        // التحقق من عدم إرسال إشعارات متكررة (تجنب الإرسال أكثر من مرة كل دقيقة)
+        const timeSinceLastNotification = Date.now() - lastNotified;
+        if (timeSinceLastNotification < 60000) {
+            await updateUserLevel(userId, currentVoiceLevel, currentChatLevel);
+            return;
+        }
+
+        // إرسال إشعار الترقية
+        const profileCommand = require('./commands/profile.js');
+        if (profileCommand && typeof profileCommand.sendLevelUpNotification === 'function') {
+            await profileCommand.sendLevelUpNotification(
+                client,
+                userId,
+                oldVoiceLevel,
+                currentVoiceLevel,
+                oldChatLevel,
+                currentChatLevel,
+                voiceXP,
+                chatXP
+            );
+
+            // تحديث المستوى ووقت آخر إشعار
+            await updateUserLevel(userId, currentVoiceLevel, currentChatLevel);
+            await updateLastNotified(userId);
+        }
+    } catch (error) {
+        console.error('❌ خطأ في الفحص التلقائي للترقيات:', error);
+    }
+}
+
 // دالة للحصول على رولات المشرفين من الكاش
 function getCachedAdminRoles() {
     // قراءة مباشرة من الملف دائماً لضمان أحدث البيانات
@@ -652,6 +712,10 @@ client.once(Events.ClientReady, async () => {
     downManager.init(client);
     console.log('✅ تم فحص الداونات المنتهية عند بدء التشغيل');
 
+    // Initialize warn manager with client
+    warnManager.init(client);
+    console.log('✅ تم تهيئة نظام التحذيرات بنجاح');
+
     // Initialize promote manager with client (after database initialization)
     try {
         const databaseModule = require('./utils/database');
@@ -725,6 +789,9 @@ client.once(Events.ClientReady, async () => {
                         startTime: existingSession.startTime,
                         endTime: now
                     });
+
+                    // فحص تلقائي للترقية في مستوى الفويس
+                    await checkAutoLevelUp(userId, 'voice', client);
                 }
                 client.voiceSessions.delete(userId);
                 console.log(`🎤 ${displayName} غادر القناة الصوتية ${existingSession.channelName} - المدة: ${Math.round(sessionDuration / 1000)} ثانية`);
@@ -744,6 +811,9 @@ client.once(Events.ClientReady, async () => {
                         startTime: existingSession.startTime,
                         endTime: now
                     });
+
+                    // فحص تلقائي للترقية في مستوى الفويس
+                    await checkAutoLevelUp(userId, 'voice', client);
                 }
             }
 
@@ -1036,6 +1106,9 @@ client.on('messageCreate', async message => {
           messageId: message.id,
           timestamp: Date.now()
         });
+
+        // فحص تلقائي للترقية في مستوى الشات
+        await checkAutoLevelUp(message.author.id, 'chat', client);
       }
       // تم إزالة رسالة الكونسول لتجنب الإزعاج
     } catch (error) {
@@ -1148,8 +1221,8 @@ client.on('messageCreate', async message => {
     const CURRENT_ADMIN_ROLES = getCachedAdminRoles();
     const hasAdminRole = CURRENT_ADMIN_ROLES.length > 0 && member.roles.cache.some(role => CURRENT_ADMIN_ROLES.includes(role.id));
 
-    // Commands for everyone (help, tops, تفاعلي, ستريكي)
-    if (commandName === 'help' || commandName === 'tops' || commandName === 'توب' || commandName === 'تفاعلي' || commandName === 'ستريكي') {
+    // Commands for everyone (help, tops, تفاعلي, ستريكي, profile, myprofile)
+    if (commandName === 'help' || commandName === 'tops' || commandName === 'توب' || commandName === 'تفاعلي' || commandName === 'ستريكي' || commandName === 'profile' || commandName === 'myprofile') {
       if (commandName === 'مسؤولياتي') {
         await showUserResponsibilities(message, message.author, responsibilities, client);
       } else {
@@ -1186,8 +1259,8 @@ client.on('messageCreate', async message => {
         return;
       }
     }
-    // Commands for owners only (call, stats, setup, report, set-vacation, top)
-    else if (commandName === 'call' || commandName === 'stats' || commandName === 'setup' || commandName === 'report' || commandName === 'set-vacation' || commandName === 'top') {
+    // Commands for owners only (call, stats, setup, report, set-vacation, top, test)
+    else if (commandName === 'call' || commandName === 'stats' || commandName === 'setup' || commandName === 'report' || commandName === 'set-vacation' || commandName === 'top' || commandName === 'test') {
       if (isOwner) {
         await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
       } else {
@@ -2509,6 +2582,13 @@ client.on('interactionCreate', async (interaction) => {
             }
         }
 }
+      if (interaction.customId && interaction.customId.startsWith('myprofile_')) {
+        const myProfileCommand = client.commands.get('myprofile');
+        if (myProfileCommand && myProfileCommand.handleInteraction) {
+            await myProfileCommand.handleInteraction(interaction);
+        }
+        return;
+      }
         if (customId === 'suggestion_button') {
 
       const respCommand = client.commands.get('resp');
@@ -2600,6 +2680,27 @@ client.on('interactionCreate', async (interaction) => {
                 await downCommand.handleInteraction(interaction, context);
             } catch (error) {
                 console.error('خطأ في معالجة تفاعل down:', error);
+                if (!interaction.replied && !interaction.deferred) {
+                    await interaction.reply({
+                        content: '❌ حدث خطأ أثناء معالجة التفاعل. يرجى المحاولة مرة أخرى.',
+                        flags: MessageFlags.Ephemeral
+                    }).catch(() => {});
+                }
+            }
+        }
+        return;
+    }
+
+    // --- Warn System Interaction Router ---
+    if (interaction.customId && interaction.customId.startsWith('warn_')) {
+        console.log(`معالجة تفاعل warn: ${interaction.customId}`);
+
+        const warnCommand = client.commands.get('warn');
+        if (warnCommand && warnCommand.handleInteraction) {
+            try {
+                await warnCommand.handleInteraction(interaction, context);
+            } catch (error) {
+                console.error('خطأ في معالجة تفاعل warn:', error);
                 if (!interaction.replied && !interaction.deferred) {
                     await interaction.reply({
                         content: '❌ حدث خطأ أثناء معالجة التفاعل. يرجى المحاولة مرة أخرى.',
