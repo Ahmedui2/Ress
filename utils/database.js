@@ -129,6 +129,14 @@ class DatabaseManager {
                 message_count INTEGER DEFAULT 0,
                 last_message INTEGER,
                 PRIMARY KEY (user_id, channel_id)
+            )`,
+
+            // جدول مستويات المستخدمين للترقيات التلقائية
+            `CREATE TABLE IF NOT EXISTS user_levels (
+                user_id TEXT PRIMARY KEY,
+                voice_level INTEGER DEFAULT 0,
+                chat_level INTEGER DEFAULT 0,
+                last_notified INTEGER DEFAULT 0
             )`
         ];
 
@@ -148,7 +156,8 @@ class DatabaseManager {
             'CREATE INDEX IF NOT EXISTS idx_daily_activity_user_id ON daily_activity(user_id)',
             'CREATE INDEX IF NOT EXISTS idx_channel_users_channel_id ON channel_users(channel_id)',
             'CREATE INDEX IF NOT EXISTS idx_user_totals_last_activity ON user_totals(last_activity)',
-            'CREATE INDEX IF NOT EXISTS idx_message_channels_user_id ON message_channels(user_id)'
+            'CREATE INDEX IF NOT EXISTS idx_message_channels_user_id ON message_channels(user_id)',
+            'CREATE INDEX IF NOT EXISTS idx_user_levels_user_id ON user_levels(user_id)'
         ];
 
         for (const sql of indexes) {
@@ -1044,11 +1053,65 @@ async function getRealUserStats(userId) {
     };
 }
 
+// User level tracking for promotion system
+async function getUserLevel(userId) {
+    try {
+        const db = getDatabase();
+        const result = await db.get(`
+            SELECT voice_level, chat_level, last_notified
+            FROM user_levels
+            WHERE user_id = ?
+        `, [userId]);
+        
+        return result || { voice_level: 0, chat_level: 0, last_notified: 0 };
+    } catch (error) {
+        console.error('خطأ في جلب مستوى المستخدم:', error);
+        return { voice_level: 0, chat_level: 0, last_notified: 0 };
+    }
+}
+
+async function updateUserLevel(userId, voiceLevel, chatLevel) {
+    try {
+        const db = getDatabase();
+        await db.run(`
+            INSERT INTO user_levels (user_id, voice_level, chat_level)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                voice_level = excluded.voice_level,
+                chat_level = excluded.chat_level
+        `, [userId, voiceLevel, chatLevel]);
+        
+        return true;
+    } catch (error) {
+        console.error('خطأ في تحديث مستوى المستخدم:', error);
+        return false;
+    }
+}
+
+async function updateLastNotified(userId) {
+    try {
+        const db = getDatabase();
+        await db.run(`
+            UPDATE user_levels
+            SET last_notified = ?
+            WHERE user_id = ?
+        `, [Date.now(), userId]);
+        
+        return true;
+    } catch (error) {
+        console.error('خطأ في تحديث وقت الإشعار:', error);
+        return false;
+    }
+}
+
 module.exports = {
     getDatabase: getDatabase,
     initializeDatabase: initializeDatabase,
     trackUserActivity: trackUserActivity,
     getRealUserStats: getRealUserStats,
+    getUserLevel: getUserLevel,
+    updateUserLevel: updateUserLevel,
+    updateLastNotified: updateLastNotified,
     saveVoiceSession: async (userId, channelId, channelName, duration, startTime, endTime) => {
         const db = getDatabase();
         return await db.saveVoiceSession(userId, channelId, channelName, duration, startTime, endTime);
