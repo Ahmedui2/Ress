@@ -2585,7 +2585,7 @@ client.on('interactionCreate', async (interaction) => {
       if (interaction.customId && interaction.customId.startsWith('myprofile_')) {
         const myProfileCommand = client.commands.get('myprofile');
         if (myProfileCommand && myProfileCommand.handleInteraction) {
-            await myProfileCommand.handleInteraction(interaction);
+            await myProfileCommand.handleInteraction(interaction, client);
         }
         return;
       }
