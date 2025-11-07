@@ -390,10 +390,6 @@ class WarnManager {
         const embed = colorManager.createEmbed()
             .setTimestamp();
 
-        if (this.client && this.client.user) {
-            embed.setThumbnail(this.client.user.displayAvatarURL({ dynamic: true, size: 256 }));
-        }
-
         switch (type) {
             case 'WARN_CREATED':
                 embed.setTitle('Warned')
@@ -405,7 +401,8 @@ class WarnManager {
                         { name: 'السبب', value: data.reason, inline: false },
                         { name: 'هل تم طلب الداون؟', value: data.downRequested ? 'نعم' : 'لا', inline: true },
                         { name: 'الوقت', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
-                    ]);
+                    ])
+                    .setThumbnail(data.targetUser.displayAvatarURL({ dynamic: true, size: 128 }));
                 break;
 
             case 'WARN_DELETED':
