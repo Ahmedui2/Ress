@@ -947,7 +947,7 @@ function createSetupMenus(guild, guildConfig) {
     const roomMenu = new ActionRowBuilder().addComponents(
         new StringSelectMenuBuilder()
             .setCustomId('room_type_menu')
-            .setPlaceholder('اختر نوع الروم')
+            .setPlaceholder('Choose Your Room')
             .addOptions([
                 {
                     label: 'Doaa',
@@ -969,8 +969,9 @@ function createSetupMenus(guild, guildConfig) {
     if (guildConfig && guildConfig.colorRoleIds && guildConfig.colorRoleIds.length > 0) {
         const colorOptions = [
             {
-                label: 'بدون لون',
+                label: '0',
                 description: 'إزالة جميع الألوان',
+emoji: '<:emoji_38:1433868123483803708>',
                 value: 'remove_all_colors',
                 
             }
@@ -983,6 +984,7 @@ function createSetupMenus(guild, guildConfig) {
                 colorOptions.push({
                     label: `${index}`,
                     description: role.hexColor,
+emoji: '<:emoji_38:1433868023617552384>',
                     value: roleId
                 });
                 index++;
@@ -993,7 +995,7 @@ function createSetupMenus(guild, guildConfig) {
             const colorMenu = new ActionRowBuilder().addComponents(
                 new StringSelectMenuBuilder()
                     .setCustomId('color_selection_menu')
-                    .setPlaceholder('اختر اللون المناسب')
+                    .setPlaceholder('Choose Your Color')
                     .addOptions(colorOptions)
             );
             menus.push(colorMenu);

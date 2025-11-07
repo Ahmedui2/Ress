@@ -118,13 +118,13 @@ async function createPermanentMenu(client, channelId) {
             .setTitle('Promote Management System')
             .setDescription('** منيو الترقية للمسؤولين **\n\n')
             .addFields([
-                { name: 'Up', value: 'ترقية اداري وإعطاؤه رول إداري لمدة محددة أو نهائياً', inline: false },
+                { name: 'Up', value: 'ترقية اداري ', inline: false },
                 { name: 'Up log', value: 'عرض الترقيات لإداري معين',  inline: false },
                 { name: 'Block', value: 'منع عضو من الحصول على ترقيات',  inline: false },
                 { name: 'Unblock', value: 'إزالة منع الترقية عن إداري', inline: false },
                 { name: 'Admins active', value: 'فحص إحصائيات تفاعل الادارة قبل الترقية', inline: false }
             ])
-            .setThumbnail(client?.user?.displayAvatarURL({ size: 256 }) || 'https://cdn.discordapp.com/attachments/1373799493111386243/1400677612304470086/images__5_-removebg-preview.png?ex=688d822e&is=688c30ae&hm=1ea7a63bb89b38bcd76c0f5668984d7fc919214096a3d3ee92f5d948497fcb51&')
+            .setThumbnail(client?.user?.displayAvatarURL({ size: 126 }) || 'https://cdn.discordapp.com/attachments/1373799493111386243/1400677612304470086/images__5_-removebg-preview.png?ex=688d822e&is=688c30ae&hm=1ea7a63bb89b38bcd76c0f5668984d7fc919214096a3d3ee92f5d948497fcb51&')
             .setFooter({text :' By Ahmed'})  
             .setTimestamp();
 

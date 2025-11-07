@@ -138,7 +138,7 @@ function isValidImageUrl(url) {
 }
 
 // إنشاء الإمبد الرئيسي
-async function createMainEmbed(userId) {
+async function createMainEmbed(userId, client) {
     const userProfile = await getCustomProfile(userId);
     
     const embed = new EmbedBuilder()
@@ -227,7 +227,7 @@ async function execute(message, args, { client }) {
         
         const userId = message.author.id;
         
-        const embed = await createMainEmbed(userId);
+        const embed = await createMainEmbed(userId, client);
         const buttons = await createButtons(userId);
         
         await message.channel.send({
@@ -241,7 +241,7 @@ async function execute(message, args, { client }) {
 }
 
 // معالج التفاعلات
-async function handleInteraction(interaction) {
+async function handleInteraction(interaction, client) {
     if (!interaction.isButton()) return;
     
     const customId = interaction.customId;
@@ -263,7 +263,7 @@ async function handleInteraction(interaction) {
             await removeCustomAvatar(userId);
             await interaction.message.react('✅');
             
-            const embed = await createMainEmbed(userId);
+            const embed = await createMainEmbed(userId, client);
             const buttons = await createButtons(userId);
             
             await interaction.update({
@@ -287,7 +287,7 @@ async function handleInteraction(interaction) {
             await removeCustomBanner(userId);
             await interaction.message.react('✅');
             
-            const embed = await createMainEmbed(userId);
+            const embed = await createMainEmbed(userId, client);
             const buttons = await createButtons(userId);
             
             await interaction.update({
@@ -338,7 +338,7 @@ async function handleInteraction(interaction) {
                     await setCustomAvatar(userId, imageUrl);
                     await msg.react('✅');
                     
-                    const embed = await createMainEmbed(userId);
+                    const embed = await createMainEmbed(userId, client);
                     const buttons = await createButtons(userId);
                     
                     await interaction.message.edit({
@@ -406,7 +406,7 @@ async function handleInteraction(interaction) {
                     await setCustomBanner(userId, imageUrl);
                     await msg.react('✅');
                     
-                    const embed = await createMainEmbed(userId);
+                    const embed = await createMainEmbed(userId, client);
                     const buttons = await createButtons(userId);
                     
                     await interaction.message.edit({

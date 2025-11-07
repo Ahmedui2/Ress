@@ -297,12 +297,10 @@ async function handleInteraction(interaction, context) {
         const { client, BOT_OWNERS } = context;
 
         if (interaction.replied || interaction.deferred) {
-            console.log('تم تجاهل تفاعل متكرر في warn');
             return;
         }
 
         const customId = interaction.customId;
-        console.log(`معالجة تفاعل warn: ${customId}`);
 
         // Handle setup interactions
         if (customId.startsWith('warn_setup_')) {
@@ -1042,29 +1040,164 @@ async function handleWarnInteractions(interaction, context) {
     if (interaction.isButton() && customId.startsWith('warn_request_down_yes_')) {
         const warnId = customId.replace('warn_request_down_yes_', '');
 
-        // تعطيل الأزرار فوراً لمنع الضغط المتكرر
-        try {
-            await interaction.update({
-                components: []
+        const activeWarns = warnManager.getActiveWarnings();
+        const warnRecord = activeWarns[warnId];
+
+        if (!warnRecord) {
+            await interaction.reply({
+                content: '❌ **التحذير غير موجود!**',
+                ephemeral: true
             });
-        } catch (error) {
-            console.error('خطأ في تعطيل الأزرار:', error);
+            return;
         }
 
-        const modal = new ModalBuilder()
-            .setCustomId(`warn_down_duration_${warnId}`)
-            .setTitle('مدة الداون المقترحة');
+        // طلب المدة عبر رسالة نصية
+        const askDurationEmbed = colorManager.createEmbed()
+            .setTitle('المدة المقترحه لمسؤولي الداون')
+            .setDescription('**Time to Down **\n\n**أمثلة :**\n• **7d**\n• **12h**\n• **30m**\n• **2w**')
+            .setTimestamp();
 
-        const durationInput = new TextInputBuilder()
-            .setCustomId('down_duration')
-            .setLabel('المدة المقترحة (مثل: 7d أو 12h)')
-            .setStyle(TextInputStyle.Short)
-            .setRequired(true)
-            .setPlaceholder('7d, 12h, 30m');
+        await interaction.update({
+            embeds: [askDurationEmbed],
+            components: []
+        });
 
-        modal.addComponents(new ActionRowBuilder().addComponents(durationInput));
+        // انتظار رد المستخدم
+        const filter = m => m.author.id === interaction.user.id;
+        const collector = interaction.channel.createMessageCollector({ 
+            filter, 
+            max: 1, 
+            time: 60000 // دقيقة واحدة
+        });
 
-        await interaction.showModal(modal);
+        collector.on('collect', async (message) => {
+            const duration = message.content.trim();
+            
+            // حذف رسالة المستخدم
+            try {
+                await message.delete();
+            } catch (e) {
+                console.log('تعذر حذف رسالة المستخدم');
+            }
+
+            // التحقق من صحة المدة
+            const validDurationPattern = /^(\d+)([smhdw])$/i;
+            const match = duration.match(validDurationPattern);
+
+            if (!match) {
+                const errorEmbed = colorManager.createEmbed()
+                    .setTitle('❌ Error')
+                    .setDescription('**صيغة المدة غير صحيحة!**\n\n**الصيغ الصحيحة:**\n• `30s` = 30 ثانية\n• `15m` = 15 دقيقة\n• `12h` = 12 ساعة\n• `7d` = 7 أيام\n• `2w` = أسبوعين')
+                    .setTimestamp();
+
+                await interaction.editReply({
+                    embeds: [errorEmbed],
+                    components: []
+                });
+                return;
+            }
+
+            // Update warning with down request
+            await warnManager.updateWarningWithDown(warnId, duration);
+
+            const warnNumber = warnManager.getUserWarnings(warnRecord.userId, interaction.guild.id).length;
+
+            // Send log to channel
+            await warnManager.sendLogMessage(interaction.guild, client, 'WARN_CREATED', {
+                targetUser: await client.users.fetch(warnRecord.userId),
+                byUser: await client.users.fetch(warnRecord.byUserId),
+                reason: warnRecord.reason,
+                warnNumber: warnNumber,
+                downRequested: true
+            });
+
+            // Send notification to down managers
+            const settings = warnManager.getSettings();
+            if (settings.downManagerUsers && settings.downManagerUsers.length > 0) {
+                const member = await client.users.fetch(warnRecord.userId);
+                const downRequestEmbed = colorManager.createEmbed()
+                    .setTitle('Down Request From Warn Resp')
+                    .setDescription('يوجد طلب داون جديد من مسؤولي التحذيرات')
+                    .addFields([
+                        { name: 'العضو', value: `${member.username} (<@${warnRecord.userId}>)`, inline: true },
+                        { name: 'رقم التحذير', value: `#${warnNumber}`, inline: true },
+                        { name: 'المسؤول', value: `<@${warnRecord.byUserId}>`, inline: true },
+                        { name: 'السبب', value: warnRecord.reason, inline: false },
+                        { name: 'المدة المقترحة', value: duration, inline: true },
+                        { name: 'الوقت', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
+                    ])
+                    .setThumbnail(member.displayAvatarURL({ dynamic: true }))
+                    .setTimestamp();
+
+                let sentCount = 0;
+                for (const managerId of settings.downManagerUsers) {
+                    try {
+                        const manager = await client.users.fetch(managerId);
+                        await manager.send({ embeds: [downRequestEmbed] });
+                        sentCount++;
+                    } catch (error) {
+                        console.log(`لا يمكن إرسال رسالة للمسؤول ${managerId}`);
+                    }
+                }
+                
+                if (sentCount > 0) {
+                    console.log(`✅ تم إرسال طلب الداون إلى ${sentCount} مسؤول`);
+                }
+            }
+
+            // Send DM to warned user
+            try {
+                const member = await interaction.guild.members.fetch(warnRecord.userId);
+                const moderator = await client.users.fetch(interaction.user.id);
+                const dmEmbed = colorManager.createEmbed()
+                    .setTitle('Warn')
+                    .setDescription(`تم إعطاؤك تحذير في سيرفر **${interaction.guild.name}**`)
+                    .addFields([
+                        { name: 'رقم التحذير', value: `#${warnNumber}`, inline: true },
+                        { name: 'السبب', value: warnRecord.reason, inline: false },
+                        { name: 'المسؤول', value: `<@${interaction.user.id}>`, inline: true },
+                        { name: 'تم طلب داون', value: 'نعم', inline: true },
+                        { name: 'الوقت', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
+                    ])
+                    .setThumbnail(moderator.displayAvatarURL({ dynamic: true, size: 128 }))
+                    .setTimestamp();
+
+                await member.send({ embeds: [dmEmbed] });
+            } catch (dmError) {
+                console.log(`لا يمكن إرسال رسالة خاصة للعضو`);
+            }
+
+            // تحديث الرسالة - مثل زر N بالضبط
+            const completeEmbed = colorManager.createEmbed()
+                .setTitle('✅ Done ')
+                .setDescription('تم إعطاء التحذير وإرسال طلب الداون لمسؤولي الداون وتسجيله في السجلات.')
+                .addFields([
+                { name: 'المدة المقترحة', value: duration, inline: true },
+                { name: 'العضو', value: `<@${warnRecord.userId}>`, inline: true },
+                { name: 'عدد المسؤولين', value: `${settings.downManagerUsers?.length || 0}`, inline: true }
+            ])
+                .setTimestamp();
+
+            await interaction.editReply({
+                embeds: [completeEmbed],
+                components: []
+            });
+        });
+
+        collector.on('end', (collected, reason) => {
+            if (reason === 'time' && collected.size === 0) {
+                const timeoutEmbed = colorManager.createEmbed()
+                    .setTitle('⏰ انتهى الوقت')
+                    .setDescription('انتهى وقت الانتظار. يرجى المحاولة مرة أخرى.')
+                    .setTimestamp();
+
+                interaction.editReply({
+                    embeds: [timeoutEmbed],
+                    components: []
+                }).catch(console.error);
+            }
+        });
+        
         return;
     }
 
@@ -1076,16 +1209,12 @@ async function handleWarnInteractions(interaction, context) {
         const warnRecord = activeWarns[warnId];
 
         if (!warnRecord) {
-            await interaction.update({
+            await interaction.reply({
                 content: '❌ **التحذير غير موجود!**',
-                components: [],
-                embeds: []
+                ephemeral: true
             });
             return;
         }
-
-        // تعطيل الأزرار فوراً
-        await interaction.deferUpdate().catch(() => {});
 
         const warnNumber = warnManager.getUserWarnings(warnRecord.userId, interaction.guild.id).length;
 
@@ -1101,6 +1230,7 @@ async function handleWarnInteractions(interaction, context) {
         // Send DM to warned user
         try {
             const member = await interaction.guild.members.fetch(warnRecord.userId);
+            const moderator = await client.users.fetch(interaction.user.id);
             const dmEmbed = colorManager.createEmbed()
                 .setTitle('Warn')
                 .setDescription(`تم إعطاؤك تحذير في سيرفر **${interaction.guild.name}**`)
@@ -1110,6 +1240,7 @@ async function handleWarnInteractions(interaction, context) {
                     { name: 'المسؤول', value: `<@${interaction.user.id}>`, inline: true },
                     { name: 'الوقت', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
                 ])
+                .setThumbnail(moderator.displayAvatarURL({ dynamic: true, size: 128 }))
                 .setTimestamp();
 
             await member.send({ embeds: [dmEmbed] });
@@ -1122,127 +1253,12 @@ async function handleWarnInteractions(interaction, context) {
             .setDescription('تم إعطاء التحذير بنجاح وتسجيله في السجلات.')
             .setTimestamp();
 
+        // تحديث الرسالة الأصلية بدلاً من editReply
         await interaction.update({
             embeds: [completeEmbed],
             components: []
         });
-        return;
-    }
-
-    // Handle down duration modal
-    if (interaction.isModalSubmit() && customId.startsWith('warn_down_duration_')) {
-        const warnId = customId.replace('warn_down_duration_', '');
-        const duration = interaction.fields.getTextInputValue('down_duration').trim();
-
-        // التحقق من صحة المدة المقترحة
-        const validDurationPattern = /^(\d+)([smhdw])$/i;
-        const match = duration.match(validDurationPattern);
-
-        if (!match) {
-            await interaction.reply({
-                content: '❌ **صيغة المدة غير صحيحة!**\n\n' +
-                         '✅ **الصيغ الصحيحة:**\n' +
-                         '• `30s` = 30 ثانية\n' +
-                         '• `15m` = 15 دقيقة\n' +
-                         '• `12h` = 12 ساعة\n' +
-                         '• `7d` = 7 أيام\n' +
-                         '• `2w` = أسبوعين',
-                ephemeral: true
-            });
-            return;
-        }
-
-        const activeWarns = warnManager.getActiveWarnings();
-        const warnRecord = activeWarns[warnId];
-
-        if (!warnRecord) {
-            await interaction.reply({
-                content: '❌ **التحذير غير موجود!**',
-                ephemeral: true
-            });
-            return;
-        }
-
-        // Update warning with down request
-        await warnManager.updateWarningWithDown(warnId, duration);
-
-        const warnNumber = warnManager.getUserWarnings(warnRecord.userId, interaction.guild.id).length;
-
-        // Send log to channel
-        await warnManager.sendLogMessage(interaction.guild, client, 'WARN_CREATED', {
-            targetUser: await client.users.fetch(warnRecord.userId),
-            byUser: await client.users.fetch(warnRecord.byUserId),
-            reason: warnRecord.reason,
-            warnNumber: warnNumber,
-            downRequested: true
-        });
-
-        // Send notification to down managers
-        const settings = warnManager.getSettings();
-        if (settings.downManagerUsers && settings.downManagerUsers.length > 0) {
-            const member = await client.users.fetch(warnRecord.userId);
-            const downRequestEmbed = colorManager.createEmbed()
-                .setTitle('Down Request From Warn Resp')
-                .setDescription('يوجد طلب داون جديد من مسؤولي التحذيرات')
-                .addFields([
-                    { name: 'العضو', value: `${member.username} (<@${warnRecord.userId}>)`, inline: true },
-                    { name: 'رقم التحذير', value: `#${warnNumber}`, inline: true },
-                    { name: 'المسؤول', value: `<@${warnRecord.byUserId}>`, inline: true },
-                    { name: 'السبب', value: warnRecord.reason, inline: false },
-                    { name: 'المدة المقترحة', value: duration, inline: true },
-                    { name: 'الوقت', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
-                ])
-                .setThumbnail(member.displayAvatarURL({ dynamic: true }))
-                .setTimestamp();
-
-            let sentCount = 0;
-            for (const managerId of settings.downManagerUsers) {
-                try {
-                    const manager = await client.users.fetch(managerId);
-                    await manager.send({ embeds: [downRequestEmbed] });
-                    sentCount++;
-                } catch (error) {
-                    console.log(`لا يمكن إرسال رسالة للمسؤول ${managerId}`);
-                }
-            }
-            
-            if (sentCount > 0) {
-                console.log(`✅ تم إرسال طلب الداون إلى ${sentCount} مسؤول`);
-            }
-        }
-
-        // Send DM to warned user
-        try {
-            const member = await interaction.guild.members.fetch(warnRecord.userId);
-            const dmEmbed = colorManager.createEmbed()
-                .setTitle('Warn')
-                .setDescription(`تم إعطاؤك تحذير في سيرفر **${interaction.guild.name}**`)
-                .addFields([
-                    { name: 'رقم التحذير', value: `#${warnNumber}`, inline: true },
-                    { name: 'السبب', value: warnRecord.reason, inline: false },
-                    { name: 'المسؤول', value: `<@${interaction.user.id}>`, inline: true },
-                    { name: 'تم طلب داون', value: 'نعم', inline: true },
-                    { name: 'الوقت', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
-                ])
-                .setTimestamp();
-
-            await member.send({ embeds: [dmEmbed] });
-        } catch (dmError) {
-            console.log(`لا يمكن إرسال رسالة خاصة للعضو`);
-        }
-
-        const completeEmbed = colorManager.createEmbed()
-            .setTitle('✅ Done')
-            .setDescription('تم إعطاء التحذير وإرسال طلب الداون لمسؤولي الداون.')
-            .addFields([
-                { name: 'المدة المقترحة', value: duration, inline: true }
-            ])
-            .setTimestamp();
-
-        await interaction.reply({
-            embeds: [completeEmbed],
-            ephemeral: true
-        });
+        
         return;
     }
 
