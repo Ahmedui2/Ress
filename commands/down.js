@@ -108,31 +108,31 @@ async function createPermanentMenu(client, channelId) {
             .addOptions([
                 {
                     label: 'Down',
-emoji: '<:emoji_14:1431078507647336560>',
+emoji: '<:emoji_70:1442588577795149947>',
                     value: 'remove_role',
                     description: 'سحب رول إداري من عضو لمدة محددة أو نهائياً'
                 },
                 {
                     label: 'Record',
-emoji: '<:emoji_11:1431078426361598113>',
+emoji: '<:emoji_68:1442588491585294358>',
                     value: 'user_records',
                     description: 'عرض تاريخ الداون لعضو معين'
                 },
                 {
                     label: 'Change',
-emoji: '<:emoji_12:1431078484620345406>',
+emoji: '<:emoji_82:1442589171519586345>',
                     value: 'modify_duration',
                     description: 'تعديل مدة داون حالي'
                 },
                 {
                     label: 'Active',
-emoji: '<:emoji_18:1431079144774565990>',
+emoji: '<:emoji_79:1442589038279266384>',
                     value: 'active_downs',
                     description: 'عرض جميع الداونات الجارية ووقت انتهائها'
                 },
                 {
                     label: 'Finish',
-emoji: '<:emoji_16:1431078587599032421>',
+emoji: '<:emoji_77:1442588896008339579>',
                     value: 'user_downs',
                     description: 'إنهاء أو مراجعة داونات عضو معين'
                 }
@@ -141,7 +141,7 @@ emoji: '<:emoji_16:1431078587599032421>',
         const settingsButton = new ButtonBuilder()
             .setCustomId('down_settings_button')
             .setLabel('Settings')
-.setEmoji('<:emoji_17:1431078631131844661>')
+.setEmoji('<:emoji_70:1442588619368960213>')
             .setStyle(ButtonStyle.Secondary);
 
         const menuRow = new ActionRowBuilder().addComponents(menuSelect);

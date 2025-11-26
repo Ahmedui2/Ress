@@ -119,7 +119,7 @@ function createSuggestionButton() {
             new ButtonBuilder()
                 .setCustomId('suggestion_button')
                 .setLabel('Suggestion')
-.setEmoji('<:emoji_10:1431078389078298686>')
+.setEmoji('<:emoji_72:1442588665913151619>')
                 .setStyle(ButtonStyle.Secondary)
         );
     return row;

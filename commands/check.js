@@ -293,7 +293,7 @@ async function showRoleActivityStats(message, role, client) {
     const warningButton = new ButtonBuilder()
         .setCustomId('send_warning')
         .setLabel('Alert')
-.setEmoji('<:emoji_6:1430836100745662554>')
+.setEmoji('<:emoji_67:1442588426066198528>')
         .setStyle(ButtonStyle.Danger);
 
     const prevButton = new ButtonBuilder()

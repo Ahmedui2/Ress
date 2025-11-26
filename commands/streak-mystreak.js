@@ -165,8 +165,8 @@ module.exports = {
                 .setTitle(' معلومات الـ Streak')
                 .setDescription('**.مابديت ستريكات بعد ، ارسل صورة باللوكت **')
                 .addFields([
-                    { name: 'Your Streak ', value: '**0**<:emoji_29:1432242213185650721>', inline: true },
-                    { name: 'Status', value: '<:emoji_30:1432242238531960913>', inline: true },
+                    { name: 'Your Streak ', value: '**ستريكك الحالي :** **<:emoji_61:1442587727387427009>**', inline: true },
+                    { name: 'Status', value: '<:emoji_60:1442587701474754760>', inline: true },
                     { name: 'Time to end', value: getTimeUntilMidnight(), inline: false }
                 ])
             
@@ -182,10 +182,10 @@ module.exports = {
         let statusText;
         let statusColor;
         if (isActiveToday) {
-            statusText = '<:emoji_28:1432242139948908564>';
+            statusText = '<:emoji_63:1442587778964525077>';
             statusColor = '#FFFFFF';
         } else {
-            statusText = '<:emoji_29:1432242189869514753>';
+            statusText = '<:emoji_64:1442587807150243932>';
             statusColor = '#FFFFFF';
         }
 

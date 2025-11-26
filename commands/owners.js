@@ -96,19 +96,19 @@ async function execute(message, args, { client, scheduleSave, BOT_OWNERS }) {
         .setCustomId('owners_add')
         .setLabel('Add owner')
         .setStyle(ButtonStyle.Success)
-        .setEmoji('<:emoji_25:1431093359140671549>');
+        .setEmoji('<:emoji_87:1442988617294413864>');
 
     const removeButton = new ButtonBuilder()
         .setCustomId('owners_remove')
         .setLabel('Delete owner')
         .setStyle(ButtonStyle.Danger)
-        .setEmoji('<:emoji_25:1431093384126398644>');
+        .setEmoji('<:emoji_88:1442988669836202086>');
 
     const listButton = new ButtonBuilder()
         .setCustomId('owners_list')
         .setLabel('list')
         .setStyle(ButtonStyle.Secondary)
-        .setEmoji('<:emoji_26:1431093421950500884>');
+        .setEmoji('<:emoji_88:1442988704481280123>');
 
     const row = new ActionRowBuilder().addComponents(addButton, removeButton, listButton);
 

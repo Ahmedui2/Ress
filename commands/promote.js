@@ -124,7 +124,7 @@ async function createPermanentMenu(client, channelId) {
                 { name: 'Unblock', value: 'إزالة منع الترقية عن إداري', inline: false },
                 { name: 'Admins active', value: 'فحص إحصائيات تفاعل الادارة قبل الترقية', inline: false }
             ])
-            .setThumbnail(client?.user?.displayAvatarURL({ size: 126 }) || 'https://cdn.discordapp.com/attachments/1373799493111386243/1400677612304470086/images__5_-removebg-preview.png?ex=688d822e&is=688c30ae&hm=1ea7a63bb89b38bcd76c0f5668984d7fc919214096a3d3ee92f5d948497fcb51&')
+            .setThumbnail(client?.user?.displayAvatarURL({ size: 128 }) || 'https://cdn.discordapp.com/attachments/1373799493111386243/1400677612304470086/images__5_-removebg-preview.png?ex=688d822e&is=688c30ae&hm=1ea7a63bb89b38bcd76c0f5668984d7fc919214096a3d3ee92f5d948497fcb51&')
             .setFooter({text :' By Ahmed'})  
             .setTimestamp();
 
@@ -135,26 +135,26 @@ async function createPermanentMenu(client, channelId) {
                 {
                     label: 'Up',
                     value: 'promote_user_or_role',
-emoji: '<:emoji_21:1431084793063538800>',
+emoji: '<:emoji_65:1442588059890614383>',
                     description: 'ترقية لاداري وإعطاؤه رول إداري لمدة محددة أو نهائياً',
                               },
                 {
                     label: 'Record',
-emoji: '<:emoji_19:1431084764349333534>',
+emoji: '<:emoji_73:1442588719201648811>',
                     value: 'promotion_records',
                     description: 'عرض تاريخ الترقيات لاداري معين',
 
                 },
                 {
                     label: 'Block',
-emoji: '<:emoji_22:1431084863586566294>',
+emoji: '<:emoji_74:1442588785266262228>',
                     value: 'ban_from_promotion',
                     description: 'منع اداري من الحصول على ترقيات',
 
                 },
                 {
                     label: 'Unblock',
-emoji: '<:emoji_22:1431084827267956816>',
+emoji: '<:emoji_76:1442588839121260756>',
                     value: 'unban_promotion',
                     description: 'إزالة حظر الترقية عن عضو',
 
@@ -162,7 +162,7 @@ emoji: '<:emoji_22:1431084827267956816>',
                 {
                     label: 'Check Admin',
                     value: 'check_admin_activity',
-emoji: '<:emoji_19:1431084718060732446>',
+emoji: '<:emoji_78:1442588950274510988>',
                     description: 'فحص إحصائيات تفاعل الادارة قبل الترقية',
                            }
             ]);
@@ -170,7 +170,7 @@ emoji: '<:emoji_19:1431084718060732446>',
         const settingsButton = new ButtonBuilder()
             .setCustomId('promote_settings_button')
             .setLabel(' Settings')
-.setEmoji('<:emoji_23:1431084907337093227>')
+.setEmoji('<:emoji_81:1442589104914305176>')
             .setStyle(ButtonStyle.Secondary);
 
         const menuRow = new ActionRowBuilder().addComponents(menuSelect);

@@ -173,7 +173,7 @@ async function createButtons(userId) {
         new ButtonBuilder()
             .setCustomId(`myprofile_avatar_${userId}`)
             .setLabel('Set Avatar')
-            .setEmoji('<:emoji_41:1434229540779069530>')
+            .setEmoji('<:emoji_52:1442587232358764658>')
             .setStyle(ButtonStyle.Primary)
     );
     
@@ -182,7 +182,7 @@ async function createButtons(userId) {
         new ButtonBuilder()
             .setCustomId(`myprofile_banner_${userId}`)
             .setLabel('Set Banner')
-            .setEmoji('<:emoji_41:1434229540779069530>')
+            .setEmoji('<:emoji_52:1442587232358764658>')
             .setStyle(ButtonStyle.Primary)
     );
     
@@ -192,7 +192,7 @@ async function createButtons(userId) {
             new ButtonBuilder()
                 .setCustomId(`myprofile_remove_avatar_${userId}`)
                 .setLabel('Remove Avatar')
-                .setEmoji('<:emoji_40:1434229479122665523>')
+                .setEmoji('<:emoji_64:1442587855447654522>')
                 .setStyle(ButtonStyle.Secondary)
         );
     }
@@ -203,7 +203,7 @@ async function createButtons(userId) {
             new ButtonBuilder()
                 .setCustomId(`myprofile_remove_banner_${userId}`)
                 .setLabel('Remove Banner')
-                .setEmoji('<:emoji_40:1434229479122665523>')
+                .setEmoji('<:emoji_64:1442587855447654522>')
                 .setStyle(ButtonStyle.Secondary)
         );
     }

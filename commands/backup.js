@@ -42,8 +42,195 @@ const FILES_TO_BACKUP = [
     'setrooms.json', 'blocked.json'
 ];
 
-// نسخ احتياطي شامل للسيرفر
-async function createBackup(guild, creatorId, backupName) {
+// دالة لإعادة المحاولة مع Exponential Backoff
+async function retryOperation(operation, maxRetries = 3, baseDelay = 1000, operationName = 'Operation Name') {
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            return await operation();
+        } catch (error) {
+            if (i === maxRetries - 1) {
+                throw error;
+            }
+            const delay = baseDelay * Math.pow(2, i);
+            console.log(`⚠️ فشل ${operationName}، إعادة المحاولة ${i + 1}/${maxRetries} بعد ${delay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
+    }
+}
+
+// دالة لتحديث مؤشر التقدم (محسّنة للسيرفرات الضخمة)
+async function updateProgress(message, title, current, total, details = '', forceUpdate = false) {
+    try {
+        // تحديث كل 5% أو عند الإجبار - لتقليل عدد الطلبات
+        const percentage = Math.round((current / total) * 100);
+        const lastPercentage = message._lastProgressPercentage || 0;
+
+        if (!forceUpdate && percentage - lastPercentage < 5 && current !== total) {
+            return; // تخطي التحديث إذا أقل من 5%
+        }
+
+        message._lastProgressPercentage = percentage;
+
+        const progressBar = '▰'.repeat(Math.floor(percentage / 5)) + '▱'.repeat(20 - Math.floor(percentage / 5));
+
+        const progressEmbed = colorManager.createEmbed()
+            .setTitle(title)
+            .setThumbnail('https://cdn.discordapp.com/attachments/1436815242024714390/1436856082646433893/hourglass.png?ex=69112001&is=690fce81&hm=ad1a68858ac5e7c4ab14bc4e51962f9eb5353809a46b958dc28f8a13e141a4f1&')
+            .setDescription(`${progressBar} ${percentage}%\n\n**Process :** ${current}/${total}\n${details}`)
+            .setFooter({ text: `Saving... | By Ahmed.` });
+
+        // محاولة تحديث الرسالة الأصلية
+        try {
+            await message.edit({ embeds: [progressEmbed] });
+        } catch (editError) {
+            // التعامل مع timeout أو interaction منتهي
+            if (editError.code === 10008 || editError.message?.includes('interaction')) {
+                try {
+                    // حفظ القناة الأصلية للتحديثات
+                    if (!message._originalChannel) {
+                        message._originalChannel = message.channel;
+                    }
+
+                    const targetChannel = message._originalChannel;
+
+                    if (targetChannel && !message._newMessageSent) {
+                        const newMessage = await targetChannel.send({ 
+                            content: '**سيستغرق هذا بعض دقائق حسب حجم السيرفر :**',
+                            embeds: [progressEmbed] 
+                        });
+                        Object.assign(message, newMessage);
+                        message._newMessageSent = true;
+                        message._originalChannel = targetChannel; // الاحتفاظ بالقناة الأصلية
+                    } else if (message._newMessageSent) {
+                        // تحديث الرسالة الجديدة
+                        await message.edit({ embeds: [progressEmbed] });
+                    }
+                } catch (sendError) {
+                    console.log('⚠️ لا يمكن إرسال تحديث التقدم - سيتم التخطي');
+                }
+            }
+        }
+    } catch (error) {
+        // تجاهل الأخطاء الأخرى بصمت
+        console.log('⚠️ خطأ في تحديث مؤشر التقدم - متابعة العملية');
+    }
+}
+
+// نسخ رسائل القناة بشكل محسن وأسرع مع Streaming
+async function backupChannelMessages(channel, maxMessages = 150) {
+    const messages = [];
+    let lastId;
+    const batchSize = 100;
+    let fetched = 0;
+
+    try {
+        while (fetched < maxMessages) {
+            const fetchLimit = Math.min(batchSize, maxMessages - fetched);
+            const options = { limit: fetchLimit };
+            if (lastId) options.before = lastId;
+
+            const batch = await retryOperation(
+                async () => await channel.messages.fetch(options),
+                2,
+                300,
+                `Fetch messages from ${channel.name}`
+            );
+
+            if (batch.size === 0) break;
+
+            // معالجة الرسائل بشكل أخف على الذاكرة
+            for (const msg of batch.values()) {
+                messages.push({
+                    id: msg.id,
+                    author: { 
+                        id: msg.author.id, 
+                        username: msg.author.username, 
+                        tag: msg.author.tag, 
+                        avatar: msg.author.avatarURL() 
+                    },
+                    content: msg.content?.substring(0, 2000) || '', // حد أقصى 2000 حرف
+                    timestamp: msg.createdTimestamp,
+                    attachments: msg.attachments.size > 0 ? msg.attachments.map(att => ({ 
+                        url: att.url, 
+                        name: att.name, 
+                        contentType: att.contentType 
+                    })).slice(0, 10) : [], // حد أقصى 10 مرفقات
+                    embeds: msg.embeds.length > 0 ? msg.embeds.slice(0, 5).map(emb => emb.toJSON()) : [] // حد أقصى 5 embeds
+                });
+            }
+
+            fetched += batch.size;
+            lastId = batch.last().id;
+
+            if (batch.size < fetchLimit) break;
+
+            // تقليل التأخير للسرعة الفائقة
+            await new Promise(resolve => setTimeout(resolve, 30));
+        }
+
+        return messages.reverse();
+    } catch (error) {
+        console.error(`فشل نسخ رسائل القناة ${channel.name}:`, error);
+        return [];
+    }
+}
+
+// نسخ Threads (محسّن بالمعالجة المتوازية الأقوى + Streaming)
+async function backupThreads(channel) {
+    const threads = [];
+    try {
+        const [activeThreads, archivedThreads] = await Promise.all([
+            retryOperation(() => channel.threads.fetchActive(), 2, 500, 'Fetch active threads').catch(() => ({ threads: new Map() })),
+            retryOperation(() => channel.threads.fetchArchived(), 2, 500, 'Fetch archived threads').catch(() => ({ threads: new Map() }))
+        ]);
+
+        const allThreads = [...activeThreads.threads.values(), ...archivedThreads.threads.values()];
+
+        // زيادة المعالجة المتوازية إلى 8 ثريدات
+        const threadBatchSize = 8;
+        for (let i = 0; i < allThreads.length; i += threadBatchSize) {
+            const batch = allThreads.slice(i, i + threadBatchSize);
+
+            const results = await Promise.allSettled(
+                batch.map(async (thread) => {
+                    try {
+                        const threadMessages = await backupChannelMessages(thread, 100); // زيادة إلى 100
+                        return {
+                            id: thread.id,
+                            name: thread.name?.substring(0, 100) || 'Unnamed Thread', // حد أقصى للاسم
+                            type: thread.type,
+                            archived: thread.archived,
+                            autoArchiveDuration: thread.autoArchiveDuration,
+                            locked: thread.locked,
+                            messages: threadMessages
+                        };
+                    } catch (err) {
+                        console.error(`فشل نسخ ثريد ${thread.name}:`, err.message);
+                        return null;
+                    }
+                })
+            );
+
+            results.forEach(result => {
+                if (result.status === 'fulfilled' && result.value !== null) {
+                    threads.push(result.value);
+                }
+            });
+
+            // تقليل التأخير للسرعة الفائقة
+            if (i + threadBatchSize < allThreads.length) {
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+        }
+    } catch (error) {
+        console.error(`فشل نسخ الثريدات للقناة ${channel.name}:`, error);
+    }
+
+    return threads;
+}
+
+// نسخ احتياطي شامل للسيرفر مع مؤشر تقدم
+async function createBackup(guild, creatorId, backupName, progressMessage = null) {
     try {
         const timestamp = Date.now();
         const backupData = {
@@ -52,7 +239,7 @@ async function createBackup(guild, creatorId, backupName) {
             createdBy: creatorId,
             createdAt: timestamp,
             name: backupName || `backup_${timestamp}`,
-            version: '2.0',
+            version: '3.0',
             data: {
                 files: {},
                 roles: [],
@@ -60,7 +247,10 @@ async function createBackup(guild, creatorId, backupName) {
                 channels: [],
                 emojis: [],
                 stickers: [],
-                messages: {}
+                messages: {},
+                threads: {},
+                bans: [],
+                members: []
             },
             stats: {
                 roles: 0,
@@ -72,11 +262,21 @@ async function createBackup(guild, creatorId, backupName) {
                 emojis: 0,
                 stickers: 0,
                 messages: 0,
-                totalMessages: 0
+                threads: 0,
+                totalMessages: 0,
+                bans: 0,
+                members: 0
             }
         };
 
-        // نسخ جميع الملفات
+        let currentStep = 0;
+        const totalSteps = 9;
+
+        // 1. نسخ الملفات
+        if (progressMessage) {
+            await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Json Copied...');
+        }
+
         for (const fileName of FILES_TO_BACKUP) {
             const filePath = path.join(dataDir, fileName);
             if (fs.existsSync(filePath)) {
@@ -88,7 +288,11 @@ async function createBackup(guild, creatorId, backupName) {
             }
         }
 
-        // نسخ الرولات بالتفصيل (مع الترتيب)
+        // 2. نسخ الرولات
+        if (progressMessage) {
+            await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Roles Copied...');
+        }
+
         const roles = Array.from(guild.roles.cache.values())
             .filter(role => !role.managed && role.id !== guild.id)
             .sort((a, b) => b.position - a.position);
@@ -108,7 +312,11 @@ async function createBackup(guild, creatorId, backupName) {
             backupData.stats.roles++;
         }
 
-        // نسخ الكاتوقريات والقنوات بالتفصيل والترتيب
+        // 3. نسخ الكاتوقريات
+        if (progressMessage) {
+            await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Channel , Categories Copied...');
+        }
+
         const categories = Array.from(guild.channels.cache.values())
             .filter(ch => ch.type === ChannelType.GuildCategory)
             .sort((a, b) => a.position - b.position);
@@ -122,7 +330,6 @@ async function createBackup(guild, creatorId, backupName) {
                 channels: []
             };
 
-            // نسخ صلاحيات الكاتوقري
             for (const [id, overwrite] of category.permissionOverwrites.cache) {
                 categoryData.permissionOverwrites.push({
                     id: overwrite.id,
@@ -132,7 +339,6 @@ async function createBackup(guild, creatorId, backupName) {
                 });
             }
 
-            // نسخ القنوات داخل الكاتوقري
             const channelsInCategory = Array.from(guild.channels.cache.values())
                 .filter(ch => ch.parentId === category.id)
                 .sort((a, b) => a.position - b.position);
@@ -151,7 +357,6 @@ async function createBackup(guild, creatorId, backupName) {
                     permissionOverwrites: []
                 };
 
-                // نسخ صلاحيات القناة
                 for (const [id, overwrite] of channel.permissionOverwrites.cache) {
                     channelData.permissionOverwrites.push({
                         id: overwrite.id,
@@ -159,40 +364,6 @@ async function createBackup(guild, creatorId, backupName) {
                         allow: overwrite.allow.bitfield.toString(),
                         deny: overwrite.deny.bitfield.toString()
                     });
-                }
-
-                // نسخ آخر 200 رسالة من القناة النصية (على دفعتين)
-                if (channel.type === ChannelType.GuildText) {
-                    try {
-                        const allMessages = [];
-                        
-                        // جلب أول 100 رسالة
-                        const firstBatch = await channel.messages.fetch({ limit: 100 });
-                        allMessages.push(...firstBatch.values());
-                        
-                        // جلب ثاني 100 رسالة إذا كانت الدفعة الأولى ممتلئة
-                        if (firstBatch.size === 100) {
-                            const lastMessageId = firstBatch.last().id;
-                            const secondBatch = await channel.messages.fetch({ limit: 100, before: lastMessageId });
-                            allMessages.push(...secondBatch.values());
-                        }
-                        
-                        backupData.data.messages[channel.id] = allMessages.map(msg => ({
-                            id: msg.id,
-                            author: { id: msg.author.id, username: msg.author.username, tag: msg.author.tag, avatar: msg.author.avatarURL() },
-                            content: msg.content,
-                            timestamp: msg.createdTimestamp,
-                            attachments: msg.attachments.map(att => ({ url: att.url, name: att.name, contentType: att.contentType })),
-                            embeds: msg.embeds.map(emb => emb.toJSON())
-                        })).reverse(); // Reverse to maintain chronological order
-                        
-                        backupData.stats.messages += allMessages.length;
-                        backupData.stats.totalMessages += allMessages.length;
-                    } catch (error) {
-                        console.error(`فشل نسخ رسائل القناة ${channel.name}:`, error);
-                        backupData.stats.messages = backupData.stats.messages || 0;
-                        backupData.stats.totalMessages = backupData.stats.totalMessages || 0;
-                    }
                 }
 
                 categoryData.channels.push(channelData);
@@ -209,7 +380,7 @@ async function createBackup(guild, creatorId, backupName) {
             backupData.stats.categories++;
         }
 
-        // نسخ القنوات خارج الكاتوقريات
+        // 4. نسخ القنوات خارج الكاتوقريات
         const channelsWithoutCategory = Array.from(guild.channels.cache.values())
             .filter(ch => !ch.parentId && ch.type !== ChannelType.GuildCategory)
             .sort((a, b) => a.position - b.position);
@@ -238,40 +409,6 @@ async function createBackup(guild, creatorId, backupName) {
                 });
             }
 
-            // نسخ آخر 200 رسالة من القناة النصية (على دفعتين)
-            if (channel.type === ChannelType.GuildText) {
-                try {
-                    const allMessages = [];
-                    
-                    // جلب أول 100 رسالة
-                    const firstBatch = await channel.messages.fetch({ limit: 100 });
-                    allMessages.push(...firstBatch.values());
-                    
-                    // جلب ثاني 100 رسالة إذا كانت الدفعة الأولى ممتلئة
-                    if (firstBatch.size === 100) {
-                        const lastMessageId = firstBatch.last().id;
-                        const secondBatch = await channel.messages.fetch({ limit: 100, before: lastMessageId });
-                        allMessages.push(...secondBatch.values());
-                    }
-                    
-                    backupData.data.messages[channel.id] = allMessages.map(msg => ({
-                        id: msg.id,
-                        author: { id: msg.author.id, username: msg.author.username, tag: msg.author.tag, avatar: msg.author.avatarURL() },
-                        content: msg.content,
-                        timestamp: msg.createdTimestamp,
-                        attachments: msg.attachments.map(att => ({ url: att.url, name: att.name, contentType: att.contentType })),
-                        embeds: msg.embeds.map(emb => emb.toJSON())
-                    })).reverse(); // Reverse to maintain chronological order
-                    
-                    backupData.stats.messages += allMessages.length;
-                    backupData.stats.totalMessages += allMessages.length;
-                } catch (error) {
-                    console.error(`فشل نسخ رسائل القناة ${channel.name}:`, error);
-                    backupData.stats.messages = backupData.stats.messages || 0;
-                    backupData.stats.totalMessages = backupData.stats.totalMessages || 0;
-                }
-            }
-
             backupData.data.channels.push(channelData);
 
             if (channel.type === ChannelType.GuildText) {
@@ -282,7 +419,79 @@ async function createBackup(guild, creatorId, backupName) {
             backupData.stats.channels++;
         }
 
-        // نسخ الإيموجيات
+        // 5. نسخ الرسائل والثريدات (محسّن للسيرفرات الكبيرة + معالجة متوازية فائقة)
+        if (progressMessage) {
+            await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Messages , Threads copied...');
+        }
+
+        const allTextChannels = Array.from(guild.channels.cache.filter(ch => ch.type === ChannelType.GuildText).values());
+        let processedChannels = 0;
+        const batchSize = 15; // زيادة إلى 15 قناة بالتوازي للسرعة الفائقة
+
+        // معالجة القنوات بدفعات متوازية أكبر لتسريع العملية
+        for (let i = 0; i < allTextChannels.length; i += batchSize) {
+            const batch = allTextChannels.slice(i, i + batchSize);
+
+            const results = await Promise.allSettled(
+                batch.map(async (channel) => {
+                    try {
+                        // نسخ الرسائل والثريدات بالتوازي
+                        const [messages, threads] = await Promise.all([
+                            backupChannelMessages(channel, 150), // زيادة إلى 150 رسالة
+                            backupThreads(channel)
+                        ]);
+
+                        return { channel, messages, threads, success: true };
+                    } catch (error) {
+                        console.error(`فشل نسخ محتوى القناة ${channel.name}:`, error.message);
+                        return { channel, success: false };
+                    }
+                })
+            );
+
+            // معالجة النتائج
+            for (const result of results) {
+                if (result.status === 'fulfilled' && result.value.success) {
+                    const { channel, messages, threads } = result.value;
+
+                    if (messages.length > 0) {
+                        backupData.data.messages[channel.id] = messages;
+                        backupData.stats.messages += messages.length;
+                        backupData.stats.totalMessages += messages.length;
+                    }
+
+                    if (threads.length > 0) {
+                        backupData.data.threads[channel.id] = threads;
+                        backupData.stats.threads += threads.length;
+                        threads.forEach(t => backupData.stats.totalMessages += (t.messages?.length || 0));
+                    }
+                }
+                processedChannels++;
+            }
+
+            // تحديث التقدم كل 5 قنوات فقط (تقليل عدد التحديثات)
+            if (progressMessage && processedChannels % 5 === 0) {
+                await updateProgress(
+                    progressMessage, 
+                    'Backup Loading', 
+                    currentStep, 
+                    totalSteps, 
+                    `Messages... (${processedChannels}/${allTextChannels.length} Channel)`,
+                    true
+                );
+            }
+
+            // تقليل التأخير للسرعة الفائقة
+            if (i + batchSize < allTextChannels.length) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+        }
+
+        // 6. نسخ الإيموجيات
+        if (progressMessage) {
+            await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Emoji Copied...');
+        }
+
         for (const emoji of guild.emojis.cache.values()) {
             backupData.data.emojis.push({
                 id: emoji.id,
@@ -294,7 +503,11 @@ async function createBackup(guild, creatorId, backupName) {
             backupData.stats.emojis++;
         }
 
-        // نسخ الملصقات
+        // 7. نسخ الملصقات (معلومات فقط)
+        if (progressMessage) {
+            await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Stickers Copied...');
+        }
+
         try {
             await guild.stickers.fetch();
             for (const sticker of guild.stickers.cache.values()) {
@@ -303,12 +516,81 @@ async function createBackup(guild, creatorId, backupName) {
                     name: sticker.name,
                     description: sticker.description,
                     tags: sticker.tags,
-                    url: sticker.url
+                    url: sticker.url,
+                    note: 'لا يمكن استعادة الستيكرز تلقائياً - معلومات فقط'
                 });
                 backupData.stats.stickers++;
             }
         } catch (err) {
             console.error('خطأ في نسخ الستيكرز:', err);
+        }
+
+        // 8. نسخ الحظر
+        if (progressMessage) {
+            await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Bans Copied...');
+        }
+
+        try {
+            const bans = await guild.bans.fetch();
+            for (const ban of bans.values()) {
+                backupData.data.bans.push({
+                    userId: ban.user.id,
+                    username: ban.user.username,
+                    tag: ban.user.tag,
+                    reason: ban.reason || 'No reason provided'
+                });
+            }
+            // تحديث الإحصائيات بعد جمع البيانات
+            backupData.stats.bans = backupData.data.bans.length;
+        } catch (err) {
+            console.error('خطأ في نسخ الحظر:', err);
+        }
+
+        // 9. نسخ رولات الأعضاء (محسّن للسيرفرات الكبيرة)
+        if (progressMessage) {
+            await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Members Roles Copied...');
+        }
+
+        try {
+            // جلب الأعضاء بالدفعات (chunks) لتجنب مشاكل الذاكرة
+            await guild.members.fetch({ limit: 1000 });
+
+            let processedMembers = 0;
+            const totalMembers = guild.members.cache.size;
+
+            for (const member of guild.members.cache.values()) {
+                if (member.user.bot) continue;
+
+                const memberRoles = member.roles.cache
+                    .filter(role => role.id !== guild.id && !role.managed)
+                    .map(role => role.id);
+
+                if (memberRoles.length > 0) {
+                    backupData.data.members.push({
+                        userId: member.user.id,
+                        username: member.user.username,
+                        tag: member.user.tag,
+                        roles: memberRoles,
+                        nickname: member.nickname
+                    });
+                }
+
+                processedMembers++;
+                // تحديث التقدم كل 1000 عضو
+                if (progressMessage && processedMembers % 1000 === 0) {
+                    await updateProgress(
+                        progressMessage, 
+                        'Backup Loading', 
+                        currentStep, 
+                        totalSteps, 
+                        `Members: ${processedMembers}/${totalMembers}`
+                    );
+                }
+            }
+            // تحديث الإحصائيات بعد جمع البيانات
+            backupData.stats.members = backupData.data.members.length;
+        } catch (err) {
+            console.error('خطأ في نسخ رولات الأعضاء:', err);
         }
 
         // نسخ معلومات السيرفر
@@ -326,6 +608,10 @@ async function createBackup(guild, creatorId, backupName) {
             systemChannelId: guild.systemChannelId,
             premiumTier: guild.premiumTier
         };
+
+        if (progressMessage) {
+            await updateProgress(progressMessage, 'Backup Loading', totalSteps, totalSteps, 'Saved...');
+        }
 
         const backupFileName = `${guild.id}_${backupName || timestamp}.json`;
         const backupFilePath = path.join(backupsDir, backupFileName);
@@ -346,8 +632,8 @@ async function createBackup(guild, creatorId, backupName) {
     }
 }
 
-// استعادة انتقائية للنسخة
-async function restoreBackup(backupFileName, guild, restoredBy, options) {
+// استعادة انتقائية للنسخة مع تحسينات
+async function restoreBackup(backupFileName, guild, restoredBy, options, progressMessage = null) {
     try {
         const backupFilePath = path.join(backupsDir, backupFileName);
         if (!fs.existsSync(backupFilePath)) {
@@ -368,11 +654,47 @@ async function restoreBackup(backupFileName, guild, restoredBy, options) {
             channelsCreated: 0,
             filesRestored: 0,
             messagesRestored: 0,
+            threadsRestored: 0,
+            bansRestored: 0,
+            memberRolesRestored: 0,
             errors: []
         };
 
+        let currentStep = 0;
+        const totalSteps = options.length;
+
+        // 🎯 STEP 1: تطبيق اسم وأيقونة وبنر السيرفر في البداية (إذا كانت الصلاحيات تسمح)
+        if (options.includes('serverinfo') && backupData.data.serverInfo) {
+            if (progressMessage) {
+                await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Server Settings Done...');
+            }
+
+            try {
+                const updates = {};
+                if (backupData.data.serverInfo.name) updates.name = backupData.data.serverInfo.name;
+                if (backupData.data.serverInfo.description) updates.description = backupData.data.serverInfo.description;
+                if (backupData.data.serverInfo.verificationLevel !== undefined) updates.verificationLevel = backupData.data.serverInfo.verificationLevel;
+                if (backupData.data.serverInfo.defaultMessageNotifications !== undefined) updates.defaultMessageNotifications = backupData.data.serverInfo.defaultMessageNotifications;
+                if (backupData.data.serverInfo.explicitContentFilter !== undefined) updates.explicitContentFilter = backupData.data.serverInfo.explicitContentFilter;
+
+                await guild.edit(updates);
+
+                // تطبيق الأيقونة والبنر بالتوازي
+                await Promise.allSettled([
+                    backupData.data.serverInfo.icon ? guild.setIcon(backupData.data.serverInfo.icon) : Promise.resolve(),
+                    backupData.data.serverInfo.banner ? guild.setBanner(backupData.data.serverInfo.banner) : Promise.resolve()
+                ]);
+            } catch (err) {
+                stats.errors.push(`فشل تطبيق معلومات السيرفر: ${err.message}`);
+            }
+        }
+
         // استعادة الملفات
         if (options.includes('files')) {
+            if (progressMessage) {
+                await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Json Loaded...');
+            }
+
             for (const [fileName, fileData] of Object.entries(backupData.data.files)) {
                 const filePath = path.join(dataDir, fileName);
                 if (saveJSON(filePath, fileData)) {
@@ -383,49 +705,104 @@ async function restoreBackup(backupFileName, guild, restoredBy, options) {
             }
         }
 
-        // إنشاء خريطة الرولات (قبل أي عملية)
+        // إنشاء خرائط للربط بين IDs القديمة والجديدة
         const roleMap = new Map();
-        
-        // استعادة الرولات
+        const channelMap = new Map();
+        const categoryMap = new Map();
+
+        // 🎯 STEP 2: استعادة الرولات (حذف بالتوازي ثم إنشاء بالترتيب)
         if (options.includes('roles')) {
+            if (progressMessage) {
+                await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Delete Roles...');
+            }
+
             const currentRoles = guild.roles.cache.filter(r => !r.managed && r.id !== guild.id);
             stats.rolesDeleted = currentRoles.size;
 
-            // حذف الرولات الحالية
-            for (const role of currentRoles.values()) {
-                try {
-                    await role.delete('استعادة من النسخة الاحتياطية');
-                    await new Promise(resolve => setTimeout(resolve, 300));
-                } catch (err) {
-                    stats.errors.push(`فشل حذف رول: ${role.name}`);
+            // حذف جميع الرولات بالتوازي
+            await Promise.allSettled(
+                Array.from(currentRoles.values()).map(role => 
+                    retryOperation(
+                        async () => await role.delete('Backup restore'),
+                        3,
+                        500,
+                        `Delete : ${role.name}`
+                    ).catch(err => {
+                        stats.errors.push(`فشل حذف رول: ${role.name}`);
+                    })
+                )
+            );
+
+            if (progressMessage) {
+                await updateProgress(progressMessage, 'Backup Loading', currentStep, totalSteps, 'Create Roles...', true);
+            }
+
+            // إنشاء الرولات بالتوازي لتسريع العملية (دفعات من 5)
+            const sortedRoles = [...backupData.data.roles].sort((a, b) => b.position - a.position);
+            const roleBatchSize = 5;
+
+            for (let i = 0; i < sortedRoles.length; i += roleBatchSize) {
+                const batch = sortedRoles.slice(i, i + roleBatchSize);
+
+                const createdRoles = await Promise.allSettled(
+                    batch.map(async (roleData) => {
+                        const newRole = await retryOperation(
+                            async () => await guild.roles.create({
+                                name: roleData.name,
+                                color: roleData.color,
+                                permissions: BigInt(roleData.permissions),
+                                hoist: roleData.hoist,
+                                mentionable: roleData.mentionable,
+                                reason: 'Backup Restore'
+                            }),
+                            3,
+                            500,
+                            `Create : ${roleData.name}`
+                        );
+                        return { roleData, newRole };
+                    })
+                );
+
+                // معالجة النتائج
+                for (const result of createdRoles) {
+                    if (result.status === 'fulfilled' && result.value) {
+                        roleMap.set(result.value.roleData.id, result.value.newRole.id);
+                        stats.rolesCreated++;
+                    } else {
+                        const roleData = batch[createdRoles.indexOf(result)];
+                        stats.errors.push(`فشل إنشاء رول: ${roleData?.name || 'unknown'}`);
+                    }
                 }
             }
 
-            await new Promise(resolve => setTimeout(resolve, 1000));
-
-            // إنشاء الرولات من النسخة بالترتيب الصحيح وبناء الخريطة
-            for (const roleData of backupData.data.roles) {
-                try {
-                    const newRole = await guild.roles.create({
-                        name: roleData.name,
-                        color: roleData.color,
-                        permissions: BigInt(roleData.permissions),
-                        hoist: roleData.hoist,
-                        mentionable: roleData.mentionable,
-                        reason: 'استعادة من النسخة الاحتياطية'
-                    });
-                    
-                    // إضافة إلى خريطة الرولات (ربط ID القديم بـ ID الجديد)
-                    roleMap.set(roleData.id, newRole.id);
-                    
-                    stats.rolesCreated++;
-                    await new Promise(resolve => setTimeout(resolve, 300));
-                } catch (err) {
-                    stats.errors.push(`فشل إنشاء رول: ${roleData.name}`);
-                }
+            // تطبيق الترتيب الصحيح للرولات بالتوازي
+            if (progressMessage) {
+                await updateProgress(progressMessage, 'Backup Loading', currentStep, totalSteps, 'Roles Position...');
             }
+
+            const finalRoles = [...backupData.data.roles].sort((a, b) => b.position - a.position);
+            await Promise.allSettled(
+                finalRoles.map(async roleData => {
+                    const newRoleId = roleMap.get(roleData.id);
+                    if (newRoleId) {
+                        try {
+                            const role = guild.roles.cache.get(newRoleId);
+                            if (role && role.position !== roleData.position) {
+                                await retryOperation(
+                                    async () => await role.setPosition(roleData.position),
+                                    2,
+                                    500,
+                                    `Position ${roleData.name}`
+                                );
+                            }
+                        } catch (err) {
+                            console.log(`تحذير: فشل ترتيب رول ${roleData.name}`);
+                        }
+                    }
+                })
+            );
         } else {
-            // إذا لم يتم اختيار استعادة الرولات، نبني الخريطة من الرولات الحالية
+            // بناء roleMap من الرولات الموجودة
             for (const roleData of backupData.data.roles) {
                 const existingRole = guild.roles.cache.find(r => r.name === roleData.name);
                 if (existingRole) {
@@ -434,70 +811,129 @@ async function restoreBackup(backupFileName, guild, restoredBy, options) {
             }
         }
 
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // بناء channelMap من القنوات الموجودة إذا لم يتم اختيار استعادة القنوات
+        if (!options.includes('channels') && !options.includes('categories')) {
+            // ربط القنوات الموجودة بأسمائها
+            for (const categoryData of backupData.data.categories) {
+                const existingCategory = guild.channels.cache.find(ch => ch.name === categoryData.name && ch.type === ChannelType.GuildCategory);
+                if (existingCategory) {
+                    categoryMap.set(categoryData.id, existingCategory.id);
+                    channelMap.set(categoryData.id, existingCategory.id);
+                }
 
-        // استعادة الكاتوقريات والقنوات
-        if (options.includes('channels') || options.includes('categories')) {
-            const currentChannels = guild.channels.cache;
-            stats.channelsDeleted = currentChannels.size;
-
-            const currentCategories = currentChannels.filter(ch => ch.type === ChannelType.GuildCategory);
-            stats.categoriesDeleted = currentCategories.size;
-
-            // حذف القنوات والكاتوقريات الحالية
-            for (const channel of currentChannels.values()) {
-                try {
-                    await channel.delete('استعادة من النسخة الاحتياطية');
-                } catch (err) {
-                    stats.errors.push(`فشل حذف قناة: ${channel.name}`);
+                for (const channelData of categoryData.channels) {
+                    const existingChannel = guild.channels.cache.find(ch => ch.name === channelData.name && ch.parentId === existingCategory?.id);
+                    if (existingChannel) {
+                        channelMap.set(channelData.id, existingChannel.id);
+                    }
                 }
             }
 
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            for (const channelData of backupData.data.channels) {
+                const existingChannel = guild.channels.cache.find(ch => ch.name === channelData.name && !ch.parentId);
+                if (existingChannel) {
+                    channelMap.set(channelData.id, existingChannel.id);
+                }
+            }
+        }
 
-            // إنشاء الكاتوقريات
-            if (options.includes('categories')) {
-                const categoryMap = new Map();
+        // 🎯 STEP 3: استعادة الكاتوقريات والقنوات (حذف بالتوازي ثم إنشاء بالترتيب)
+        if (options.includes('channels') || options.includes('categories')) {
+            if (progressMessage) {
+                await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Delete Channels , Categories...');
+            }
 
-                for (const categoryData of backupData.data.categories) {
-                    try {
+            const currentChannels = guild.channels.cache;
+            stats.channelsDeleted = currentChannels.size;
+            stats.categoriesDeleted = currentChannels.filter(ch => ch.type === ChannelType.GuildCategory).size;
+
+            // حذف جميع القنوات والكاتوقريات بالتوازي
+            await Promise.allSettled(
+                Array.from(currentChannels.values()).map(channel =>
+                    retryOperation(
+                        async () => await channel.delete('Backup Restore'),
+                        3,
+                        500,
+                        `Delete : ${channel.name}`
+                    ).catch(err => {
+                        stats.errors.push(`فشل حذف قناة: ${channel.name}`);
+                    })
+                )
+            );
+
+            if (progressMessage) {
+                await updateProgress(progressMessage, 'Backup Loading', currentStep, totalSteps, 'Create Categories...');
+            }
+
+            // إنشاء الكاتوقريات بالترتيب
+            const sortedCategories = [...backupData.data.categories].sort((a, b) => a.position - b.position);
+
+            for (const categoryData of sortedCategories) {
+                try {
                         const permissionOverwrites = categoryData.permissionOverwrites
                             .map(ow => {
+                                // إذا كان ID هو @everyone (يساوي guild.id)، احتفظ به
+                                if (ow.id === backupData.guildId || ow.type === 1) {
+                                    return {
+                                        id: ow.type === 1 ? ow.id : guild.id,
+                                        allow: BigInt(ow.allow),
+                                        deny: BigInt(ow.deny)
+                                    };
+                                }
+
+                                // للرولات، استخدم الخريطة
                                 const newRoleId = roleMap.get(ow.id);
-                                if (!newRoleId && ow.type === 0) {
-                                    return null; // تجاهل الرولات غير الموجودة
+                                if (!newRoleId) {
+                                    return null;
                                 }
                                 return {
-                                    id: ow.type === 0 ? newRoleId : ow.id,
+                                    id: newRoleId,
                                     allow: BigInt(ow.allow),
                                     deny: BigInt(ow.deny)
                                 };
                             })
                             .filter(ow => ow !== null);
 
-                        const newCategory = await guild.channels.create({
-                            name: categoryData.name,
-                            type: ChannelType.GuildCategory,
-                            position: categoryData.position,
-                            permissionOverwrites: permissionOverwrites,
-                            reason: 'استعادة من النسخة الاحتياطية'
-                        });
+                        const newCategory = await retryOperation(
+                            async () => await guild.channels.create({
+                                name: categoryData.name,
+                                type: ChannelType.GuildCategory,
+                                position: categoryData.position,
+                                permissionOverwrites: permissionOverwrites,
+                                reason: 'Backup restore'
+                            }),
+                            3,
+                            500,
+                            `Category : ${categoryData.name}`
+                        );
 
                         categoryMap.set(categoryData.id, newCategory.id);
+                        channelMap.set(categoryData.id, newCategory.id);
                         stats.categoriesCreated++;
 
                         // إنشاء القنوات داخل الكاتوقري
-                        if (options.includes('channels')) {
-                            for (const channelData of categoryData.channels) {
+                        // عند استعادة categories، يجب إعادة إنشاء القنوات أيضاً
+                        // لأن حذف category يحذف تلقائياً جميع القنوات داخله
+                        for (const channelData of categoryData.channels) {
                                 try {
                                     const channelPermOverwrites = channelData.permissionOverwrites
                                         .map(ow => {
+                                            // إذا كان ID هو @everyone (يساوي guild.id)، احتفظ به
+                                            if (ow.id === backupData.guildId || ow.type === 1) {
+                                                return {
+                                                    id: ow.type === 1 ? ow.id : guild.id,
+                                                    allow: BigInt(ow.allow),
+                                                    deny: BigInt(ow.deny)
+                                                };
+                                            }
+
+                                            // للرولات، استخدم الخريطة
                                             const newRoleId = roleMap.get(ow.id);
-                                            if (!newRoleId && ow.type === 0) {
+                                            if (!newRoleId) {
                                                 return null;
                                             }
                                             return {
-                                                id: ow.type === 0 ? newRoleId : ow.id,
+                                                id: newRoleId,
                                                 allow: BigInt(ow.allow),
                                                 deny: BigInt(ow.deny)
                                             };
@@ -510,7 +946,7 @@ async function restoreBackup(backupFileName, guild, restoredBy, options) {
                                         parent: newCategory.id,
                                         position: channelData.position,
                                         permissionOverwrites: channelPermOverwrites,
-                                        reason: 'استعادة من النسخة الاحتياطية'
+                                        reason: 'Backup Loading'
                                     };
 
                                     if (channelData.topic) channelOptions.topic = channelData.topic;
@@ -519,31 +955,51 @@ async function restoreBackup(backupFileName, guild, restoredBy, options) {
                                     if (channelData.bitrate) channelOptions.bitrate = channelData.bitrate;
                                     if (channelData.userLimit) channelOptions.userLimit = channelData.userLimit;
 
-                                    await guild.channels.create(channelOptions);
+                                    const newChannel = await retryOperation(
+                                        async () => await guild.channels.create(channelOptions),
+                                        3,
+                                        500,
+                                        `Channel :  ${channelData.name}`
+                                    );
+
+                                    channelMap.set(channelData.id, newChannel.id);
                                     stats.channelsCreated++;
                                 } catch (err) {
                                     stats.errors.push(`فشل إنشاء قناة: ${channelData.name}`);
                                 }
                             }
-                        }
                     } catch (err) {
                         stats.errors.push(`فشل إنشاء كاتوقري: ${categoryData.name}`);
                     }
                 }
-            }
 
             // إنشاء القنوات خارج الكاتوقريات
-            if (options.includes('channels')) {
+            const sortedChannels = [...backupData.data.channels].sort((a, b) => a.position - b.position);
+            if (progressMessage) {
+                await updateProgress(progressMessage, 'Backup Loading', currentStep, totalSteps, 'Channel without Categories...');
+            }
+
+            if (sortedChannels.length > 0) {
                 for (const channelData of backupData.data.channels) {
                     try {
                         const channelPermOverwrites = channelData.permissionOverwrites
                             .map(ow => {
+                                // إذا كان ID هو @everyone (يساوي guild.id)، احتفظ به
+                                if (ow.id === backupData.guildId || ow.type === 1) {
+                                    return {
+                                        id: ow.type === 1 ? ow.id : guild.id,
+                                        allow: BigInt(ow.allow),
+                                        deny: BigInt(ow.deny)
+                                    };
+                                }
+
+                                // للرولات، استخدم الخريطة
                                 const newRoleId = roleMap.get(ow.id);
-                                if (!newRoleId && ow.type === 0) {
+                                if (!newRoleId) {
                                     return null;
                                 }
                                 return {
-                                    id: ow.type === 0 ? newRoleId : ow.id,
+                                    id: newRoleId,
                                     allow: BigInt(ow.allow),
                                     deny: BigInt(ow.deny)
                                 };
@@ -555,7 +1011,7 @@ async function restoreBackup(backupFileName, guild, restoredBy, options) {
                             type: channelData.type,
                             position: channelData.position,
                             permissionOverwrites: channelPermOverwrites,
-                            reason: 'استعادة من النسخة الاحتياطية'
+                            reason: 'Backup Restore'
                         };
 
                         if (channelData.topic) channelOptions.topic = channelData.topic;
@@ -564,7 +1020,14 @@ async function restoreBackup(backupFileName, guild, restoredBy, options) {
                         if (channelData.bitrate) channelOptions.bitrate = channelData.bitrate;
                         if (channelData.userLimit) channelOptions.userLimit = channelData.userLimit;
 
-                        await guild.channels.create(channelOptions);
+                        const newChannel = await retryOperation(
+                            async () => await guild.channels.create(channelOptions),
+                            3,
+                            500,
+                            ` Channel : ${channelData.name}`
+                        );
+
+                        channelMap.set(channelData.id, newChannel.id);
                         stats.channelsCreated++;
                     } catch (err) {
                         stats.errors.push(`فشل إنشاء قناة: ${channelData.name}`);
@@ -573,117 +1036,314 @@ async function restoreBackup(backupFileName, guild, restoredBy, options) {
             }
         }
 
-        // استعادة معلومات السيرفر
-        if (options.includes('serverinfo') && backupData.data.serverInfo) {
-            try {
-                const updates = {};
-                if (backupData.data.serverInfo.name) updates.name = backupData.data.serverInfo.name;
-                if (backupData.data.serverInfo.description) updates.description = backupData.data.serverInfo.description;
-                if (backupData.data.serverInfo.verificationLevel !== undefined) updates.verificationLevel = backupData.data.serverInfo.verificationLevel;
-                if (backupData.data.serverInfo.defaultMessageNotifications !== undefined) updates.defaultMessageNotifications = backupData.data.serverInfo.defaultMessageNotifications;
-                if (backupData.data.serverInfo.explicitContentFilter !== undefined) updates.explicitContentFilter = backupData.data.serverInfo.explicitContentFilter;
-
-                await guild.edit(updates);
-
-                // تحديث الصور
-                if (backupData.data.serverInfo.icon) {
-                    try {
-                        await guild.setIcon(backupData.data.serverInfo.icon);
-                    } catch (err) {
-                        stats.errors.push('فشل تحديث أيقونة السيرفر');
-                    }
-                }
-
-                if (backupData.data.serverInfo.banner) {
-                    try {
-                        await guild.setBanner(backupData.data.serverInfo.banner);
-                    } catch (err) {
-                        stats.errors.push('فشل تحديث بنر السيرفر');
-                    }
-                }
-            } catch (err) {
-                stats.errors.push(`فشل تحديث معلومات السيرفر: ${err.message}`);
-            }
-        }
-
-        // استعادة الإيموجيز
+        // 🎯 STEP 4: استعادة الإيموجيز (حذف بالتوازي ثم إنشاء بالتوازي)
         if (options.includes('emojis')) {
-            // حذف الإيموجيز الحالية
-            for (const emoji of guild.emojis.cache.values()) {
-                try {
-                    await emoji.delete('استعادة من النسخة الاحتياطية');
-                    await new Promise(resolve => setTimeout(resolve, 300));
-                } catch (err) {
-                    stats.errors.push(`فشل حذف إيموجي: ${emoji.name}`);
-                }
+            if (progressMessage) {
+                await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Delete Emojies...');
             }
 
-            // إنشاء الإيموجيز من النسخة
-            for (const emojiData of backupData.data.emojis || []) {
-                try {
-                    await guild.emojis.create({
-                        attachment: emojiData.url,
-                        name: emojiData.name,
-                        reason: 'استعادة من النسخة الاحتياطية'
-                    });
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                } catch (err) {
-                    stats.errors.push(`فشل إنشاء إيموجي: ${emojiData.name}`);
-                }
+            // حذف جميع الإيموجيز بالتوازي
+            await Promise.allSettled(
+                Array.from(guild.emojis.cache.values()).map(emoji =>
+                    retryOperation(
+                        async () => await emoji.delete('Backup Restore'),
+                        2,
+                        500,
+                        ` Emoji : ${emoji.name}`
+                    ).catch(err => {
+                        stats.errors.push(`فشل حذف إيموجي: ${emoji.name}`);
+                    })
+                )
+            );
+
+            if (progressMessage) {
+                await updateProgress(progressMessage, 'Backup Loading', currentStep, totalSteps, 'Create Emoji...');
+            }
+
+            // إنشاء الإيموجيز بالتوازي (مع تحديد batch size لتجنب rate limiting)
+            const batchSize = 5;
+            for (let i = 0; i < (backupData.data.emojis || []).length; i += batchSize) {
+                const batch = (backupData.data.emojis || []).slice(i, i + batchSize);
+                await Promise.allSettled(
+                    batch.map(emojiData =>
+                        retryOperation(
+                            async () => await guild.emojis.create({
+                                attachment: emojiData.url,
+                                name: emojiData.name,
+                                reason: 'Backup restore'
+                            }),
+                            3,
+                            500,
+                            ` Emoji : ${emojiData.name}`
+                        ).catch(err => {
+                            stats.errors.push(`فشل إنشاء إيموجي: ${emojiData.name}`);
+                        })
+                    )
+                );
             }
         }
 
-        // استعادة الستيكرز
-        if (options.includes('stickers')) {
-            // حذف الستيكرز الحالية
-            for (const sticker of guild.stickers.cache.values()) {
-                try {
-                    await sticker.delete('استعادة من النسخة الاحتياطية');
-                    await new Promise(resolve => setTimeout(resolve, 300));
-                } catch (err) {
-                    stats.errors.push(`فشل حذف ستيكر: ${sticker.name}`);
-                }
-            }
-
-            // Discord API لا يسمح بإنشاء الستيكرز من البوتات بشكل مباشر
-            // يمكن فقط حفظ معلوماتها للمراجعة
-            stats.errors.push('⚠️ الستيكرز محفوظة في النسخة لكن لا يمكن استعادتها تلقائياً');
-        }
-
-        // الانتظار 5 دقائق قبل استعادة الرسائل
+        // 🎯 STEP 5: استعادة الرسائل والثريدات (بالتوازي)
         if (options.includes('messages')) {
-            await new Promise(resolve => setTimeout(resolve, 5 * 60 * 1000)); // 5 دقائق
+            if (progressMessage) {
+                await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Send Messages , Threads...');
+            }
 
-            const allChannels = guild.channels.cache.filter(ch => ch.type === ChannelType.GuildText);
-            
-            for (const [oldChannelId, messages] of Object.entries(backupData.data.messages || {})) {
-                // البحث عن القناة بالاسم (لأن الـ ID سيتغير)
-                const channel = allChannels.find(ch => {
-                    const backupChannel = backupData.data.categories
-                        .flatMap(cat => cat.channels)
-                        .concat(backupData.data.channels)
-                        .find(c => c.id === oldChannelId);
-                    return backupChannel && ch.name === backupChannel.name;
-                });
+            // استعادة الرسائل بالتوازي (batch processing)
+            const messageChannels = Object.entries(backupData.data.messages || {});
+            const channelBatchSize = 3;
 
-                if (channel && messages && messages.length > 0) {
-                    for (const messageData of messages) {
-                        try {
-                            const content = messageData.content || '';
-                            const embeds = messageData.embeds || [];
-                            
-                            if (content || embeds.length > 0) {
-                                await channel.send({
-                                    content: content,
-                                    embeds: embeds
-                                });
-                                stats.messagesRestored++;
-                                await new Promise(resolve => setTimeout(resolve, 1000));
+            for (let i = 0; i < messageChannels.length; i += channelBatchSize) {
+                const batch = messageChannels.slice(i, i + channelBatchSize);
+
+                await Promise.allSettled(
+                    batch.map(async ([oldChannelId, messages]) => {
+                        const newChannelId = channelMap.get(oldChannelId);
+                        const channel = newChannelId ? guild.channels.cache.get(newChannelId) : null;
+
+                        if (channel && channel.type === ChannelType.GuildText && messages && messages.length > 0) {
+                            for (const messageData of messages) {
+                                try {
+                                    const content = messageData.content || '';
+                                    const embeds = messageData.embeds || [];
+
+                                    if (content || embeds.length > 0) {
+                                        // تحديد اسم المرسل
+                                        let senderName = 'Unknown User';
+                                        if (messageData.author && messageData.author.id) {
+                                            try {
+                                                // محاولة جلب العضو من السيرفر
+                                                const member = await guild.members.fetch(messageData.author.id).catch(() => null);
+                                                if (member) {
+                                                    // العضو موجود - استخدام المنشن
+                                                    senderName = `<@${messageData.author.id}>`;
+                                                } else {
+                                                    // العضو غير موجود - استخدام النكنيم العام (global_name)
+                                                    senderName = messageData.author.global_name || messageData.author.username || messageData.author.tag || `User#${messageData.author.id}`;
+                                                }
+                                            } catch (error) {
+                                                // فشل الجلب - استخدام النكنيم العام
+                                                senderName = messageData.author.global_name || messageData.author.username || messageData.author.tag || `User#${messageData.author.id}`;
+                                            }
+                                        }
+
+                                        // بناء الرسالة مع معلومات المرسل
+                                        const messageContent = `**From :** ${senderName}\n${content}`;
+
+                                        await retryOperation(
+                                            async () => await channel.send({
+                                                content: messageContent,
+                                                embeds: embeds
+                                            }),
+                                            2,
+                                            1000,
+                                            'Send Message '
+                                        );
+                                        stats.messagesRestored++;
+                                    }
+                                } catch (error) {
+                                    console.error(`فشل إرسال رسالة في ${channel.name}`);
+                                }
                             }
-                        } catch (error) {
-                            stats.errors.push(`فشل إرسال رسالة في ${channel.name}`);
                         }
+                    })
+                );
+            }
+
+            // استعادة الثريدات بالتوازي
+            const threadChannels = Object.entries(backupData.data.threads || {});
+
+            for (let i = 0; i < threadChannels.length; i += channelBatchSize) {
+                const batch = threadChannels.slice(i, i + channelBatchSize);
+
+                await Promise.allSettled(
+                    batch.map(async ([oldChannelId, threads]) => {
+                        const newChannelId = channelMap.get(oldChannelId);
+                        const channel = newChannelId ? guild.channels.cache.get(newChannelId) : null;
+
+                        if (channel && channel.type === ChannelType.GuildText && threads && threads.length > 0) {
+                            for (const threadData of threads) {
+                                try {
+                                    const thread = await retryOperation(
+                                        async () => await channel.threads.create({
+                                            name: threadData.name,
+                                            autoArchiveDuration: threadData.autoArchiveDuration,
+                                            reason: 'Backup Loading'
+                                        }),
+                                        2,
+                                        1000,
+                                        ` Threads.: ${threadData.name}`
+                                    );
+
+                                    for (const msgData of threadData.messages || []) {
+                                        try {
+                                            const content = msgData.content || '';
+                                            const embeds = msgData.embeds || [];
+
+                                            if (content || embeds.length > 0) {
+                                                // تحديد اسم المرسل
+                                                let senderName = 'Unknown User';
+                                                if (msgData.author && msgData.author.id) {
+                                                    try {
+                                                        // محاولة جلب العضو من السيرفر
+                                                        const member = await guild.members.fetch(msgData.author.id).catch(() => null);
+                                                        if (member) {
+                                                            // العضو موجود - استخدام المنشن
+                                                            senderName = `<@${msgData.author.id}>`;
+                                                        } else {
+                                                            // العضو غير موجود - استخدام النكنيم العام (global_name)
+                                                            senderName = msgData.author.global_name || msgData.author.username || msgData.author.tag || `User#${msgData.author.id}`;
+                                                        }
+                                                    } catch (error) {
+                                                        // فشل الجلب - استخدام النكنيم العام
+                                                        senderName = msgData.author.global_name || msgData.author.username || msgData.author.tag || `User#${msgData.author.id}`;
+                                                    }
+                                                }
+
+                                                // بناء الرسالة مع معلومات المرسل
+                                                const messageContent = `**From :** ${senderName}\n${content}`;
+
+                                                await thread.send({
+                                                    content: messageContent,
+                                                    embeds: embeds
+                                                });
+                                            }
+                                        } catch (error) {
+                                            console.error(`فشل إرسال رسالة في ثريد ${thread.name}`);
+                                        }
+                                    }
+
+                                    if (threadData.archived) {
+                                        await thread.setArchived(true);
+                                    }
+
+                                    stats.threadsRestored++;
+                                } catch (error) {
+                                    console.error(`فشل إنشاء ثريد ${threadData.name}:`, error);
+                                }
+                            }
+                        }
+                    })
+                );
+            }
+        }
+
+        // استعادة الحظر - مطابقة القائمة بالضبط
+        if (options.includes('bans')) {
+            if (progressMessage) {
+                await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Bans Loading...');
+            }
+
+            // جلب الباندات الحالية
+            const currentBans = await guild.bans.fetch();
+            const backupBanIds = new Set((backupData.data.bans || []).map(b => b.userId));
+            const currentBanIds = new Set(currentBans.keys());
+
+            // فك الحظر عن المستخدمين المحظورين حالياً ومش موجودين في النسخة
+            for (const bannedUserId of currentBanIds) {
+                if (!backupBanIds.has(bannedUserId)) {
+                    try {
+                        await guild.members.unban(bannedUserId, 'Backup restore - إزالة باند غير موجود في النسخة');
+                    } catch (err) {
+                        stats.errors.push(`فشل فك حظر ${bannedUserId}: ${err.message}`);
                     }
+                }
+            }
+
+            // حظر المستخدمين الموجودين في النسخة ومش محظورين حالياً
+            for (const banData of backupData.data.bans || []) {
+                if (!currentBanIds.has(banData.userId)) {
+                    try {
+                        await guild.members.ban(banData.userId, {
+                            reason: `Backup restore: ${banData.reason}`
+                        });
+                        stats.bansRestored++;
+                    } catch (err) {
+                        stats.errors.push(`فشل حظر ${banData.username}: ${err.message}`);
+                    }
+                } else {
+                    stats.bansRestored++;
+                }
+            }
+        }
+
+        // استعادة رولات الأعضاء (محسّن للسيرفرات الكبيرة + معالجة فائقة السرعة)
+        if (options.includes('memberroles') && backupData.data.members && backupData.data.members.length > 0) {
+            if (progressMessage) {
+                await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Members Roles Loading...');
+            }
+
+            await guild.members.fetch({ limit: 1000 });
+
+            const totalMembers = backupData.data.members.length;
+            let processedCount = 0;
+            const batchSize = 20; // زيادة إلى 20 عضو بالتوازي
+
+            // معالجة الأعضاء بالدفعات الكبيرة لتسريع العملية
+            for (let i = 0; i < backupData.data.members.length; i += batchSize) {
+                const batch = backupData.data.members.slice(i, i + batchSize);
+
+                const results = await Promise.allSettled(
+                    batch.map(async (memberData) => {
+                        try {
+                            const member = guild.members.cache.get(memberData.userId);
+                            if (!member) return { success: false };
+
+                            const rolesToAdd = memberData.roles
+                                .map(oldRoleId => roleMap.get(oldRoleId))
+                                .filter(newRoleId => newRoleId && guild.roles.cache.has(newRoleId));
+
+                            if (rolesToAdd.length > 0) {
+                                await retryOperation(
+                                    async () => await member.roles.add(rolesToAdd),
+                                    2,
+                                    300,
+                                    `Add roles to ${memberData.username}`
+                                );
+                            }
+
+                            // تطبيق النكنيم بدون retry (غير حرج)
+                            if (memberData.nickname) {
+                                try {
+                                    await member.setNickname(memberData.nickname);
+                                } catch (err) {
+                                    // تجاهل أخطاء النكنيم
+                                }
+                            }
+
+                            return { success: true };
+                        } catch (err) {
+                            return { success: false, error: err.message, username: memberData.username };
+                        }
+                    })
+                );
+
+                // معالجة النتائج
+                for (const result of results) {
+                    if (result.status === 'fulfilled' && result.value.success) {
+                        stats.memberRolesRestored++;
+                    } else if (result.status === 'fulfilled' && result.value.error) {
+                        stats.errors.push(`فشل استعادة رولات ${result.value.username}: ${result.value.error}`);
+                    }
+                }
+
+                processedCount += batch.length;
+
+                // تحديث التقدم كل 50 عضو (تقليل التحديثات)
+                if (progressMessage && processedCount % 50 === 0) {
+                    await updateProgress(
+                        progressMessage, 
+                        'Backup Loading', 
+                        currentStep, 
+                        totalSteps, 
+                        `Members Roles: ${processedCount}/${totalMembers}`,
+                        true
+                    );
+                }
+
+                // تقليل الانتظار إلى 300ms لتسريع العملية
+                if (i + batchSize < backupData.data.members.length) {
+                    await new Promise(resolve => setTimeout(resolve, 300));
                 }
             }
         }
@@ -727,7 +1387,6 @@ function getBackupsForGuild(guildId) {
     }
 }
 
-// جلب جميع النسخ الاحتياطية المتوفرة
 function getAllBackups() {
     try {
         const backupFiles = fs.readdirSync(backupsDir).filter(file =>
@@ -775,34 +1434,30 @@ module.exports = {
 
         if (!isOwner && !isServerOwner) {
             const errorEmbed = colorManager.createEmbed()
-                .setDescription('❌ **هذا الأمر متاح للمالكين فقط**');
+                .setDescription('❌ **من الميانه بس**');
             return message.channel.send({ embeds: [errorEmbed] });
         }
 
         const mainEmbed = colorManager.createEmbed()
-            .setTitle('🗄️ نظام النسخ الاحتياطي الشامل')
-            .setDescription('**اختر العملية المطلوبة:**\n\n' +
-                '**إنشاء** - نسخ احتياطي شامل (رولات، قنوات، كاتوقريات، ملفات، رسائل)\n' +
-                '**تنفيذ** - استعادة انتقائية من نسخة احتياطية\n' +
-                '**عرض** - عرض قائمة النسخ المتاحة\n\n' +
-                '⚠️ **تحذير:** الاستعادة ستحذف البيانات الحالية المحددة!')
-            .setThumbnail(client.user.displayAvatarURL());
+            .setTitle('Backup System')
+            .setDescription('**اختر ماتريد**')
+            .setThumbnail('https://cdn.discordapp.com/attachments/1436815242024714390/1436852524224348160/cloud-sync.png?ex=69111cb1&is=690fcb31&hm=92bf5525fbc9000c7628d22b886e75836a249599b3dad22fcbc78089fb956a1b&');
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId('backup_create')
-                .setLabel('إنشاء نسخة')
-                .setEmoji('📥')
-                .setStyle(ButtonStyle.Success),
+                .setLabel('Copy')
+                .setEmoji('<:emoji_5:1436850367785734144>')
+                .setStyle(ButtonStyle.Secondary),
             new ButtonBuilder()
                 .setCustomId('backup_restore')
-                .setLabel('تنفيذ نسخة')
-                .setEmoji('📤')
-                .setStyle(ButtonStyle.Primary),
+                .setLabel('Paste')
+                .setEmoji('<:emoji_5:1436850396047081686>')
+                .setStyle(ButtonStyle.Secondary),
             new ButtonBuilder()
                 .setCustomId('backup_list')
-                .setLabel('عرض النسخ')
-                .setEmoji('📋')
+                .setLabel('Your Backups')
+                .setEmoji('<:emoji_8:1436850506008891632>')
                 .setStyle(ButtonStyle.Secondary)
         );
 
@@ -810,27 +1465,36 @@ module.exports = {
 
         const collector = msg.createMessageComponentCollector({
             filter: i => i.user.id === message.author.id,
-            time: 600000
+            time: 86400000 // 24 ساعة بدلاً من 10 دقائق
         });
 
         collector.on('collect', async interaction => {
+            // فحص سريع وتأجيل فوري
+            try {
+                // تأجيل التفاعل فوراً (ماعدا المودال و backup_create)
+                if (!interaction.customId.includes('modal') && interaction.customId !== 'backup_create') {
+                    await interaction.deferUpdate().catch(() => {});
+                }
+            } catch (error) {
+                return; // تجاهل الأخطاء والخروج
+            }
+
             if (interaction.customId === 'backup_create') {
                 const modal = new ModalBuilder()
                     .setCustomId('backup_create_modal')
-                    .setTitle('إنشاء نسخة احتياطية شاملة');
+                    .setTitle('Backup Settings');
 
                 const nameInput = new TextInputBuilder()
                     .setCustomId('backup_name')
                     .setLabel('اسم النسخة (اختياري)')
                     .setStyle(TextInputStyle.Short)
                     .setRequired(false)
-                    .setPlaceholder('مثال: نسخة_قبل_التحديث');
+                    .setPlaceholder('مثال : Aa Backup');
 
                 modal.addComponents(new ActionRowBuilder().addComponents(nameInput));
                 await interaction.showModal(modal);
 
             } else if (interaction.customId === 'backup_restore') {
-                // جلب جميع النسخ الاحتياطية المتوفرة
                 const allBackups = getAllBackups();
 
                 if (allBackups.length === 0) {
@@ -842,20 +1506,20 @@ module.exports = {
 
                 const options = allBackups.map(backup => ({
                     label: backup.name,
-                    description: `${backup.guildName || 'سيرفر'} | ${new Date(backup.createdAt).toLocaleString('ar-SA')}`,
+                    description: `${backup.guildName || 'سيرفر'} | ${new Date(backup.createdAt).toLocaleString('en-US')}`,
                     value: backup.fileName
                 })).slice(0, 25);
 
                 const selectMenu = new StringSelectMenuBuilder()
                     .setCustomId('backup_select_restore')
-                    .setPlaceholder('اختر نسخة للاستعادة')
+                    .setPlaceholder('Choose')
                     .addOptions(options);
 
                 const selectEmbed = colorManager.createEmbed()
-                    .setTitle('📤 اختر نسخة للاستعادة')
-                    .setDescription(`**عدد النسخ المتوفرة:** ${allBackups.length}\n\n⚠️ سيتم عرض خيارات الاستعادة بعد الاختيار\n💡 يمكنك استرجاع نسخ من أي سيرفر`);
+                    .setTitle('Choose Your Backup')
+                    .setDescription(`**عدد النسخ :** ${allBackups.length}`);
 
-                await interaction.update({
+                await interaction.editReply({
                     embeds: [selectEmbed],
                     components: [new ActionRowBuilder().addComponents(selectMenu)]
                 });
@@ -864,45 +1528,184 @@ module.exports = {
                 const backups = getAllBackups();
 
                 if (backups.length === 0) {
-                    return interaction.reply({
-                        content: '❌ **لا توجد نسخ احتياطية**',
-                        ephemeral: true
-                    });
+                    return interaction.editReply({
+                        embeds: [colorManager.createEmbed().setDescription('❌ **لا توجد نسخ احتياطية**')],
+                        components: []
+                    }).catch(() => {});
+                }
+
+                const currentPage = 0;
+                const backup = backups[currentPage];
+
+                if (!backup) {
+                    return interaction.editReply({ 
+                        embeds: [colorManager.createEmbed().setDescription('❌ خطأ في تحميل البيانات')],
+                        components: []
+                    }).catch(() => {});
                 }
 
                 let listText = '';
-                backups.forEach((backup, index) => {
-                    listText += `**${index + 1}.** ${backup.name}\n`;
-                    listText += `   🏰 ${backup.guildName || 'سيرفر غير معروف'}\n`;
-                    listText += `   📅 ${new Date(backup.createdAt).toLocaleString('ar-SA')}\n`;
-                    listText += `   👤 <@${backup.createdBy}>\n`;
-                    listText += `   📊 ${backup.stats.roles} رول | ${backup.stats.categories} كاتوقري | ${backup.stats.channels} قناة | ${backup.stats.messages || 0} رسالة\n\n`;
-                });
+                listText += `**${backup.name}**\n\n`;
+                listText += `**Server :** ${backup.guildName || 'سيرفر غير معروف'}\n\n`;
+                listText += `**Time :** ${new Date(backup.createdAt).toLocaleString('en-US')}\n\n`;
+                listText += `**By :** <@${backup.createdBy}>\n\n`;
+                listText += `**Stats :**\n`;
+                listText += `• Roles : ${backup.stats.roles}\n`;
+                listText += `• Categories : ${backup.stats.categories}\n`;
+                listText += `• Channels : ${backup.stats.channels}\n`;
+                listText += `• Messages : ${backup.stats.messages || 0}\n`;
+                listText += `• Threads : ${backup.stats.threads || 0}\n`;
+                listText += `• Bans : ${backup.stats.bans || 0}\n`;
+                listText += `• Members : ${backup.stats.members || 0}\n\n`;
 
                 const listEmbed = colorManager.createEmbed()
-                    .setTitle('📋 قائمة النسخ الاحتياطية')
+                    .setTitle('Backup List')
                     .setDescription(listText)
-                    .setFooter({ text: `إجمالي: ${backups.length} نسخة | من جميع السيرفرات` });
+                    .setThumbnail('https://cdn.discordapp.com/attachments/1436815242024714390/1436853023539466352/cloud-storage.png?ex=69111d28&is=690fcba8&hm=456ed697389164d0ac1b8abd05577c39fa2e4c09fd22af2c38a7621c75470530&')
+                    .setFooter({ text: `Page ${currentPage + 1}/${backups.length} | By Ahmed.` });
+
+                const navigationRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('backup_page_prev')
+                        .setLabel('Previous')
+                        .setEmoji('<:emoji_13:1436828682978332845>')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(currentPage === 0),
+                    new ButtonBuilder()
+                        .setCustomId('backup_page_next')
+                        .setLabel('Next')
+                        .setEmoji('<:emoji_14:1429263186539974708>')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(currentPage === backups.length - 1)
+                );
 
                 const actionRow = new ActionRowBuilder().addComponents(
                     new ButtonBuilder()
                         .setCustomId('backup_delete')
-                        .setLabel('حذف نسخة')
-                        .setEmoji('🗑️')
-                        .setStyle(ButtonStyle.Danger),
+                        .setLabel('Delete Backup')
+                        .setEmoji('<:emoji_2:1436850308780265615>')
+                        .setStyle(ButtonStyle.Secondary),
                     new ButtonBuilder()
                         .setCustomId('backup_back')
-                        .setLabel('رجوع')
+                        .setLabel('Back')
+                        .setEmoji('<:emoji_31:1436828703517573283>')
                         .setStyle(ButtonStyle.Secondary)
                 );
 
-                await interaction.update({ embeds: [listEmbed], components: [actionRow] });
+                if (!global.backupListPage) global.backupListPage = new Map();
+                global.backupListPage.set(interaction.user.id, currentPage);
+
+                try {
+                    await interaction.editReply({ 
+                        embeds: [listEmbed], 
+                        components: [navigationRow, actionRow] 
+                    });
+                } catch (error) {
+                    // إذا فشل editReply، استخدم followUp
+                    await interaction.followUp({ 
+                        embeds: [listEmbed], 
+                        components: [navigationRow, actionRow],
+                        ephemeral: true
+                    }).catch(() => {});
+                }
+
+            } else if (interaction.customId === 'backup_page_prev' || interaction.customId === 'backup_page_next') {
+                if (!global.backupListPage) global.backupListPage = new Map();
+
+                let currentPage = global.backupListPage.get(interaction.user.id) || 0;
+                const backups = getAllBackups();
+                
+                if (backups.length === 0) {
+                    return interaction.editReply({ 
+                        embeds: [colorManager.createEmbed().setDescription('❌ لا توجد نسخ احتياطية')],
+                        components: []
+                    }).catch(() => {});
+                }
+
+                if (interaction.customId === 'backup_page_prev' && currentPage > 0) {
+                    currentPage--;
+                } else if (interaction.customId === 'backup_page_next' && currentPage < backups.length - 1) {
+                    currentPage++;
+                } else {
+                    return; // لا تفعل شيء إذا في أول/آخر صفحة
+                }
+
+                global.backupListPage.set(interaction.user.id, currentPage);
+
+                const backup = backups[currentPage];
+                if (!backup) {
+                    return interaction.followUp({ 
+                        content: '❌ خطأ في تحميل النسخة', 
+                        ephemeral: true 
+                    }).catch(() => {});
+                }
+
+                let listText = '';
+                listText += `**${backup.name}**\n\n`;
+                listText += `**Server :** ${backup.guildName || 'سيرفر غير معروف'}\n\n`;
+                listText += `**Time :** ${new Date(backup.createdAt).toLocaleString('en-US')}\n\n`;
+                listText += `**By :** <@${backup.createdBy}>\n\n`;
+                listText += `**Stats :**\n`;
+                listText += `• Roles : ${backup.stats.roles}\n`;
+                listText += `• Categories : ${backup.stats.categories}\n`;
+                listText += `• Channels : ${backup.stats.channels}\n`;
+                listText += `• Messages : ${backup.stats.messages || 0}\n`;
+                listText += `• Threads : ${backup.stats.threads || 0}\n`;
+                listText += `• Bans : ${backup.stats.bans || 0}\n`;
+                listText += `• Members : ${backup.stats.members || 0}\n\n`;
+
+                const listEmbed = colorManager.createEmbed()
+                    .setTitle('Backup List')
+                    .setDescription(listText)
+                    .setThumbnail('https://cdn.discordapp.com/attachments/1436815242024714390/1436853023539466352/cloud-storage.png?ex=69111d28&is=690fcba8&hm=456ed697389164d0ac1b8abd05577c39fa2e4c09fd22af2c38a7621c75470530&')
+                    .setFooter({ text: `Page ${currentPage + 1}/${backups.length} | By Ahmed.` });
+
+                const navigationRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('backup_page_prev')
+                        .setLabel('Previous')
+                        .setEmoji('<:emoji_13:1436828682978332845>')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(currentPage === 0),
+                    new ButtonBuilder()
+                        .setCustomId('backup_page_next')
+                        .setLabel('Next')
+                        .setEmoji('<:emoji_14:1429263186539974708>')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(currentPage === backups.length - 1)
+                );
+
+                const actionRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('backup_delete')
+                        .setLabel('Delete Backup')
+                        .setEmoji('<:emoji_2:1436850308780265615>')
+                        .setStyle(ButtonStyle.Secondary),
+                    new ButtonBuilder()
+                        .setCustomId('backup_back')
+                        .setLabel('Back')
+                        .setEmoji('<:emoji_31:1436828703517573283>')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+
+                try {
+                    await interaction.editReply({ 
+                        embeds: [listEmbed], 
+                        components: [navigationRow, actionRow] 
+                    });
+                } catch (error) {
+                    await interaction.followUp({ 
+                        embeds: [listEmbed], 
+                        components: [navigationRow, actionRow],
+                        ephemeral: true
+                    }).catch(() => {});
+                }
 
             } else if (interaction.customId === 'backup_delete') {
                 const backups = getAllBackups();
                 const options = backups.map(backup => ({
                     label: backup.name,
-                    description: `${backup.guildName || 'سيرفر'} | ${new Date(backup.createdAt).toLocaleString('ar-SA')}`,
+                    description: `${backup.guildName || 'Server'} | ${new Date(backup.createdAt).toLocaleString('en-US')}`,
                     value: backup.fileName
                 })).slice(0, 25);
 
@@ -911,52 +1714,61 @@ module.exports = {
                     .setPlaceholder('اختر نسخة للحذف')
                     .addOptions(options);
 
-                await interaction.update({
-                    embeds: [colorManager.createEmbed().setTitle('🗑️ حذف نسخة احتياطية')],
+                await interaction.editReply({
+                    embeds: [colorManager.createEmbed().setTitle('Backup Deleted')],
                     components: [new ActionRowBuilder().addComponents(selectMenu)]
                 });
 
             } else if (interaction.customId === 'backup_back') {
-                await interaction.update({ embeds: [mainEmbed], components: [row] });
+                if (global.backupListPage) {
+                    global.backupListPage.delete(interaction.user.id);
+                }
+                await interaction.editReply({ embeds: [mainEmbed], components: [row] });
 
             } else if (interaction.customId === 'backup_select_restore') {
                 const selectedFile = interaction.values[0];
                 const backupData = readJSON(path.join(backupsDir, selectedFile));
 
                 const optionsEmbed = colorManager.createEmbed()
-                    .setTitle('📦 اختر العناصر للاستعادة')
-                    .setDescription('**حدد ما تريد استعادته من النسخة:**\n\n' +
-                        `**الملفات:** ${backupData.stats.files} ملف\n` +
-                        `**الرولات:** ${backupData.stats.roles} رول\n` +
-                        `**الكاتوقريات:** ${backupData.stats.categories} كاتوقري\n` +
-                        `**القنوات:** ${backupData.stats.channels} قناة\n` +
-                        `**الرسائل:** ${backupData.stats.messages} رسالة\n\n` +
-                        '⚠️ **سيتم حذف العناصر الحالية المحددة واستبدالها**');
+                    .setTitle('Choose What You Need')
+                    .setThumbnail('https://cdn.discordapp.com/attachments/1436815242024714390/1436853578731094047/data-transfer.png?ex=69111dac&is=690fcc2c&hm=af1c37b8ee32f4ec00b45aeb7adfd7df30765861ee3efae994b78b12e0377339&')
+                    .setDescription('**حدد ما تريد استعادته من النسخة :**\n\n' +
+                        `**Json :** ${backupData.stats.files} ملف\n` +
+                        `**Roles :** ${backupData.stats.roles} رول\n` +
+                        `**Categories :** ${backupData.stats.categories} كاتوقري\n` +
+                        `**Channels :** ${backupData.stats.channels} روم\n` +
+                        `**Messages :** ${backupData.stats.messages} رسالة\n` +
+                        `**Threads :** ${backupData.stats.threads || 0} ثريد\n` +
+                        `**Bans :** ${backupData.stats.bans || 0} حظر\n` +
+                        `**Members Roles :** ${backupData.stats.members || 0} عضو\n\n` +
+                        '⚠️ **Current Choose Will Deleted**');
 
                 const selectOptions = new StringSelectMenuBuilder()
                     .setCustomId(`backup_options_${selectedFile}`)
-                    .setPlaceholder('اختر العناصر للاستعادة')
+                    .setPlaceholder('Backup Options')
                     .setMinValues(1)
-                    .setMaxValues(8)
+                    .setMaxValues(9)
                     .addOptions([
-                        { label: 'معلومات السيرفر', value: 'serverinfo', description: 'الاسم، الصورة، البنر' },
-                        { label: 'الملفات', value: 'files', description: `${backupData.stats.files} ملف` },
-                        { label: 'الرولات', value: 'roles', description: `${backupData.stats.roles} رول` },
-                        { label: 'الكاتوقريات', value: 'categories', description: `${backupData.stats.categories} كاتوقري` },
-                        { label: 'القنوات', value: 'channels', description: `${backupData.stats.channels} قناة` },
-                        { label: 'الإيموجيز', value: 'emojis', description: `${backupData.stats.emojis} إيموجي` },
-                        { label: 'الستيكرز', value: 'stickers', description: `${backupData.stats.stickers} ستيكر` },
-                        { label: 'الرسائل', value: 'messages', description: `${backupData.stats.messages || 0} رسالة` }
+                        { label: 'Server Settings', value: 'serverinfo', description: 'الاسم ، الصورة ، البنر ' },
+                        { label: 'Json', value: 'files', description: `${backupData.stats.files} ملف` },
+                        { label: 'Roles', value: 'roles', description: `${backupData.stats.roles} رول` },
+                        { label: 'Categories', value: 'categories', description: `${backupData.stats.categories} كاتوقري` },
+                        { label: 'Channels', value: 'channels', description: `${backupData.stats.channels} روم` },
+                        { label: 'Emojis', value: 'emojis', description: `${backupData.stats.emojis} إيموجي` },
+                        { label: 'Messages,Threads', value: 'messages', description: `${backupData.stats.messages || 0} رسالة + ${backupData.stats.threads || 0} ثريد` },
+                        { label: 'Bans', value: 'bans', description: `${backupData.stats.bans || 0} حظر` },
+                        { label: 'Members Roles', value: 'memberroles', description: `${backupData.stats.members || 0} عضو` }
                     ]);
 
-                await interaction.update({
+                await interaction.editReply({
                     embeds: [optionsEmbed],
                     components: [
                         new ActionRowBuilder().addComponents(selectOptions),
                         new ActionRowBuilder().addComponents(
                             new ButtonBuilder()
                                 .setCustomId('backup_cancel')
-                                .setLabel('إلغاء')
+                                .setLabel('Cancel')
+                                .setEmoji('<:emoji_2:1436850308780265615>')
                                 .setStyle(ButtonStyle.Secondary)
                         )
                     ]
@@ -972,38 +1784,41 @@ module.exports = {
                 const currentCategories = currentGuild.channels.cache.filter(ch => ch.type === ChannelType.GuildCategory).size;
                 const currentChannels = currentGuild.channels.cache.size;
 
-                let statsText = '**📊 إحصائيات الاستعادة:**\n\n';
+                let statsText = '**Stats :**\n\n';
 
                 if (selectedOptions.includes('serverinfo')) {
-                    statsText += `🏰 **معلومات السيرفر:** سيتم تحديث الاسم والصورة والبنر\n\n`;
+                    statsText += ` **Serverinfo :**سيتم تحديث الاسم والصورة والبنر\n\n`;
                 }
                 if (selectedOptions.includes('files')) {
-                    statsText += `📄 **الملفات:** سيتم استعادة ${backupData.stats.files} ملف\n\n`;
+                    statsText += ` **Json :** سيتم استعادة ${backupData.stats.files} ملف\n\n`;
                 }
                 if (selectedOptions.includes('roles')) {
-                    statsText += `👔 **الرولات:**\n- سيتم حذف: ${currentRoles} رول\n- سيتم إنشاء: ${backupData.stats.roles} رول\n\n`;
+                    statsText += ` **Roles:**\n- سيتم حذف : ${currentRoles} رول\n- سيتم إنشاء : ${backupData.stats.roles} رول\n\n`;
                 }
                 if (selectedOptions.includes('categories')) {
-                    statsText += `📁 **الكاتوقريات:**\n- سيتم حذف: ${currentCategories} كاتوقري\n- سيتم إنشاء: ${backupData.stats.categories} كاتوقري\n\n`;
+                    statsText += ` **Categories:**\n- سيتم حذف : ${currentCategories} كاتوقري\n- سيتم إنشاء : ${backupData.stats.categories} كاتوقري\n\n`;
                 }
                 if (selectedOptions.includes('channels')) {
-                    statsText += `📺 **القنوات:**\n- سيتم حذف: ${currentChannels} قناة\n- سيتم إنشاء: ${backupData.stats.channels} قناة\n\n`;
+                    statsText += ` **Channels :**\n- سيتم حذف : ${currentChannels} روم\n- سيتم إنشاء : ${backupData.stats.channels} روم\n\n`;
                 }
                 if (selectedOptions.includes('emojis')) {
-                    statsText += `😀 **الإيموجيز:** سيتم إنشاء ${backupData.stats.emojis} إيموجي\n\n`;
-                }
-                if (selectedOptions.includes('stickers')) {
-                    statsText += `🎨 **الستيكرز:** ${backupData.stats.stickers} ستيكر (معلومات فقط)\n\n`;
+                    statsText += ` **Emojis:** سيتم إنشاء : ${backupData.stats.emojis} إيموجي\n\n`;
                 }
                 if (selectedOptions.includes('messages')) {
-                    statsText += `💬 **الرسائل:** سيتم استعادة ${backupData.stats.messages || 0} رسالة (بعد 5 دقائق)\n\n`;
+                    statsText += ` **Messages:** سيتم استعادة : ${backupData.stats.messages || 0} رسالة + ${backupData.stats.threads || 0} ثريد \n\n`;
+                }
+                if (selectedOptions.includes('bans')) {
+                    statsText += ` **Bans:** سيتم حظر : ${backupData.stats.bans || 0} مستخدم\n\n`;
+                }
+                if (selectedOptions.includes('memberroles')) {
+                    statsText += ` **Members Roles:** سيتم استعادة رولات : ${backupData.stats.members || 0} عضو\n\n`;
                 }
 
                 const confirmEmbed = colorManager.createEmbed()
-                    .setTitle('⚠️ تأكيد الاستعادة')
+                    .setTitle('Confirm Restore')
+                    .setThumbnail('https://cdn.discordapp.com/attachments/1436815242024714390/1436854129791340724/hourglass_1.png?ex=69111e30&is=690fccb0&hm=81b3a4c95fc8d391b044c3b03f74874e8f2b6c741d7574e2a84827714f306241&')
                     .setDescription(statsText + '\n**هل أنت متأكد من المتابعة؟**');
 
-                // حفظ البيانات مؤقتاً في Map لتجنب مشكلة طول customId
                 const confirmId = `conf_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                 if (!global.backupConfirmData) global.backupConfirmData = new Map();
                 global.backupConfirmData.set(confirmId, { fileName: selectedFile, options: selectedOptions });
@@ -1011,18 +1826,19 @@ module.exports = {
                 const confirmRow = new ActionRowBuilder().addComponents(
                     new ButtonBuilder()
                         .setCustomId(confirmId)
-                        .setLabel('تأكيد الاستعادة')
+                        .setLabel('Confirm')
+                    .setEmoji('<:emoji_1:1436850272734285856>')
                         .setStyle(ButtonStyle.Danger),
                     new ButtonBuilder()
                         .setCustomId('backup_cancel')
-                        .setLabel('إلغاء')
+                        .setLabel('Cancel')
+                    .setEmoji('<:emoji_1:1436850215154880553>')
                         .setStyle(ButtonStyle.Secondary)
                 );
 
-                await interaction.update({ embeds: [confirmEmbed], components: [confirmRow] });
+                await interaction.editReply({ embeds: [confirmEmbed], components: [confirmRow] });
 
             } else if (interaction.customId.startsWith('conf_')) {
-                // استرجاع البيانات من Map
                 const confirmData = global.backupConfirmData?.get(interaction.customId);
                 if (!confirmData) {
                     return interaction.reply({ content: '❌ انتهت صلاحية هذا الطلب، الرجاء المحاولة مرة أخرى', ephemeral: true });
@@ -1030,32 +1846,35 @@ module.exports = {
 
                 const fileName = confirmData.fileName;
                 const options = confirmData.options;
-                
-                // حذف البيانات بعد الاستخدام
+
                 global.backupConfirmData.delete(interaction.customId);
 
-                await interaction.deferUpdate();
-                await interaction.editReply({
-                    embeds: [colorManager.createEmbed().setDescription('⏳ **جاري الاستعادة... قد يستغرق هذا عدة دقائق**')],
+                const progressEmbed = colorManager.createEmbed()
+                    .setDescription(' **جاري الاستعادة... قد يستغرق هذا عدة دقائق**')
+                .setThumbnail('https://cdn.discordapp.com/attachments/1436815242024714390/1436854129791340724/hourglass_1.png?ex=69111e30&is=690fccb0&hm=81b3a4c95fc8d391b044c3b03f74874e8f2b6c741d7574e2a84827714f306241&');
+
+                const progressMsg = await interaction.editReply({
+                    embeds: [progressEmbed],
                     components: []
                 });
 
-                const result = await restoreBackup(fileName, message.guild, interaction.user.id, options);
+                const result = await restoreBackup(fileName, message.guild, interaction.user.id, options, progressMsg);
 
                 if (result.success) {
-                    let successText = '✅ **تم استعادة النسخة بنجاح!**\n\n';
+                    let successText = '✅ **Done!**\n\n';
 
-                    if (options.includes('serverinfo')) successText += `🏰 تم تحديث معلومات السيرفر\n`;
-                    if (options.includes('files')) successText += `📄 الملفات: ${result.stats.filesRestored}\n`;
-                    if (options.includes('roles')) successText += `👔 الرولات: حذف ${result.stats.rolesDeleted} | إنشاء ${result.stats.rolesCreated}\n`;
-                    if (options.includes('categories')) successText += `📁 الكاتوقريات: حذف ${result.stats.categoriesDeleted} | إنشاء ${result.stats.categoriesCreated}\n`;
-                    if (options.includes('channels')) successText += `📺 القنوات: حذف ${result.stats.channelsDeleted} | إنشاء ${result.stats.channelsCreated}\n`;
-                    if (options.includes('emojis')) successText += `😀 تم استعادة الإيموجيز\n`;
-                    if (options.includes('stickers')) successText += `🎨 معلومات الستيكرز محفوظة\n`;
-                    if (options.includes('messages')) successText += `💬 الرسائل: ${result.stats.messagesRestored} (تم الإرسال بعد 5 دقائق)\n`;
+                    if (options.includes('serverinfo')) successText += `Serveinfo Done ✅️\n`;
+                    if (options.includes('files')) successText += `Json Done : ${result.stats.filesRestored}\n`;
+                    if (options.includes('roles')) successText += ` Roles Deleted : ${result.stats.rolesDeleted} | Created : ${result.stats.rolesCreated}\n`;
+                    if (options.includes('categories')) successText += ` Categories Deleted : ${result.stats.categoriesDeleted} | Created : ${result.stats.categoriesCreated}\n`;
+                    if (options.includes('channels')) successText += ` Channel Deleted : ${result.stats.channelsDeleted} | Created : ${result.stats.channelsCreated}\n`;
+                    if (options.includes('emojis')) successText += `Done Paste Emojis\n`;
+                    if (options.includes('messages')) successText += ` Messages : ${result.stats.messagesRestored}\nThreads : ${result.stats.threadsRestored}\n`;
+                    if (options.includes('bans')) successText += ` Bans Restored : ${result.stats.bansRestored}\n`;
+                    if (options.includes('memberroles')) successText += ` Members Roles Restored : ${result.stats.memberRolesRestored}\n`;
 
                     if (result.stats.errors.length > 0) {
-                        successText += `\n⚠️ **تحذيرات:** ${result.stats.errors.slice(0, 5).join('\n')}`;
+                        successText += `\n⚠️ **Warns :** ${result.stats.errors.slice(0, 5).join('\n')}`;
                         if (result.stats.errors.length > 5) {
                             successText += `\n... و ${result.stats.errors.length - 5} خطأ آخر`;
                         }
@@ -1066,12 +1885,12 @@ module.exports = {
                     logEvent(client, message.guild, {
                         type: 'BOT_SETTINGS',
                         title: 'استعادة نسخة احتياطية',
-                        description: `تم استعادة: ${options.join(', ')}`,
+                        description: ` Done : ${options.join(', ')}`,
                         user: interaction.user
                     });
                 } else {
                     await interaction.editReply({
-                        embeds: [colorManager.createEmbed().setDescription(`❌ **فشل:** ${result.error}`)]
+                        embeds: [colorManager.createEmbed().setDescription(`❌ **Failed :** ${result.error}`)]
                     });
                 }
 
@@ -1080,59 +1899,24 @@ module.exports = {
                 const result = deleteBackup(selectedFile);
 
                 if (result.success) {
-                    await interaction.update({
-                        embeds: [colorManager.createEmbed().setDescription('✅ **تم حذف النسخة**')],
+                    await interaction.editReply({
+                        embeds: [colorManager.createEmbed().setDescription('✅ **Backup Deleted**')],
                         components: []
                     });
-                    setTimeout(() => interaction.message.edit({ embeds: [mainEmbed], components: [row] }), 2000);
+                    setTimeout(async () => {
+                        try {
+                            await interaction.editReply({ embeds: [mainEmbed], components: [row] });
+                        } catch (e) {}
+                    }, 2000);
                 } else {
-                    await interaction.update({
+                    await interaction.editReply({
                         embeds: [colorManager.createEmbed().setDescription(`❌ ${result.error}`)],
                         components: []
                     });
                 }
 
             } else if (interaction.customId === 'backup_cancel') {
-                await interaction.update({ embeds: [mainEmbed], components: [row] });
-            }
-        });
-
-        client.on('interactionCreate', async interaction => {
-            if (!interaction.isModalSubmit() || interaction.customId !== 'backup_create_modal') return;
-            if (interaction.user.id !== message.author.id) return;
-
-            await interaction.deferReply({ ephemeral: true });
-
-            const backupName = interaction.fields.getTextInputValue('backup_name') || `backup_${Date.now()}`;
-            await interaction.editReply({ embeds: [colorManager.createEmbed().setDescription('⏳ **جاري إنشاء النسخة...**')] });
-
-            const result = await createBackup(message.guild, interaction.user.id, backupName);
-
-            if (result.success) {
-                const successEmbed = colorManager.createEmbed()
-                    .setTitle('✅ تم إنشاء النسخة بنجاح')
-                    .addFields([
-                        { name: 'الاسم', value: result.data.name, inline: true },
-                        { name: 'الملفات', value: result.data.stats.files.toString(), inline: true },
-                        { name: 'الرولات', value: result.data.stats.roles.toString(), inline: true },
-                        { name: 'الكاتوقريات', value: result.data.stats.categories.toString(), inline: true },
-                        { name: 'القنوات', value: result.data.stats.channels.toString(), inline: true },
-                        { name: 'الرسائل', value: (result.data.stats.messages || 0).toString(), inline: true },
-                        { name: 'الحجم', value: `${(JSON.stringify(result.data).length / 1024).toFixed(2)} KB`, inline: true }
-                    ]);
-
-                await interaction.editReply({ embeds: [successEmbed] });
-
-                logEvent(client, message.guild, {
-                    type: 'BOT_SETTINGS',
-                    title: 'إنشاء نسخة احتياطية شاملة',
-                    description: result.data.name,
-                    user: interaction.user
-                });
-            } else {
-                await interaction.editReply({
-                    embeds: [colorManager.createEmbed().setDescription(`❌ **فشل:** ${result.error}`)]
-                });
+                await interaction.editReply({ embeds: [mainEmbed], components: [row] });
             }
         });
 
@@ -1141,3 +1925,94 @@ module.exports = {
         });
     }
 };
+
+// معالج عام لمودال الباكب (خارج execute لتجنب التكرار)
+let modalHandlerRegistered = false;
+
+function registerBackupModalHandler(client) {
+    if (modalHandlerRegistered) return;
+    
+    client.on('interactionCreate', async interaction => {
+        if (!interaction.isModalSubmit() || interaction.customId !== 'backup_create_modal') return;
+        
+        // فحص صلاحية التفاعل
+        if (!interaction.isRepliable()) return;
+        
+        // فحص إذا تم الرد مسبقاً
+        if (interaction.replied || interaction.deferred) return;
+        
+        // فحص عمر التفاعل
+        const interactionAge = Date.now() - interaction.createdTimestamp;
+        if (interactionAge > 180000) return; // 3 دقائق
+        
+        try {
+            await interaction.deferReply({ ephemeral: true });
+
+            const backupName = interaction.fields.getTextInputValue('backup_name') || `backup_${Date.now()}`;
+
+            const progressEmbed = colorManager.createEmbed()
+                .setDescription('**جاري إنشاء النسخة...**')
+                .setThumbnail('https://cdn.discordapp.com/attachments/1436815242024714390/1436854129791340724/hourglass_1.png?ex=69111e30&is=690fccb0&hm=81b3a4c95fc8d391b044c3b03f74874e8f2b6c741d7574e2a84827714f306241&');
+
+            const progressMsg = await interaction.editReply({ embeds: [progressEmbed] });
+
+            const result = await createBackup(interaction.guild, interaction.user.id, backupName, progressMsg);
+
+            if (result.success) {
+                const successEmbed = colorManager.createEmbed()
+                    .setTitle('✅ Complete Backup')
+                    .setThumbnail('https://cdn.discordapp.com/attachments/1436815242024714390/1436854853333946579/server-check.png?ex=69111edc&is=690fcd5c&hm=d0b1e25e195ca633c6251ec68c4fd080aa369be0b2e78de7c5727614cfa47d32&')
+                    .addFields([
+                        { name: 'Settings', value: result.data.name, inline: true },
+                        { name: 'Json', value: result.data.stats.files.toString(), inline: true },
+                        { name: 'Roles', value: result.data.stats.roles.toString(), inline: true },
+                        { name: 'Categories', value: result.data.stats.categories.toString(), inline: true },
+                        { name: 'Channel', value: result.data.stats.channels.toString(), inline: true },
+                        { name: 'Messages', value: (result.data.stats.messages || 0).toString(), inline: true },
+                        { name: 'Threads', value: (result.data.stats.threads || 0).toString(), inline: true },
+                        { name: 'Bans', value: (result.data.stats.bans || 0).toString(), inline: true },
+                        { name: 'Members Roles', value: (result.data.stats.members || 0).toString(), inline: true },
+                        { name: 'File', value: `${(JSON.stringify(result.data).length / 1024).toFixed(2)} Kb`, inline: true }
+                    ]);
+
+                await interaction.editReply({ embeds: [successEmbed] });
+
+                const { logEvent } = require('../utils/logs_system.js');
+                logEvent(client, interaction.guild, {
+                    type: 'BOT_SETTINGS',
+                    title: 'Create Backup',
+                    description: result.data.name,
+                    user: interaction.user
+                });
+            } else {
+                await interaction.editReply({
+                    embeds: [colorManager.createEmbed().setDescription(`❌ **فشل:** ${result.error}`)]
+                });
+            }
+        } catch (error) {
+            // تجاهل أخطاء Discord المعروفة
+            if (error.code === 10062 || error.code === 40060 || error.code === 10008) {
+                console.log('تم تجاهل خطأ معروف في backup_create_modal');
+                return;
+            }
+            
+            console.error('❌ خطأ في معالجة مودال backup_create:', error);
+            
+            try {
+                if (!interaction.replied && !interaction.deferred) {
+                    await interaction.reply({
+                        content: '❌ حدث خطأ في إنشاء النسخة الاحتياطية',
+                        ephemeral: true
+                    }).catch(() => {});
+                }
+            } catch (replyError) {
+                // تجاهل أخطاء الرد
+            }
+        }
+    });
+    
+    modalHandlerRegistered = true;
+    console.log('✅ تم تسجيل معالج backup_create_modal');
+}
+
+module.exports.registerBackupModalHandler = registerBackupModalHandler;

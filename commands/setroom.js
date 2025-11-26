@@ -952,13 +952,13 @@ function createSetupMenus(guild, guildConfig) {
                 {
                     label: 'Doaa',
                     description: 'طلب روم دعاء',
-                    emoji: '<:emoji_5:1430777863363100775>',
+                    emoji: '<:emoji_83:1442589607639126046>',
                     value: 'condolence',
                 },
                 {
                     label: 'Birthday ',
                     description: 'طلب روم ميلاد',
-                    emoji: '<:emoji_4:1430777429235994725>',
+                    emoji: '<:emoji_84:1442589686987227328>',
                     value: 'birthday',
                 }
             ])
@@ -971,7 +971,7 @@ function createSetupMenus(guild, guildConfig) {
             {
                 label: '0',
                 description: 'إزالة جميع الألوان',
-emoji: '<:emoji_38:1433868123483803708>',
+emoji: '<:emoji_60:1442587668306329733>',
                 value: 'remove_all_colors',
                 
             }
@@ -984,7 +984,7 @@ emoji: '<:emoji_38:1433868123483803708>',
                 colorOptions.push({
                     label: `${index}`,
                     description: role.hexColor,
-emoji: '<:emoji_38:1433868023617552384>',
+emoji: '<:emoji_51:1442585157516398722>',
                     value: roleId
                 });
                 index++;

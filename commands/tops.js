@@ -412,7 +412,7 @@ async function execute(message, args, { client }) {
             const streak = pageStreaks[i];
             const globalRank = startIndex + i + 1;
             const isActiveToday = streak.last_post_date === today;
-            const statusEmoji = isActiveToday ? '<:emoji_28:1432242139948908564>' : '<:emoji_29:1432242189869514753>';
+            const statusEmoji = isActiveToday ? '<:emoji_64:1442587855447654522>' : '<:emoji_63:1442587778964525077>';
             const fireEmojis = '🔥'.repeat(Math.min(Math.floor(streak.current_streak / 5) + 1, 3));
             
             description += `**#${globalRank} -** <@${streak.user_id}> **${streak.current_streak}** Status : ${statusEmoji}\n`;
@@ -421,7 +421,7 @@ async function execute(message, args, { client }) {
         embed.setTitle('**Top Streak**')
             .setDescription(description.trim())
             .addFields([
-                { name: '\u200b', value: '<:emoji_28:1432242139948908564> Active  •  <:emoji_29:1432242189869514753> Not Active', inline: false }
+                { name: '\u200b', value: '<:emoji_63:1442587778964525077> Active  •  <:emoji_64:1442587855447654522> Not Active', inline: false }
             ])
             .setFooter({ text: `الصفحة ${currentPage + 1} من ${totalPages} • إجمالي ${allStreaks.length} عضو ؛` });
         
@@ -501,11 +501,11 @@ async function execute(message, args, { client }) {
         .setCustomId('tops_category_select')
         .setPlaceholder('اختر القسم...')
         .addOptions([
-            { label: 'voice', value: 'voice', description: 'توب الفويس', emoji: '<:emoji_1:1430777062662209608>' },
+            { label: 'voice', value: 'voice', description: 'توب الفويس', emoji: '<:emoji_94:1443104810089054239>' },
             { label: 'chat', value: 'chat', description: 'توب الشات', emoji: '<:emoji_17:1429266743309893682>' },
             { label: 'reactions', value: 'reactions', description: 'توب الرياكتات', emoji: '<:emoji_19:1429266802239602830>' },
             { label: 'joins', value: 'joins', description: 'توب الجوين فويس', emoji: '<:emoji_53:1430791989959594094>' },
-            { label: 'Streaks', value: 'streaks', description: 'توب الستريك', emoji: '<:emoji_32:1432260412073705503>' }
+            { label: 'Streaks', value: 'streaks', description: 'توب الستريك', emoji: '<:emoji_59:1442587611574308884>' }
         ]);
 
     const selectRow = new ActionRowBuilder().addComponents(categorySelect);

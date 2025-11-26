@@ -98,7 +98,7 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
             .setThumbnail(user.displayAvatarURL({ dynamic: true }))
             .addFields(
                 { 
-                    name: '# <:emoji:1428954859989635163> **Voice**', 
+                    name: '# <:emoji_85:1442986413510627530> **Voice**', 
                     value: '** **', 
                     inline: false 
                 },
@@ -118,7 +118,7 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
                     inline: true 
                 },
                 { 
-                    name: '# <:emoji:1428954858278617169> **Chat**', 
+                    name: '# <:emoji_85:1442986444712054954> **Chat**', 
                     value: '** **', 
                     inline: false 
                 },
@@ -220,7 +220,7 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
                     .setThumbnail(user.displayAvatarURL({ dynamic: true }))
                     .addFields(
                         { 
-                            name: '# <:emoji:1428954859989635163> **Voice**', 
+                            name: '# <:emoji_85:1442986413510627530> **Voice**', 
                             value: '** **', 
                             inline: false 
                         },
@@ -240,7 +240,7 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
                             inline: true 
                         },
                         { 
-                            name: '# <:emoji:1428954858278617169> **Chat**', 
+                            name: '# <:emoji_85:1442986444712054954> **Chat**', 
                             value: '** **', 
                             inline: false 
                         },

@@ -339,12 +339,12 @@ async function sendStreakWarnings(client) {
                         await user.send({
                             embeds: [colorManager.createEmbed()
                                 .setTitle('Streak Warn')
-                                .setDescription(`سوف تخسر سلسلة الـ Streak الخاصة بك **${userStreak.current_streak}** يوم عند منتصف الليل!\n\n**أرسل صورة في ${channelMention} خلال الساعة القادمة للحفاظ على الـ Streak!**`)
+                                .setDescription(`سوف تخسر سلسلة الـ Streak الخاصة بك **${userStreak.current_streak}** <:emoji_64:1442587807150243932> يوم عند منتصف الليل!\n\n**أرسل صورة في ${channelMention} خلال الساعة القادمة للحفاظ على الـ Streak!**`)
                                 .addFields([
                                     { name: ' الوقت المتبقي', value: getTimeUntilMidnight(), inline: true },
-                                    { name: 'Your Streak', value: `${userStreak.current_streak} <:emoji_28:1432242139948908564>`, inline: true }
+                                    { name: 'Your Streak', value: `${userStreak.current_streak} <:emoji_61:1442587727387427009>`, inline: true }
                                 ])
-                                .setColor('#FFA500')
+                                .setColor('#FFFFFF')
                                 .setFooter({ text: 'Streak System ' })]
                         });
                         console.log(`⚠️ تم إرسال تحذير للمستخدم ${userStreak.user_id}`);
@@ -402,7 +402,7 @@ async function checkStreakExpiration(client) {
                         await user.send({
                             embeds: [colorManager.createEmbed()
                                 .setTitle('Streak Ended')
-                                .setDescription(`لقد خسرت سلسلة الـ Streak التي دامت **${userStreak.current_streak}** <:emoji_28:1432242139948908564>.\n\n**السبب :** لم تقم بإرسال صورة خلال يوم\n\n**يمكنك طلب استعادة الـ Streak من المسؤولين**`)
+                                .setDescription(`لقد خسرت سلسلة الـ Streak التي دامت **${userStreak.current_streak}** <:emoji_61:1442587727387427009>.\n\n**السبب :** لم تقم بإرسال صورة خلال يوم\n\n**يمكنك طلب استعادة الـ Streak من المسؤولين**`)
                                 .addFields([
                                     { name: 'Last Pic', value: userStreak.last_post_date, inline: true },
                                     { name: 'Time to end', value: now.format('YYYY-MM-DD HH:mm:ss'), inline: true }
@@ -559,9 +559,9 @@ async function handleLockedRoomMessage(message, client, botOwners) {
         try {
             let dmEmbed = colorManager.createEmbed()
                 .setTitle('** Streak Update**')
-                .setDescription(`الـ Streak الخاص بك : **${newStreakCount}** ${newStreakCount === 1 ? '<:emoji_29:1432242213185650721>' : '<:emoji_29:1432242213185650721>'}\n\n**حافظ على السلسلة بإرسال صورة يومياً قبل منتصف الليل**`)
+                .setDescription(`الـ Streak الخاص بك : **${newStreakCount}** ${newStreakCount === 1 ? '<:emoji_64:1442587807150243932>' : '<:emoji_64:1442587807150243932>'}\n\n**حافظ على السلسلة بإرسال صورة يومياً قبل منتصف الليل**`)
                 .addFields([
-                    { name: 'Your Streak ', value: `**${newStreakCount}**<:emoji_28:1432242139948908564>`, inline: true },
+                    { name: 'Your Streak ', value: `**${newStreakCount}**<:emoji_61:1442587727387427009>`, inline: true },
                     { name: 'Until New day', value: getTimeUntilMidnight(), inline: true }
                 ])
                 
@@ -569,7 +569,7 @@ async function handleLockedRoomMessage(message, client, botOwners) {
 
             if (shouldResetStreak && userStreak) {
                 dmEmbed.setColor('#FFFFFF')
-                    .setDescription(`تم إعادة تعيين الـ Streak\n\n**السبب :** لم تنشر في اليوم السابق\n**الستريك السابق :** ${userStreak.current_streak} <:emoji_29:1432242213185650721>\n**`);
+                    .setDescription(`تم إعادة تعيين الـ Streak\n\n**السبب :** لم تنشر في اليوم السابق\n**الستريك السابق :** ${userStreak.current_streak} <:emoji_63:1442587778964525077>\n**`);
             }
 
             await message.author.send({ embeds: [dmEmbed] });
@@ -592,7 +592,7 @@ async function createDivider(channel, user, settings, guildId, userMessageIds = 
             new ButtonBuilder()
                 .setCustomId(`streak_delete_${user.id}`)
                 .setLabel('Delete Pic')
-.setEmoji('<:emoji_33:1432266641353478235>')
+.setEmoji('<:emoji_64:1442587855447654522>')
                 .setStyle(ButtonStyle.Secondary)
         );
 
@@ -766,7 +766,7 @@ async function handleRestoreRequest(interaction, client, botOwners) {
                     await approver.send({
                         embeds: [colorManager.createEmbed()
                             .setTitle('**طلب استعادة Streak**')
-                            .setDescription(`العضو <@${userId}> يطلب استعادة سلسلة الـ Streak.\n\n**السلسلة السابقة :** ${userStreak.longest_streak} <:emoji_29:1432242213185650721>`)
+                            .setDescription(`العضو <@${userId}> يطلب استعادة سلسلة الـ Streak.\n\n**السلسلة السابقة :** ${userStreak.longest_streak} <:emoji_60:1442587701474754760>`)
                             
                             .setFooter({ text: 'Streak System' })],
                         components: [approveButtons]
@@ -835,7 +835,7 @@ async function handleApproveRestore(interaction, client) {
             await user.send({
                 embeds: [colorManager.createEmbed()
                     .setTitle('**تمت الموافقة على استعادة الـ Streak**')
-                    .setDescription(`تم استعادة سلسلة الـ Streak الخاصة بك: **${request.previous_streak}** <:emoji_28:1432242139948908564>.\n\n**استمر في إرسال الصور يومياً**`)
+                    .setDescription(`تم استعادة سلسلة الـ Streak الخاصة بك: **${request.previous_streak}** <:emoji_61:1442587727387427009>.\n\n**استمر في إرسال الصور يومياً**`)
                     .setColor('#FFFFFF')
                     .setFooter({ text: 'Streak System' })]
             });

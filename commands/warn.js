@@ -111,19 +111,19 @@ async function createPermanentMenu(client, channelId) {
             .addOptions([
                 {
                     label: 'Warn',
-                    emoji: '<:emoji_34:1433524938647539812>',
+                    emoji: '<:emoji_56:1442587524265541745>',
                     value: 'give_warning',
                     description: 'إعطاء تحذير لعضو'
                 },
                 {
                     label: 'Records',
-                    emoji: '<:emoji_36:1433525826389016719>',
+                    emoji: '<:emoji_57:1442587551021006898>',
                     value: 'view_records',
                     description: 'عرض سجل تحذيرات الأعضاء'
                 },
                 {
                     label: 'Statistics',
-                    emoji: '<:emoji_35:1433525030029103236>',
+                    emoji: '<:emoji_55:1442587493596663911>',
                     value: 'view_statistics',
                     description: 'عرض إحصائيات التحذيرات'
                 }
@@ -132,7 +132,7 @@ async function createPermanentMenu(client, channelId) {
         const settingsButton = new ButtonBuilder()
             .setCustomId('warn_settings_button')
             .setLabel('Settings')
-            .setEmoji('<:emoji_37:1433526909102461022>')
+            .setEmoji('<:emoji_73:1442588750579503224>')
             .setStyle(ButtonStyle.Secondary);
 
         const menuRow = new ActionRowBuilder().addComponents(menuSelect);
