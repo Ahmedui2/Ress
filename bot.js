@@ -154,6 +154,9 @@ const client = new Client({
   partials: [Partials.Channel, Partials.Message, Partials.Reaction]
 });
 
+// تعريف client كمتغير عام للوصول من الأنظمة الأخرى
+global.client = client;
+
 // استخدام نظام المهام النشطة من masoul.js
 if (!client.activeTasks) {
   client.activeTasks = new Map();
@@ -300,6 +303,27 @@ try {
   }
 } catch (error) {
   console.error('❌ خطأ في تسجيل معالجات setroom:', error);
+}
+
+// تسجيل معالجات نظام التذاكر (settings menus)
+try {
+  const ticketSettingsCommand = require('./commands/settings.js');
+  if (ticketSettingsCommand.registerHandlers) {
+    ticketSettingsCommand.registerHandlers(client);
+    console.log('✅ تم تسجيل معالجات نظام التذاكر (settings)');
+  }
+} catch (error) {
+  console.error('❌ خطأ في تسجيل معالجات نظام التذاكر:', error);
+}
+
+// تسجيل معالج مودال الباكب
+try {
+  const backupCommand = require('./commands/backup.js');
+  if (backupCommand.registerBackupModalHandler) {
+    backupCommand.registerBackupModalHandler(client);
+  }
+} catch (error) {
+  console.error('❌ خطأ في تسجيل معالج backup:', error);
 }
 
 let isDataDirty = false;
@@ -629,6 +653,7 @@ client.once(Events.ClientReady, async () => {
         console.error('❌ توقف البوت بسبب فشل تهيئة قاعدة البيانات');
         return;
     }
+
 
     // تهيئة نظام تتبع الجلسات الصوتية (إذا لم يكن موجود)
     if (!client.voiceSessions) {
