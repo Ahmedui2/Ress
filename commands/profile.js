@@ -126,21 +126,18 @@ function getStreakData(guildId, userId) {
     });
 }
 
-// Helper function to get daily rank
-function getDailyRank(userId) {
+// Helper function to get total rank (from user_totals - the real leaderboard)
+function getTotalRank(userId) {
     return new Promise((resolve, reject) => {
         const db = new sqlite3.Database(mainDbPath);
-        const moment = require('moment-timezone');
-        const today = moment().tz('Asia/Riyadh').format('YYYY-MM-DD');
         
-        // Get voice rank
+        // Get voice rank from total voice time
         db.all(`
-            SELECT user_id, SUM(voice_time) as voice_time
-            FROM daily_activity 
-            WHERE date = ?
-            GROUP BY user_id
-            ORDER BY voice_time DESC
-        `, [today], (err, voiceRows) => {
+            SELECT user_id, total_voice_time as voice_time
+            FROM user_totals 
+            WHERE total_voice_time > 0
+            ORDER BY total_voice_time DESC
+        `, [], (err, voiceRows) => {
             if (err) {
                 db.close();
                 reject(err);
@@ -149,14 +146,13 @@ function getDailyRank(userId) {
             
             const voiceRank = voiceRows.findIndex(u => u.user_id === userId) + 1;
             
-            // Get chat rank
+            // Get chat rank from total messages
             db.all(`
-                SELECT user_id, SUM(messages) as messages
-                FROM daily_activity 
-                WHERE date = ?
-                GROUP BY user_id
-                ORDER BY messages DESC
-            `, [today], (err, chatRows) => {
+                SELECT user_id, total_messages as messages
+                FROM user_totals 
+                WHERE total_messages > 0
+                ORDER BY total_messages DESC
+            `, [], (err, chatRows) => {
                 db.close();
                 if (err) {
                     reject(err);
@@ -634,28 +630,49 @@ async function execute(message, args, { client }) {
             return;
         }
 
-        const targetUser = message.mentions.users.first() || message.author;
+        // دعم المنشن أو الآي دي
+        let targetUser = message.mentions.users.first();
+        
+        // إذا لم يكن هناك منشن، تحقق من الآي دي
+        if (!targetUser && args[0]) {
+            const userId = args[0].replace(/[<@!>]/g, ''); // إزالة أي رموز
+            try {
+                targetUser = await client.users.fetch(userId);
+            } catch (error) {
+                // إذا فشل جلب المستخدم، استخدم صاحب الرسالة
+                targetUser = message.author;
+            }
+        }
+        
+        // إذا لم يتم تحديد مستخدم، استخدم صاحب الرسالة
+        if (!targetUser) {
+            targetUser = message.author;
+        }
+        
         const userId = targetUser.id;
         const guildId = message.guild.id;
 
-                // تهيئة قاعدة البيانات المخصصة قبل الاستخدام
+        // تهيئة قاعدة البيانات المخصصة قبل الاستخدام
         const { initDatabase } = require('./myprofile.js');
         await initDatabase();
         // Fetch data from both databases and custom profile
-        const [mainData, streak, dailyRank, customProfile] = await Promise.all([
+        const [mainData, streak, totalRank, customProfile] = await Promise.all([
             getMainDbData(userId),
             getStreakData(guildId, userId),
-            getDailyRank(userId),
+            getTotalRank(userId),
             getCustomProfile(userId)
         ]);
         
         const { total_messages, total_voice_time, total_reactions } = mainData;
         
+        // تحويل وقت الفويس من ملي ثانية إلى دقائق
+        const voiceTimeInMinutes = Math.floor(total_voice_time / 60000);
+        
         // Calculate levels
-        const voiceLevel = calculateVoiceLevel(total_voice_time);
+        const voiceLevel = calculateVoiceLevel(voiceTimeInMinutes);
         const chatLevel = calculateChatLevel(total_messages);
         
-        const { voiceRank, chatRank } = dailyRank;
+        const { voiceRank, chatRank } = totalRank;
         
         // Create canvas
         const canvas = createCanvas(1000, 380);
@@ -762,7 +779,7 @@ async function execute(message, args, { client }) {
         const leftX = 30;
         drawStatBox(ctx, leftX, 30, 'streak', formatNumber(streak));
         drawStatBox(ctx, leftX, 105, 'messages', formatNumber(total_messages));
-        drawStatBox(ctx, leftX, 180, 'voice time', formatVoiceTime(total_voice_time));
+        drawStatBox(ctx, leftX, 180, 'voice time', formatVoiceTime(voiceTimeInMinutes));
         drawStatBox(ctx, leftX, 255, 'reactions', formatNumber(total_reactions));
         
         // === PROFILE PICTURE (CENTER) - Reduced Glow ===
