@@ -254,7 +254,12 @@ for (const file of commandFiles) {
     if ('name' in command && 'execute' in command) {
       client.commands.set(command.name, command);
       console.log(`Loaded command: ${command.name}`);
-
+if (command.aliases && Array.isArray(command.aliases)) {
+        for (const alias of command.aliases) {
+          client.commands.set(alias, command);
+          console.log(`  ↳ Alias: ${alias}`);
+        }
+      }
       // تسجيل معالج التفاعلات المستقل لأمر report
       if (command.name === 'report' && command.registerInteractionHandler) {
         command.registerInteractionHandler(client);
@@ -453,12 +458,20 @@ async function checkAutoLevelUp(userId, type, client) {
         const oldVoiceLevel = previousLevel.voice_level || 0;
         const oldChatLevel = previousLevel.chat_level || 0;
         const lastNotified = previousLevel.last_notified || 0;
+        const isNewUser = (oldVoiceLevel === 0 && oldChatLevel === 0 && lastNotified === 0);
 
         // التحقق من وجود ترقية
         const hasVoiceLevelUp = currentVoiceLevel > oldVoiceLevel;
         const hasChatLevelUp = currentChatLevel > oldChatLevel;
 
         if (!hasVoiceLevelUp && !hasChatLevelUp) return;
+
+        // إذا كان مستخدم جديد، فقط نحفظ المستوى بدون إرسال إشعار
+        if (isNewUser) {
+            await updateUserLevel(userId, currentVoiceLevel, currentChatLevel);
+            await updateLastNotified(userId);
+            return;
+        }
 
         // التحقق من عدم إرسال إشعارات متكررة (تجنب الإرسال أكثر من مرة كل دقيقة)
         const timeSinceLastNotification = Date.now() - lastNotified;
@@ -1156,6 +1169,10 @@ client.on('messageCreate', async message => {
   if (isUserBlocked(message.author.id)) {
     return; // تجاهل المستخدمين المحظورين بصمت لتوفير الأداء
   }
+const { isChannelBlocked } = require('./commands/chatblock.js');
+  if (isChannelBlocked(message.channel.id)) {
+    return; // تجاهل الأوامر في القنوات المحظورة بصمت
+  }
 
   try {
     // التحقق من منشن البوت فقط (ليس الرولات) وليس ريبلاي
@@ -1247,7 +1264,7 @@ client.on('messageCreate', async message => {
     const hasAdminRole = CURRENT_ADMIN_ROLES.length > 0 && member.roles.cache.some(role => CURRENT_ADMIN_ROLES.includes(role.id));
 
     // Commands for everyone (help, tops, تفاعلي, ستريكي, profile, myprofile)
-    if (commandName === 'help' || commandName === 'tops' || commandName === 'توب' || commandName === 'تفاعلي' || commandName === 'ستريكي' || commandName === 'profile' || commandName === 'myprofile') {
+    if (commandName === 'help' || commandName === 'tops' || commandName === 'توب' || commandName === 'تفاعلي' || commandName === 'تواجدي' || commandName === 'me' || commandName === 'ستريكي' || commandName === 'profile' || commandName === 'id' || commandName === 'p' || commandName === 'myprofile') {
       if (commandName === 'مسؤولياتي') {
         await showUserResponsibilities(message, message.author, responsibilities, client);
       } else {
@@ -4431,4 +4448,4 @@ process.on('unhandledRejection', (reason, promise) => {
   }
 });
 
-client.login(process.env.DISCORD_BOT_TOKEN);
+client.login('MTE0OTI1OTk4NjIyOTI3MjYwNg.Gjfqax.0nTjQ9PhqFiG1mtbyic_m0mPYpMzRmogKOjMXA');
