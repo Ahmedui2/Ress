@@ -1,10 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 const moment = require('moment-timezone');
+const { EmbedBuilder } = require('discord.js');
 
 // مسارات ملفات البيانات
 const vacationsPath = path.join(__dirname, '..', 'data', 'vacations.json');
-const downLogsPath = path.join(__dirname, '..', 'data', 'downLogs.json');
 const activeDownsPath = path.join(__dirname, '..', 'data', 'activeDowns.json');
 const userActivityPath = path.join(__dirname, '..', 'data', 'userActivity.json');
 
@@ -47,10 +47,10 @@ function formatDuration(milliseconds) {
     const seconds = totalSeconds % 60;
 
     const parts = [];
-    if (days > 0) parts.push(`**${days}** يوم`);
-    if (hours > 0) parts.push(`**${hours}** ساعة`);
-    if (minutes > 0) parts.push(`**${minutes}** دقيقة`);
-    if (seconds > 0 && days === 0) parts.push(`**${seconds}** ثانية`);
+    if (days > 0) parts.push(`**${days}**d`);
+    if (hours > 0) parts.push(`**${hours}**h`);
+    if (minutes > 0) parts.push(`**${minutes}**m`);
+    if (seconds > 0 && days === 0) parts.push(`**${seconds}**s`);
 
     return parts.length > 0 ? parts.join(' و ') : '**أقل من ثانية**';
 }
@@ -83,7 +83,7 @@ async function trackUserActivity(userId, activityType, data = {}) {
             case 'message':
                 await dbManager.updateUserTotals(userId, { messages: 1 });
                 await dbManager.updateDailyActivity(today, userId, { messages: 1 });
-                
+
                 // تتبع القناة التي كتبت فيها الرسالة
                 if (data.channelId && data.channelName) {
                     await dbManager.updateMessageChannel(userId, data.channelId, data.channelName);
@@ -98,7 +98,7 @@ async function trackUserActivity(userId, activityType, data = {}) {
             case 'voice_time':
                 const duration = data.duration || 0;
                 const channelId = data.channelId || 'unknown';
-                const channelName = data.channelName || 'قناة غير معروفة';
+                const channelName = data.channelName || 'روم غير معروفة';
                 const startTime = data.startTime || (Date.now() - duration);
                 const endTime = data.endTime || Date.now();
 
@@ -131,7 +131,7 @@ async function trackUserActivity(userId, activityType, data = {}) {
 
                 } catch (reactionError) {
                     console.error(`❌ خطأ في معالجة تفاعل المستخدم ${userId}:`, reactionError);
-                    
+
                     // محاولة إعادة المحاولة مرة واحدة
                     try {
                         console.log(`🔄 محاولة إعادة تسجيل التفاعل للمستخدم ${userId}`);
@@ -269,13 +269,13 @@ function getLastActivity(member) {
         if (member.presence) {
             const status = member.presence.status;
             if (status === 'online') {
-                return 'متصل الآن';
+                return 'Online';
             } else if (status === 'idle') {
-                return 'خامل';
+                return 'Idle';
             } else if (status === 'dnd') {
-                return 'مشغول';
+                return 'Dnd';
             } else {
-                return 'غير متصل';
+                return 'Offline';
             }
         } else {
             return 'غير متصل';
@@ -310,17 +310,17 @@ async function collectUserStats(member) {
         const downStatus = getDownStatus(userId);
 
         // تحديد حالة الحساب
-        let accountStatus = 'عادي';
+        let accountStatus = 'Human';
         let statusDetails = '';
 
         if (vacationStatus.hasVacation) {
             accountStatus = 'في إجازة';
-            statusDetails = `إجازة تنتهي: ${vacationStatus.endDate.toLocaleDateString('ar-EG')}`;
+            statusDetails = `إجازة تنتهي : ${vacationStatus.endDate.toLocaleDateString('en-US')}`;
         } else if (downStatus.hasDown) {
-            accountStatus = 'عليه داون';
+            accountStatus = 'On Down';
             const guild = member.guild;
             const role = guild.roles.cache.get(downStatus.roleId);
-            statusDetails = `داون على دور: ${role ? role.name : 'دور محذوف'}`;
+            statusDetails = `داون على رول : ${role ? role.name : 'دور محذوف'}`;
         }
 
         // جلب البيانات الأسبوعية
@@ -332,6 +332,7 @@ async function collectUserStats(member) {
             // معلومات أساسية
             userId: userId,
             username: user.username,
+            mention: `<@${userId}>`,
             displayName: member.displayName,
             avatar: user.displayAvatarURL({ dynamic: true }),
 
@@ -510,7 +511,7 @@ function loadEvaluationSettings() {
 }
 
 // دالة لحساب أيام النشاط مع دعم الإعدادات المخصصة واستخدام قاعدة البيانات
-async function calculateWeeklyActivity(stats, evaluationSettings) {
+async function calculateWeeklyActivity(stats) {
     try {
         const { getDatabase } = require('./database');
         const dbManager = getDatabase();
@@ -591,170 +592,180 @@ function getCustomDownStatus(userId) {
 }
 
 // دالة لإنشاء embed المعلومات المحسن
-async function createUserStatsEmbed(stats, colorManager, isSimpleView = false, requesterName = null) {
-    const { EmbedBuilder } = require('discord.js');
-
-    // تحميل إعدادات التقييم
+async function createUserStatsEmbed(userStats, colorManager, simpleView = false, requesterName = null, requesterMention = null) {
+    // تحميل إعدادات التقييم في البداية
     const evaluationSettings = loadEvaluationSettings();
+    
+    const embed = colorManager.createEmbed()
+        .setTitle(simpleView ? ` تقديم إداري` : ` ${userStats.mention}`)
+        .setThumbnail(userStats.avatar);
 
-    // تحديد النصوص والقيم بناءً على الإعدادات
-    const messagesLabel = evaluationSettings.minMessages.resetWeekly ? "الرسائل (أسبوعي)" : "الرسائل (الإجمالي)";
-    const voiceLabel = evaluationSettings.minVoiceTime.resetWeekly ? "الفويس (أسبوعي)" : "الفويس (الإجمالي)";
-    const reactionsLabel = evaluationSettings.minReactions.resetWeekly ? "التفاعلات (أسبوعي)" : "الرياكتات  (الإجمالي)";
+    if (simpleView && requesterMention) {
+        // عرض مبسط ومختصر للآيفون
+        embed.setDescription(`**Admin :** ${requesterMention}\n**Member :** ${userStats.mention}`);
+    }
 
-    const messageValue = evaluationSettings.minMessages.resetWeekly ? (stats.weeklyMessages || 0) : (stats.realMessages || 0);
-    const voiceValue = evaluationSettings.minVoiceTime.resetWeekly ? (stats.formattedWeeklyVoiceTime || 'لا يوجد') : (stats.formattedVoiceTime || 'لا يوجد');
-    const reactionValue = evaluationSettings.minReactions.resetWeekly ? (stats.weeklyReactions || 0) : (stats.reactionsGiven || 0);
+    if (simpleView) {
+        // عرض مبسط ومختصر للآيفون - حد أقصى 3 حقول
 
-    if (isSimpleView) {
-        // العرض المبسط للتقديم الإداري
-        const embed = colorManager.createEmbed()
-            .setTitle(` **Admin Aprove** `)
-            .setThumbnail(stats.avatar)
+        const messageCount = evaluationSettings.minMessages.resetWeekly ? userStats.weeklyMessages || 0 : userStats.realMessages;
+
+        const messageLabel = evaluationSettings.minMessages.resetWeekly ? "<:emoji:1443616698996359380> Chat " : "<:emoji:1443616698996359380> Chat ";
+        const voiceLabel = evaluationSettings.minVoiceTime.resetWeekly ? "<:emoji:1443616700707635343> Voice" : "<:emoji:1443616700707635343> Voice";
+
+        const formattedVoiceTime = evaluationSettings.minVoiceTime.resetWeekly
+            ? userStats.formattedWeeklyVoiceTime || 'No Data'
+            : userStats.formattedVoiceTime || 'No Data';
+
+        // فقط 3 حقول أساسية للآيفون
+        embed.addFields([
+            {
+                name: messageLabel,
+                value: `**${messageCount.toLocaleString()}**`,
+                inline: true
+            },
+            {
+                name: voiceLabel,
+                value: `**${formattedVoiceTime}**`,
+                inline: true
+            },
+            {
+                name: '<:emoji_73:1442588719201648811> Time in server',
+                value: `${userStats.timeInServerFormatted}`,
+                inline: true
+            }
+        ]);
+
+        // معلومات إضافية في سطر واحد
+        embed.setFooter({
+            text: `Active day : ${userStats.activeDays}d  • Roles : ${userStats.roleCount}`
+        });
+    } else {
+        // العرض الكامل والمفصل
+        const weeklyActivity = await calculateWeeklyActivity(userStats);
+        const timeInServerDays = Math.floor(userStats.timeInServerMs / (24 * 60 * 60 * 1000));
+
+        // تحديد مستوى الرسائل
+        const messagesUsed = evaluationSettings.minMessages.resetWeekly ? (userStats.weeklyMessages || 0) : userStats.realMessages;
+        let messageLevel = 'Not active';
+        if (messagesUsed >= evaluationSettings.minMessages.excellent) {
+            messageLevel = 'Active ';
+        } else if (messagesUsed >= evaluationSettings.minMessages.good) {
+            messageLevel = 'Not bad';
+        }
+
+        // تحديد مستوى النشاط الأسبوعي
+        const isActiveWeekly = weeklyActivity >= evaluationSettings.activeDaysPerWeek.minimum;
+        let activityStatus = '';
+        if (evaluationSettings.activeDaysPerWeek.resetWeekly) {
+            activityStatus = `${weeklyActivity}/${evaluationSettings.activeDaysPerWeek.minimum} Days in week`;
+        } else {
+            activityStatus = `${userStats.activeDays} All days`;
+        }
+
+        // تحديد مستوى الخبرة في السيرفر
+        let timeLevel = 'جديد';
+        if (timeInServerDays >= evaluationSettings.timeInServerDays.excellent) {
+            timeLevel = 'خبرة ممتازة';
+        } else if (timeInServerDays >= evaluationSettings.timeInServerDays.minimum) {
+            timeLevel = 'خبرة جيدة';
+        }
+
+        // تحديد مستوى التفاعل الصوتي
+        const voiceTimeUsed = evaluationSettings.minVoiceTime.resetWeekly ? (userStats.weeklyVoiceTime || 0) : userStats.realVoiceTime;
+        let voiceLevel = 'ضعيف';
+        if (voiceTimeUsed >= evaluationSettings.minVoiceTime.excellent) {
+            voiceLevel = 'ممتاز';
+        } else if (voiceTimeUsed >= evaluationSettings.minVoiceTime.good) {
+            voiceLevel = 'جيد';
+        }
+
+        // تحديد التقييم العام
+        let evaluation = '';
+        if (messagesUsed >= evaluationSettings.minMessages.excellent &&
+            voiceTimeUsed >= evaluationSettings.minVoiceTime.excellent &&
+            isActiveWeekly &&
+            timeInServerDays >= evaluationSettings.timeInServerDays.excellent) {
+            evaluation = '🟢 **Perfect member to be admin **';
+        } else if (messagesUsed >= evaluationSettings.minMessages.good &&
+                   voiceTimeUsed >= evaluationSettings.minVoiceTime.good &&
+                   isActiveWeekly &&
+                   timeInServerDays >= evaluationSettings.timeInServerDays.minimum) {
+            evaluation = '🟡 **Not Bad member **';
+        } else {
+            evaluation = '🔴 **Not Active member **';
+        }
+
+        // تحديد التسميات والقيم المستخدمة في الحقول
+        const messagesLabel = evaluationSettings.minMessages.resetWeekly ? "<:emoji:1443616698996359380> Weekly message" : "<:emoji:1443616698996359380> All messages";
+        const messageValue = messagesUsed;
+        const voiceLabel = evaluationSettings.minVoiceTime.resetWeekly ? "<:emoji:1443616700707635343> Weekly Voice" : "<:emoji:1443616700707635343> All voice";
+        const voiceValue = evaluationSettings.minVoiceTime.resetWeekly
+            ? userStats.formattedWeeklyVoiceTime || 'No Data'
+            : userStats.formattedVoiceTime || 'No Data';
+        const reactionsLabel = "Reactions";
+        const reactionValue = userStats.reactions || 0;
+
+        const embed = new EmbedBuilder()
+            .setTitle(`**Admins**`)
+            .setThumbnail(userStats.avatar)
+            .setColor(colorManager.getColor() || '#3498db')
             .addFields([
                 {
-                    name: '**Status**',
-                    value: `\n **الأسم :** ${stats.displayName}\n\n**الاي دي :** \`${stats.userId}\`\n\n**حالة الحساب :** ${stats.accountStatus}\n`,
+                    name: '**information**',
+                    value: `\n **العضو :** ${userStats.mention}\n**الاي دي :** \`${userStats.userId}\`\n **حالة الحساب :** ${userStats.accountStatus}\n`,
                     inline: false
                 },
                 {
-                    name: ' **Active**',
-                    value: `\n**${messagesLabel} :** \`${messageValue.toLocaleString()}\`\n\n**${voiceLabel} :** ${voiceValue}\n\n** انضمام فويس :** \`${stats.joinedChannels || 0}\`\n\n **${reactionsLabel} :** \`${reactionValue.toLocaleString()}\``,
+                    name: ' **Actives**',
+                    value: ` **${messagesLabel}:** \`${messageValue.toLocaleString()}\`\n **${voiceLabel} :** ${voiceValue}\n** انضمام فويس :** \`${userStats.joinedChannels || 0}\`\n **${reactionsLabel} :** \`${reactionValue.toLocaleString()}\``,
                     inline: true
                 },
                 {
-                    name: ' **Roles**',
-                    value: `** عدد الرولات :** \`${stats.roleCount || 0}\`\n\n ** إداري حالياً :** ${stats.hasAdminRoles ? '✅️' : '❌'}`,
+                    name: ' **times **',
+                    value: ` ** inter server :** \`___${userStats.joinedServerFormatted}___\`\n ** create account :** \`___${userStats.accountCreatedFormatted}___\`\n ** in server :** ___${userStats.timeInServerFormatted}___`,
                     inline: true
-                }
-            ]);
-
-        if (requesterName) {
-            embed.addFields([
+                },
                 {
-                    name: ' **مُرشح بواسطة**',
-                    value: `**${requesterName}**`,
+                    name: ' **Status**',
+                    value: ` **active :** ${activityStatus}\n ${userStats.lastActivity}`,
                     inline: true
+                },
+                {
+
+                        name: ' **Roles**',
+
+                        value: `** عدد الرولات :** \`${userStats.roleCount || 0}\`\n ** إداري حالياً :** ${userStats.hasAdminRoles ? '✅ **نعم**' : '❌ **لا**'}`,
+
+                        inline: true
                 }
-            ]);
+            ])
+            .setFooter({
+                text: `By Ahmed `,
+                iconURL: userStats.avatar
+            })
+            .setTimestamp();
+
+        // إضافة تفاصيل الحالة إذا كانت موجودة
+        if (userStats.statusDetails) {
+            embed.addFields([{ name: '⚠️ تفاصيل الحالة الخاصة', value: userStats.statusDetails, inline: false }]);
         }
 
-        return embed;
-    }
-
-    // العرض الكامل والمفصل
-    const weeklyActivity = await calculateWeeklyActivity(stats, evaluationSettings);
-    const timeInServerDays = Math.floor(stats.timeInServerMs / (24 * 60 * 60 * 1000));
-
-    // تحديد مستوى الرسائل
-    const messagesUsed = evaluationSettings.minMessages.resetWeekly ? (stats.weeklyMessages || 0) : stats.realMessages;
-    let messageLevel = 'ضعيف';
-    if (messagesUsed >= evaluationSettings.minMessages.excellent) {
-        messageLevel = 'ممتاز';
-    } else if (messagesUsed >= evaluationSettings.minMessages.good) {
-        messageLevel = 'جيد';
-    }
-
-    // تحديد مستوى النشاط الأسبوعي
-    const isActiveWeekly = weeklyActivity >= evaluationSettings.activeDaysPerWeek.minimum;
-    let activityStatus = '';
-    if (evaluationSettings.activeDaysPerWeek.resetWeekly) {
-        activityStatus = `${weeklyActivity}/${evaluationSettings.activeDaysPerWeek.minimum} أيام هذا الأسبوع`;
-    } else {
-        activityStatus = `${stats.activeDays} أيام إجمالي`;
-    }
-
-    // تحديد مستوى الخبرة في السيرفر
-    let timeLevel = 'جديد';
-    if (timeInServerDays >= evaluationSettings.timeInServerDays.excellent) {
-        timeLevel = 'خبرة ممتازة';
-    } else if (timeInServerDays >= evaluationSettings.timeInServerDays.minimum) {
-        timeLevel = 'خبرة جيدة';
-    }
-
-    // تحديد مستوى التفاعل الصوتي
-    const voiceTimeUsed = evaluationSettings.minVoiceTime.resetWeekly ? (stats.weeklyVoiceTime || 0) : stats.realVoiceTime;
-    let voiceLevel = 'ضعيف';
-    if (voiceTimeUsed >= evaluationSettings.minVoiceTime.excellent) {
-        voiceLevel = 'ممتاز';
-    } else if (voiceTimeUsed >= evaluationSettings.minVoiceTime.good) {
-        voiceLevel = 'جيد';
-    }
-
-    // تحديد التقييم العام
-    let evaluation = '';
-    if (messagesUsed >= evaluationSettings.minMessages.excellent &&
-        voiceTimeUsed >= evaluationSettings.minVoiceTime.excellent &&
-        isActiveWeekly &&
-        timeInServerDays >= evaluationSettings.timeInServerDays.excellent) {
-        evaluation = '🟢 **مرشح ممتاز** - يحقق جميع المعايير المطلوبة';
-    } else if (messagesUsed >= evaluationSettings.minMessages.good &&
-               voiceTimeUsed >= evaluationSettings.minVoiceTime.good &&
-               isActiveWeekly &&
-               timeInServerDays >= evaluationSettings.timeInServerDays.minimum) {
-        evaluation = '🟡 **مرشح جيد** - يحقق المعايير الأساسية';
-    } else {
-        evaluation = '🔴 **مرشح ضعيف** - لا يحقق المعايير المطلوبة';
-    }
-
-    const embed = new EmbedBuilder()
-        .setTitle(`**Admins**`)
-        .setThumbnail(stats.avatar)
-        .setColor(colorManager.getColor() || '#3498db')
-        .addFields([
+        // إضافة تفاصيل التقييم
+        embed.addFields([
             {
-                name: '**information**',
-                value: `\n **الاسم :** ${stats.displayName}\n**الاي دي :** \`${stats.userId}\`\n **حالة الحساب :** ${stats.accountStatus}\n`,
+                name: 'Rate',
+                value: `**${messagesLabel}:** ${messageLevel} (${messageValue.toLocaleString()})\n**${voiceLabel}:** ${voiceLevel} (${voiceValue})\n**النشاط :** ${isActiveWeekly ? '✅' : '❌'} ${activityStatus}\n**الخبرة :** ${timeLevel} (${timeInServerDays} يوم)`,
+                inline: true
+            },
+            {
+                name: 'Rating',
+                value: evaluation,
                 inline: false
-            },
-            {
-                name: ' **Actives**',
-                value: ` **${messagesLabel}:** \`${messageValue.toLocaleString()}\`\n **${voiceLabel} :** ${voiceValue}\n** انضمام فويس :** \`${stats.joinedChannels || 0}\`\n🔸 **${reactionsLabel} :** \`${reactionValue.toLocaleString()}\``,
-                inline: true
-            },
-            {
-                name: ' **times **',
-                value: ` ** inter server :** \`___${stats.joinedServerFormatted}___\`\n🔸 ** create account :** \`___${stats.accountCreatedFormatted}___\`\n🔸 ** in server :** ___${stats.timeInServerFormatted}___`,
-                inline: true
-            },
-            {
-                name: ' **Status**',
-                value: ` **active :** ${activityStatus}\n ${stats.lastActivity}`,
-                inline: true
-            },
-            {
-
-                    name: ' **Roles**',
-
-                    value: `** عدد الرولات :** \`${stats.roleCount || 0}\`\n ** إداري حالياً :** ${stats.hasAdminRoles ? '✅ **نعم**' : '❌ **لا**'}`,
-
-                    inline: true
             }
-        ])
-        .setFooter({
-            text: `By Ahmed `,
-            iconURL: stats.avatar
-        })
-        .setTimestamp();
-
-    // إضافة تفاصيل الحالة إذا كانت موجودة
-    if (stats.statusDetails) {
-        embed.addFields([{ name: '⚠️ تفاصيل الحالة الخاصة', value: stats.statusDetails, inline: false }]);
+        ]);
     }
 
-    // إضافة تفاصيل التقييم
-    embed.addFields([
-        {
-            name: 'Rate',
-            value: `**${messagesLabel}:** ${messageLevel} (${messageValue.toLocaleString()})\n**${voiceLabel}:** ${voiceLevel} (${voiceValue})\n**النشاط:** ${isActiveWeekly ? '✅' : '❌'} ${activityStatus}\n**الخبرة:** ${timeLevel} (${timeInServerDays} يوم)`,
-            inline: true
-        },
-        {
-            name: 'Rating',
-            value: evaluation,
-            inline: false
-        }
-    ]);
 
     return embed;
 }
@@ -767,7 +778,7 @@ async function initializeActivityTracking(client) {
         // التأكد من تهيئة قاعدة البيانات
         const { getDatabase } = require('./database');
         const dbManager = getDatabase();
-        
+
         // ملاحظة: تتبع الرسائل يتم في bot.js المعالج الرئيسي لتجنب التكرار
         // ملاحظة: تتبع التفاعلات يتم في bot.js المعالج الرئيسي لتجنب التكرار
         // ملاحظة: تتبع الصوت يتم في bot.js للتحكم المحسن والمنطق المتقدم
