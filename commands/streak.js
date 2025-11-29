@@ -15,6 +15,7 @@ const dbPath = path.join(__dirname, '..', 'database', 'streak.db');
 const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
 
 let db = null;
+const warnedGuilds = new Set();
 
 function initializeDatabase() {
     return new Promise((resolve, reject) => {
@@ -448,7 +449,10 @@ async function handleLockedRoomMessage(message, client, botOwners) {
     
     
     if (!settings) {
-        console.log(`⚠️ لا توجد إعدادات Streak للسيرفر ${guildId}`);
+        if (!warnedGuilds.has(guildId)) {
+            warnedGuilds.add(guildId);
+            console.log(`⚠️ لا توجد إعدادات Streak للسيرفر ${guildId} (هذا التحذير يظهر مرة واحدة فقط)`);
+        }
         return;
     }
     

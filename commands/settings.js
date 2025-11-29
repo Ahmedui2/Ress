@@ -1303,7 +1303,7 @@ try {
                 }
 
                 responsibilities[responsibilityName].responsibles = selectedMembers;
-                scheduleSave();
+                await saveResponsibilities();
 
                 const updatedEmbed = colorManager.createEmbed()
                     .setTitle(`تم تحديث المسؤولية: ${responsibilityName}`)
@@ -1473,6 +1473,17 @@ try {
           }
         } catch (error) {
           console.error('خطأ في تحديث منيو السيتب:', error);
+        }
+
+        // تحديث إيمبد Resp
+        try {
+          const respCommand = client.commands.get('resp');
+          if (respCommand && respCommand.updateEmbedMessage) {
+            await respCommand.updateEmbedMessage(client);
+            console.log('✅ [SETTINGS] تم تحديث إيمبد Resp بعد إنشاء مسؤولية جديدة');
+          }
+        } catch (error) {
+          console.error('خطأ في تحديث إيمبد Resp:', error);
         }
 
         logEvent(client, message.guild, {

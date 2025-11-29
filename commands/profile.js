@@ -5,9 +5,11 @@ const sqlite3 = require('sqlite3').verbose();
 const fs = require('fs');
 const { getCustomProfile } = require('./myprofile.js');
 const { isUserBlocked } = require('./block.js');
+const { isChannelBlocked } = require('./chatblock.js');
 const colorManager = require('../utils/colorManager.js');
 
 const name = 'profile';
+const aliases = ['id', 'p'];
 const { getUserLevel, updateUserLevel, updateLastNotified } = require('../utils/database.js');
 
 // دالة لإرسال إشعار الترقية
@@ -620,6 +622,10 @@ function drawIcon(ctx, x, y, type) {
 
 async function execute(message, args, { client }) {
     try {
+        if (isChannelBlocked(message.channel.id)) {
+            return;
+        }
+
         // فحص البلوك
         if (isUserBlocked(message.author.id)) {
             const blockedEmbed = colorManager.createEmbed()
@@ -1007,7 +1013,8 @@ async function execute(message, args, { client }) {
 }
 
 module.exports = { 
-    name, 
+    name,
+    aliases,
     execute,
     sendLevelUpNotification
 };

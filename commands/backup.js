@@ -42,8 +42,8 @@ const FILES_TO_BACKUP = [
     'setrooms.json', 'blocked.json'
 ];
 
-// دالة لإعادة المحاولة مع Exponential Backoff
-async function retryOperation(operation, maxRetries = 3, baseDelay = 1000, operationName = 'Operation Name') {
+// دالة لإعادة المحاولة السريعة بدون تأخير
+async function retryOperation(operation, maxRetries = 2, baseDelay = 50, operationName = 'Operation Name') {
     for (let i = 0; i < maxRetries; i++) {
         try {
             return await operation();
@@ -51,11 +51,20 @@ async function retryOperation(operation, maxRetries = 3, baseDelay = 1000, opera
             if (i === maxRetries - 1) {
                 throw error;
             }
-            const delay = baseDelay * Math.pow(2, i);
-            console.log(`⚠️ فشل ${operationName}، إعادة المحاولة ${i + 1}/${maxRetries} بعد ${delay}ms...`);
-            await new Promise(resolve => setTimeout(resolve, delay));
+            await new Promise(resolve => setTimeout(resolve, baseDelay));
         }
     }
+}
+
+// دالة للتنفيذ المتوازي الفائق السرعة
+async function executeParallel(items, operation, concurrency = 50) {
+    const results = [];
+    for (let i = 0; i < items.length; i += concurrency) {
+        const batch = items.slice(i, i + concurrency);
+        const batchResults = await Promise.allSettled(batch.map(operation));
+        results.push(...batchResults);
+    }
+    return results;
 }
 
 // دالة لتحديث مؤشر التقدم (محسّنة للسيرفرات الضخمة)
@@ -481,11 +490,10 @@ async function createBackup(guild, creatorId, backupName, progressMessage = null
                 );
             }
 
-            // تقليل التأخير للسرعة الفائقة
-            if (i + batchSize < allTextChannels.length) {
-                await new Promise(resolve => setTimeout(resolve, 100));
-            }
+            // إزالة التأخير للسرعة القصوى
+            // Discord rate limits سيتعامل معها retryOperation تلقائياً
         }
+        
 
         // 6. نسخ الإيموجيات
         if (progressMessage) {
@@ -632,7 +640,7 @@ async function createBackup(guild, creatorId, backupName, progressMessage = null
     }
 }
 
-// استعادة انتقائية للنسخة مع تحسينات
+// استعادة فائقة السرعة - عمليتين فقط: حذف موحد ثم إنشاء موحد
 async function restoreBackup(backupFileName, guild, restoredBy, options, progressMessage = null) {
     try {
         const backupFilePath = path.join(backupsDir, backupFileName);
@@ -646,707 +654,472 @@ async function restoreBackup(backupFileName, guild, restoredBy, options, progres
         }
 
         const stats = {
-            rolesDeleted: 0,
-            rolesCreated: 0,
-            categoriesDeleted: 0,
-            categoriesCreated: 0,
-            channelsDeleted: 0,
-            channelsCreated: 0,
-            filesRestored: 0,
-            messagesRestored: 0,
-            threadsRestored: 0,
-            bansRestored: 0,
-            memberRolesRestored: 0,
-            errors: []
+            rolesDeleted: 0, rolesCreated: 0,
+            categoriesDeleted: 0, categoriesCreated: 0,
+            channelsDeleted: 0, channelsCreated: 0,
+            filesRestored: 0, messagesRestored: 0,
+            threadsRestored: 0, bansRestored: 0,
+            memberRolesRestored: 0, errors: []
         };
 
-        let currentStep = 0;
-        const totalSteps = options.length;
-
-        // 🎯 STEP 1: تطبيق اسم وأيقونة وبنر السيرفر في البداية (إذا كانت الصلاحيات تسمح)
-        if (options.includes('serverinfo') && backupData.data.serverInfo) {
-            if (progressMessage) {
-                await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Server Settings Done...');
-            }
-
-            try {
-                const updates = {};
-                if (backupData.data.serverInfo.name) updates.name = backupData.data.serverInfo.name;
-                if (backupData.data.serverInfo.description) updates.description = backupData.data.serverInfo.description;
-                if (backupData.data.serverInfo.verificationLevel !== undefined) updates.verificationLevel = backupData.data.serverInfo.verificationLevel;
-                if (backupData.data.serverInfo.defaultMessageNotifications !== undefined) updates.defaultMessageNotifications = backupData.data.serverInfo.defaultMessageNotifications;
-                if (backupData.data.serverInfo.explicitContentFilter !== undefined) updates.explicitContentFilter = backupData.data.serverInfo.explicitContentFilter;
-
-                await guild.edit(updates);
-
-                // تطبيق الأيقونة والبنر بالتوازي
-                await Promise.allSettled([
-                    backupData.data.serverInfo.icon ? guild.setIcon(backupData.data.serverInfo.icon) : Promise.resolve(),
-                    backupData.data.serverInfo.banner ? guild.setBanner(backupData.data.serverInfo.banner) : Promise.resolve()
-                ]);
-            } catch (err) {
-                stats.errors.push(`فشل تطبيق معلومات السيرفر: ${err.message}`);
-            }
-        }
-
-        // استعادة الملفات
-        if (options.includes('files')) {
-            if (progressMessage) {
-                await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Json Loaded...');
-            }
-
-            for (const [fileName, fileData] of Object.entries(backupData.data.files)) {
-                const filePath = path.join(dataDir, fileName);
-                if (saveJSON(filePath, fileData)) {
-                    stats.filesRestored++;
-                } else {
-                    stats.errors.push(`فشل في استعادة ${fileName}`);
-                }
-            }
-        }
-
-        // إنشاء خرائط للربط بين IDs القديمة والجديدة
         const roleMap = new Map();
         const channelMap = new Map();
         const categoryMap = new Map();
 
-        // 🎯 STEP 2: استعادة الرولات (حذف بالتوازي ثم إنشاء بالترتيب)
+        let currentStep = 0;
+        // حساب عدد الخطوات الديناميكي بناءً على الخيارات
+        let totalSteps = 2; // الحذف والإنشاء دائماً موجودين
+        if (options.includes('messages')) totalSteps++;
+        if (options.includes('bans')) totalSteps++;
+        if (options.includes('memberroles')) totalSteps++;
+
+        // ═══════════════════════════════════════════════════════════════
+        // 🚀 الخطوة 1: حذف كل شيء مختار دفعة واحدة بالتوازي الكامل
+        // ═══════════════════════════════════════════════════════════════
+        if (progressMessage) {
+            await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, '🗑️ Deleting Everything...');
+        }
+
+        const deletePromises = [];
+
+        // جمع كل عمليات الحذف في مصفوفة واحدة
         if (options.includes('roles')) {
-            if (progressMessage) {
-                await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Delete Roles...');
+            const roles = Array.from(guild.roles.cache.filter(r => !r.managed && r.id !== guild.id).values());
+            stats.rolesDeleted = roles.length;
+            deletePromises.push(...roles.map(r => r.delete().catch(() => {})));
+        }
+
+        if (options.includes('channels') || options.includes('categories')) {
+            const channels = Array.from(guild.channels.cache.values());
+            stats.channelsDeleted = channels.length;
+            stats.categoriesDeleted = channels.filter(ch => ch.type === ChannelType.GuildCategory).length;
+            deletePromises.push(...channels.map(c => c.delete().catch(() => {})));
+        }
+
+        if (options.includes('emojis')) {
+            const emojis = Array.from(guild.emojis.cache.values());
+            deletePromises.push(...emojis.map(e => e.delete().catch(() => {})));
+        }
+
+        // تنفيذ جميع عمليات الحذف دفعة واحدة
+        await Promise.allSettled(deletePromises);
+
+        // ═══════════════════════════════════════════════════════════════
+        // 🚀 الخطوة 2: إنشاء كل شيء مختار بالتوازي الكامل
+        // ═══════════════════════════════════════════════════════════════
+        if (progressMessage) {
+            await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, '✨ Creating Everything...');
+        }
+
+        // استعادة إعدادات السيرفر
+        if (options.includes('serverinfo') && backupData.data.serverInfo) {
+            try {
+                const updates = {};
+                if (backupData.data.serverInfo.name) updates.name = backupData.data.serverInfo.name;
+                if (backupData.data.serverInfo.description) updates.description = backupData.data.serverInfo.description;
+                await guild.edit(updates);
+                await Promise.allSettled([
+                    backupData.data.serverInfo.icon ? guild.setIcon(backupData.data.serverInfo.icon) : Promise.resolve(),
+                    backupData.data.serverInfo.banner ? guild.setBanner(backupData.data.serverInfo.banner) : Promise.resolve()
+                ]);
+            } catch (err) {}
+        }
+
+        // استعادة الملفات
+        if (options.includes('files')) {
+            for (const [fileName, fileData] of Object.entries(backupData.data.files)) {
+                if (saveJSON(path.join(dataDir, fileName), fileData)) stats.filesRestored++;
             }
+        }
 
-            const currentRoles = guild.roles.cache.filter(r => !r.managed && r.id !== guild.id);
-            stats.rolesDeleted = currentRoles.size;
-
-            // حذف جميع الرولات بالتوازي
-            await Promise.allSettled(
-                Array.from(currentRoles.values()).map(role => 
-                    retryOperation(
-                        async () => await role.delete('Backup restore'),
-                        3,
-                        500,
-                        `Delete : ${role.name}`
-                    ).catch(err => {
-                        stats.errors.push(`فشل حذف رول: ${role.name}`);
-                    })
-                )
+        // إنشاء الرولات بالتوازي الكامل
+        if (options.includes('roles')) {
+            const roleResults = await Promise.allSettled(
+                backupData.data.roles.map(async (roleData) => {
+                    try {
+                        const newRole = await guild.roles.create({
+                            name: roleData.name,
+                            color: roleData.color,
+                            permissions: BigInt(roleData.permissions),
+                            hoist: roleData.hoist,
+                            mentionable: roleData.mentionable
+                        });
+                        roleMap.set(roleData.id, newRole.id);
+                        return newRole;
+                    } catch (err) { return null; }
+                })
             );
+            stats.rolesCreated = roleResults.filter(r => r.status === 'fulfilled' && r.value).length;
 
-            if (progressMessage) {
-                await updateProgress(progressMessage, 'Backup Loading', currentStep, totalSteps, 'Create Roles...', true);
-            }
-
-            // إنشاء الرولات بالتوازي لتسريع العملية (دفعات من 5)
-            const sortedRoles = [...backupData.data.roles].sort((a, b) => b.position - a.position);
-            const roleBatchSize = 5;
-
-            for (let i = 0; i < sortedRoles.length; i += roleBatchSize) {
-                const batch = sortedRoles.slice(i, i + roleBatchSize);
-
-                const createdRoles = await Promise.allSettled(
-                    batch.map(async (roleData) => {
-                        const newRole = await retryOperation(
-                            async () => await guild.roles.create({
-                                name: roleData.name,
-                                color: roleData.color,
-                                permissions: BigInt(roleData.permissions),
-                                hoist: roleData.hoist,
-                                mentionable: roleData.mentionable,
-                                reason: 'Backup Restore'
-                            }),
-                            3,
-                            500,
-                            `Create : ${roleData.name}`
-                        );
-                        return { roleData, newRole };
-                    })
-                );
-
-                // معالجة النتائج
-                for (const result of createdRoles) {
-                    if (result.status === 'fulfilled' && result.value) {
-                        roleMap.set(result.value.roleData.id, result.value.newRole.id);
-                        stats.rolesCreated++;
-                    } else {
-                        const roleData = batch[createdRoles.indexOf(result)];
-                        stats.errors.push(`فشل إنشاء رول: ${roleData?.name || 'unknown'}`);
-                    }
-                }
-            }
-
-            // تطبيق الترتيب الصحيح للرولات بالتوازي
-            if (progressMessage) {
-                await updateProgress(progressMessage, 'Backup Loading', currentStep, totalSteps, 'Roles Position...');
-            }
-
-            const finalRoles = [...backupData.data.roles].sort((a, b) => b.position - a.position);
+            // ترتيب الرولات بالتوازي
             await Promise.allSettled(
-                finalRoles.map(async roleData => {
+                backupData.data.roles.map(async (roleData) => {
                     const newRoleId = roleMap.get(roleData.id);
                     if (newRoleId) {
-                        try {
-                            const role = guild.roles.cache.get(newRoleId);
-                            if (role && role.position !== roleData.position) {
-                                await retryOperation(
-                                    async () => await role.setPosition(roleData.position),
-                                    2,
-                                    500,
-                                    `Position ${roleData.name}`
-                                );
-                            }
-                        } catch (err) {
-                            console.log(`تحذير: فشل ترتيب رول ${roleData.name}`);
-                        }
+                        const role = guild.roles.cache.get(newRoleId);
+                        if (role) await role.setPosition(roleData.position).catch(() => {});
                     }
                 })
             );
-        } else {
-            // بناء roleMap من الرولات الموجودة
-            for (const roleData of backupData.data.roles) {
-                const existingRole = guild.roles.cache.find(r => r.name === roleData.name);
-                if (existingRole) {
-                    roleMap.set(roleData.id, existingRole.id);
-                }
-            }
         }
 
-        // بناء channelMap من القنوات الموجودة إذا لم يتم اختيار استعادة القنوات
-        if (!options.includes('channels') && !options.includes('categories')) {
-            // ربط القنوات الموجودة بأسمائها
-            for (const categoryData of backupData.data.categories) {
-                const existingCategory = guild.channels.cache.find(ch => ch.name === categoryData.name && ch.type === ChannelType.GuildCategory);
-                if (existingCategory) {
-                    categoryMap.set(categoryData.id, existingCategory.id);
-                    channelMap.set(categoryData.id, existingCategory.id);
+        // دالة لتحويل الصلاحيات
+        const convertPermissions = (overwrites) => {
+            return overwrites.map(ow => {
+                if (ow.id === backupData.guildId || ow.type === 1) {
+                    return { id: ow.type === 1 ? ow.id : guild.id, allow: BigInt(ow.allow), deny: BigInt(ow.deny) };
                 }
+                const newRoleId = roleMap.get(ow.id);
+                if (!newRoleId) return null;
+                return { id: newRoleId, allow: BigInt(ow.allow), deny: BigInt(ow.deny) };
+            }).filter(ow => ow !== null);
+        };
 
-                for (const channelData of categoryData.channels) {
-                    const existingChannel = guild.channels.cache.find(ch => ch.name === channelData.name && ch.parentId === existingCategory?.id);
-                    if (existingChannel) {
-                        channelMap.set(channelData.id, existingChannel.id);
-                    }
-                }
-            }
-
-            for (const channelData of backupData.data.channels) {
-                const existingChannel = guild.channels.cache.find(ch => ch.name === channelData.name && !ch.parentId);
-                if (existingChannel) {
-                    channelMap.set(channelData.id, existingChannel.id);
-                }
-            }
-        }
-
-        // 🎯 STEP 3: استعادة الكاتوقريات والقنوات (حذف بالتوازي ثم إنشاء بالترتيب)
+        // إنشاء الكاتوقريات والقنوات بالتوازي
         if (options.includes('channels') || options.includes('categories')) {
-            if (progressMessage) {
-                await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Delete Channels , Categories...');
-            }
-
-            const currentChannels = guild.channels.cache;
-            stats.channelsDeleted = currentChannels.size;
-            stats.categoriesDeleted = currentChannels.filter(ch => ch.type === ChannelType.GuildCategory).size;
-
-            // حذف جميع القنوات والكاتوقريات بالتوازي
-            await Promise.allSettled(
-                Array.from(currentChannels.values()).map(channel =>
-                    retryOperation(
-                        async () => await channel.delete('Backup Restore'),
-                        3,
-                        500,
-                        `Delete : ${channel.name}`
-                    ).catch(err => {
-                        stats.errors.push(`فشل حذف قناة: ${channel.name}`);
-                    })
-                )
-            );
-
-            if (progressMessage) {
-                await updateProgress(progressMessage, 'Backup Loading', currentStep, totalSteps, 'Create Categories...');
-            }
-
-            // إنشاء الكاتوقريات بالترتيب
-            const sortedCategories = [...backupData.data.categories].sort((a, b) => a.position - b.position);
-
-            for (const categoryData of sortedCategories) {
-                try {
-                        const permissionOverwrites = categoryData.permissionOverwrites
-                            .map(ow => {
-                                // إذا كان ID هو @everyone (يساوي guild.id)، احتفظ به
-                                if (ow.id === backupData.guildId || ow.type === 1) {
-                                    return {
-                                        id: ow.type === 1 ? ow.id : guild.id,
-                                        allow: BigInt(ow.allow),
-                                        deny: BigInt(ow.deny)
-                                    };
-                                }
-
-                                // للرولات، استخدم الخريطة
-                                const newRoleId = roleMap.get(ow.id);
-                                if (!newRoleId) {
-                                    return null;
-                                }
-                                return {
-                                    id: newRoleId,
-                                    allow: BigInt(ow.allow),
-                                    deny: BigInt(ow.deny)
-                                };
-                            })
-                            .filter(ow => ow !== null);
-
-                        const newCategory = await retryOperation(
-                            async () => await guild.channels.create({
-                                name: categoryData.name,
-                                type: ChannelType.GuildCategory,
-                                position: categoryData.position,
-                                permissionOverwrites: permissionOverwrites,
-                                reason: 'Backup restore'
-                            }),
-                            3,
-                            500,
-                            `Category : ${categoryData.name}`
-                        );
-
-                        categoryMap.set(categoryData.id, newCategory.id);
-                        channelMap.set(categoryData.id, newCategory.id);
-                        stats.categoriesCreated++;
-
-                        // إنشاء القنوات داخل الكاتوقري
-                        // عند استعادة categories، يجب إعادة إنشاء القنوات أيضاً
-                        // لأن حذف category يحذف تلقائياً جميع القنوات داخله
-                        for (const channelData of categoryData.channels) {
-                                try {
-                                    const channelPermOverwrites = channelData.permissionOverwrites
-                                        .map(ow => {
-                                            // إذا كان ID هو @everyone (يساوي guild.id)، احتفظ به
-                                            if (ow.id === backupData.guildId || ow.type === 1) {
-                                                return {
-                                                    id: ow.type === 1 ? ow.id : guild.id,
-                                                    allow: BigInt(ow.allow),
-                                                    deny: BigInt(ow.deny)
-                                                };
-                                            }
-
-                                            // للرولات، استخدم الخريطة
-                                            const newRoleId = roleMap.get(ow.id);
-                                            if (!newRoleId) {
-                                                return null;
-                                            }
-                                            return {
-                                                id: newRoleId,
-                                                allow: BigInt(ow.allow),
-                                                deny: BigInt(ow.deny)
-                                            };
-                                        })
-                                        .filter(ow => ow !== null);
-
-                                    const channelOptions = {
-                                        name: channelData.name,
-                                        type: channelData.type,
-                                        parent: newCategory.id,
-                                        position: channelData.position,
-                                        permissionOverwrites: channelPermOverwrites,
-                                        reason: 'Backup Loading'
-                                    };
-
-                                    if (channelData.topic) channelOptions.topic = channelData.topic;
-                                    if (channelData.nsfw !== undefined) channelOptions.nsfw = channelData.nsfw;
-                                    if (channelData.rateLimitPerUser) channelOptions.rateLimitPerUser = channelData.rateLimitPerUser;
-                                    if (channelData.bitrate) channelOptions.bitrate = channelData.bitrate;
-                                    if (channelData.userLimit) channelOptions.userLimit = channelData.userLimit;
-
-                                    const newChannel = await retryOperation(
-                                        async () => await guild.channels.create(channelOptions),
-                                        3,
-                                        500,
-                                        `Channel :  ${channelData.name}`
-                                    );
-
-                                    channelMap.set(channelData.id, newChannel.id);
-                                    stats.channelsCreated++;
-                                } catch (err) {
-                                    stats.errors.push(`فشل إنشاء قناة: ${channelData.name}`);
-                                }
-                            }
-                    } catch (err) {
-                        stats.errors.push(`فشل إنشاء كاتوقري: ${categoryData.name}`);
-                    }
-                }
-
-            // إنشاء القنوات خارج الكاتوقريات
-            const sortedChannels = [...backupData.data.channels].sort((a, b) => a.position - b.position);
-            if (progressMessage) {
-                await updateProgress(progressMessage, 'Backup Loading', currentStep, totalSteps, 'Channel without Categories...');
-            }
-
-            if (sortedChannels.length > 0) {
-                for (const channelData of backupData.data.channels) {
+            // إنشاء جميع الكاتوقريات بالتوازي
+            const categoryResults = await Promise.allSettled(
+                backupData.data.categories.map(async (catData) => {
                     try {
-                        const channelPermOverwrites = channelData.permissionOverwrites
-                            .map(ow => {
-                                // إذا كان ID هو @everyone (يساوي guild.id)، احتفظ به
-                                if (ow.id === backupData.guildId || ow.type === 1) {
-                                    return {
-                                        id: ow.type === 1 ? ow.id : guild.id,
-                                        allow: BigInt(ow.allow),
-                                        deny: BigInt(ow.deny)
-                                    };
-                                }
+                        const newCat = await guild.channels.create({
+                            name: catData.name,
+                            type: ChannelType.GuildCategory,
+                            position: catData.position,
+                            permissionOverwrites: convertPermissions(catData.permissionOverwrites)
+                        });
+                        categoryMap.set(catData.id, newCat.id);
+                        channelMap.set(catData.id, newCat.id);
+                        return { catData, newCat };
+                    } catch (err) { return null; }
+                })
+            );
+            stats.categoriesCreated = categoryResults.filter(r => r.status === 'fulfilled' && r.value).length;
 
-                                // للرولات، استخدم الخريطة
-                                const newRoleId = roleMap.get(ow.id);
-                                if (!newRoleId) {
-                                    return null;
-                                }
-                                return {
-                                    id: newRoleId,
-                                    allow: BigInt(ow.allow),
-                                    deny: BigInt(ow.deny)
-                                };
-                            })
-                            .filter(ow => ow !== null);
-
-                        const channelOptions = {
-                            name: channelData.name,
-                            type: channelData.type,
-                            position: channelData.position,
-                            permissionOverwrites: channelPermOverwrites,
-                            reason: 'Backup Restore'
-                        };
-
-                        if (channelData.topic) channelOptions.topic = channelData.topic;
-                        if (channelData.nsfw !== undefined) channelOptions.nsfw = channelData.nsfw;
-                        if (channelData.rateLimitPerUser) channelOptions.rateLimitPerUser = channelData.rateLimitPerUser;
-                        if (channelData.bitrate) channelOptions.bitrate = channelData.bitrate;
-                        if (channelData.userLimit) channelOptions.userLimit = channelData.userLimit;
-
-                        const newChannel = await retryOperation(
-                            async () => await guild.channels.create(channelOptions),
-                            3,
-                            500,
-                            ` Channel : ${channelData.name}`
-                        );
-
-                        channelMap.set(channelData.id, newChannel.id);
-                        stats.channelsCreated++;
-                    } catch (err) {
-                        stats.errors.push(`فشل إنشاء قناة: ${channelData.name}`);
+            // إنشاء جميع القنوات داخل الكاتوقريات بالتوازي الكامل
+            const allChannelsInCategories = [];
+            for (const catData of backupData.data.categories) {
+                const parentId = categoryMap.get(catData.id);
+                if (parentId) {
+                    for (const chData of catData.channels) {
+                        allChannelsInCategories.push({ ...chData, parentId });
                     }
                 }
             }
-        }
 
-        // 🎯 STEP 4: استعادة الإيموجيز (حذف بالتوازي ثم إنشاء بالتوازي)
-        if (options.includes('emojis')) {
-            if (progressMessage) {
-                await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Delete Emojies...');
-            }
+            const channelResults = await Promise.allSettled(
+                allChannelsInCategories.map(async (chData) => {
+                    try {
+                        const opts = {
+                            name: chData.name,
+                            type: chData.type,
+                            parent: chData.parentId,
+                            position: chData.position,
+                            permissionOverwrites: convertPermissions(chData.permissionOverwrites)
+                        };
+                        if (chData.topic) opts.topic = chData.topic;
+                        if (chData.nsfw !== undefined) opts.nsfw = chData.nsfw;
+                        if (chData.rateLimitPerUser) opts.rateLimitPerUser = chData.rateLimitPerUser;
+                        if (chData.bitrate) opts.bitrate = chData.bitrate;
+                        if (chData.userLimit) opts.userLimit = chData.userLimit;
 
-            // حذف جميع الإيموجيز بالتوازي
-            await Promise.allSettled(
-                Array.from(guild.emojis.cache.values()).map(emoji =>
-                    retryOperation(
-                        async () => await emoji.delete('Backup Restore'),
-                        2,
-                        500,
-                        ` Emoji : ${emoji.name}`
-                    ).catch(err => {
-                        stats.errors.push(`فشل حذف إيموجي: ${emoji.name}`);
-                    })
-                )
+                        const newCh = await guild.channels.create(opts);
+                        channelMap.set(chData.id, newCh.id);
+                        return newCh;
+                    } catch (err) { return null; }
+                })
             );
 
-            if (progressMessage) {
-                await updateProgress(progressMessage, 'Backup Loading', currentStep, totalSteps, 'Create Emoji...');
-            }
+            // إنشاء القنوات خارج الكاتوقريات بالتوازي
+            const standaloneResults = await Promise.allSettled(
+                backupData.data.channels.map(async (chData) => {
+                    try {
+                        const opts = {
+                            name: chData.name,
+                            type: chData.type,
+                            position: chData.position,
+                            permissionOverwrites: convertPermissions(chData.permissionOverwrites)
+                        };
+                        if (chData.topic) opts.topic = chData.topic;
+                        if (chData.nsfw !== undefined) opts.nsfw = chData.nsfw;
+                        if (chData.rateLimitPerUser) opts.rateLimitPerUser = chData.rateLimitPerUser;
+                        if (chData.bitrate) opts.bitrate = chData.bitrate;
+                        if (chData.userLimit) opts.userLimit = chData.userLimit;
 
-            // إنشاء الإيموجيز بالتوازي (مع تحديد batch size لتجنب rate limiting)
-            const batchSize = 5;
-            for (let i = 0; i < (backupData.data.emojis || []).length; i += batchSize) {
-                const batch = (backupData.data.emojis || []).slice(i, i + batchSize);
-                await Promise.allSettled(
-                    batch.map(emojiData =>
-                        retryOperation(
-                            async () => await guild.emojis.create({
-                                attachment: emojiData.url,
-                                name: emojiData.name,
-                                reason: 'Backup restore'
-                            }),
-                            3,
-                            500,
-                            ` Emoji : ${emojiData.name}`
-                        ).catch(err => {
-                            stats.errors.push(`فشل إنشاء إيموجي: ${emojiData.name}`);
-                        })
-                    )
-                );
+                        const newCh = await guild.channels.create(opts);
+                        channelMap.set(chData.id, newCh.id);
+                        return newCh;
+                    } catch (err) { return null; }
+                })
+            );
+
+            stats.channelsCreated = channelResults.filter(r => r.status === 'fulfilled' && r.value).length +
+                                    standaloneResults.filter(r => r.status === 'fulfilled' && r.value).length;
+
+            // 🎯 ترتيب الكاتوقريات بالتوازي
+            await Promise.allSettled(
+                backupData.data.categories.map(async (catData) => {
+                    const newCatId = categoryMap.get(catData.id);
+                    if (newCatId) {
+                        const cat = guild.channels.cache.get(newCatId);
+                        if (cat) await cat.setPosition(catData.position).catch(() => {});
+                    }
+                })
+            );
+
+            // 🎯 ترتيب القنوات داخل الكاتوقريات بالتوازي
+            const allChannelsForOrdering = [];
+            for (const catData of backupData.data.categories) {
+                for (const chData of catData.channels) {
+                    allChannelsForOrdering.push(chData);
+                }
             }
+            // إضافة القنوات خارج الكاتوقريات
+            allChannelsForOrdering.push(...backupData.data.channels);
+
+            await Promise.allSettled(
+                allChannelsForOrdering.map(async (chData) => {
+                    const newChId = channelMap.get(chData.id);
+                    if (newChId) {
+                        const ch = guild.channels.cache.get(newChId);
+                        if (ch) await ch.setPosition(chData.position).catch(() => {});
+                    }
+                })
+            );
         }
 
-        // 🎯 STEP 5: استعادة الرسائل والثريدات (بالتوازي)
-        if (options.includes('messages')) {
+        // إنشاء الإيموجيز بالتوازي الكامل
+        if (options.includes('emojis') && backupData.data.emojis) {
+            await Promise.allSettled(
+                backupData.data.emojis.map(async (emojiData) => {
+                    try {
+                        await guild.emojis.create({ attachment: emojiData.url, name: emojiData.name });
+                    } catch (err) {}
+                })
+            );
+        }
+
+        // 🎯 STEP 3: استعادة الرسائل + الحظر + رولات الأعضاء (كلهم بالتوازي في خطوة واحدة)
+        const hasMessages = options.includes('messages');
+        const hasBans = options.includes('bans');
+        const hasMemberRoles = options.includes('memberroles') && backupData.data.members && backupData.data.members.length > 0;
+
+        if (hasMessages || hasBans || hasMemberRoles) {
             if (progressMessage) {
-                await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Send Messages , Threads...');
+                let progressText = 'Restoring: ';
+                const parts = [];
+                if (hasMessages) parts.push('Messages/Threads');
+                if (hasBans) parts.push('Bans');
+                if (hasMemberRoles) parts.push('Member Roles');
+                progressText += parts.join(' + ');
+                await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, progressText);
             }
 
-            // استعادة الرسائل بالتوازي (batch processing)
-            const messageChannels = Object.entries(backupData.data.messages || {});
-            const channelBatchSize = 3;
+            // تنفيذ جميع العمليات بالتوازي الكامل
+            const parallelOperations = [];
 
-            for (let i = 0; i < messageChannels.length; i += channelBatchSize) {
-                const batch = messageChannels.slice(i, i + channelBatchSize);
+            // 🔹 عملية 1: استعادة الرسائل والثريدات
+            if (hasMessages) {
+                parallelOperations.push((async () => {
+                    const messageChannels = Object.entries(backupData.data.messages || {});
+                    const channelBatchSize = 8; // زيادة إلى 8 قنوات بالتوازي
 
-                await Promise.allSettled(
-                    batch.map(async ([oldChannelId, messages]) => {
-                        const newChannelId = channelMap.get(oldChannelId);
-                        const channel = newChannelId ? guild.channels.cache.get(newChannelId) : null;
+                    for (let i = 0; i < messageChannels.length; i += channelBatchSize) {
+                        const batch = messageChannels.slice(i, i + channelBatchSize);
 
-                        if (channel && channel.type === ChannelType.GuildText && messages && messages.length > 0) {
-                            for (const messageData of messages) {
-                                try {
-                                    const content = messageData.content || '';
-                                    const embeds = messageData.embeds || [];
+                        await Promise.allSettled(
+                            batch.map(async ([oldChannelId, messages]) => {
+                                const newChannelId = channelMap.get(oldChannelId);
+                                const channel = newChannelId ? guild.channels.cache.get(newChannelId) : null;
 
-                                    if (content || embeds.length > 0) {
-                                        // تحديد اسم المرسل
-                                        let senderName = 'Unknown User';
-                                        if (messageData.author && messageData.author.id) {
-                                            try {
-                                                // محاولة جلب العضو من السيرفر
-                                                const member = await guild.members.fetch(messageData.author.id).catch(() => null);
-                                                if (member) {
-                                                    // العضو موجود - استخدام المنشن
-                                                    senderName = `<@${messageData.author.id}>`;
-                                                } else {
-                                                    // العضو غير موجود - استخدام النكنيم العام (global_name)
-                                                    senderName = messageData.author.global_name || messageData.author.username || messageData.author.tag || `User#${messageData.author.id}`;
-                                                }
-                                            } catch (error) {
-                                                // فشل الجلب - استخدام النكنيم العام
-                                                senderName = messageData.author.global_name || messageData.author.username || messageData.author.tag || `User#${messageData.author.id}`;
-                                            }
-                                        }
-
-                                        // بناء الرسالة مع معلومات المرسل
-                                        const messageContent = `**From :** ${senderName}\n${content}`;
-
-                                        await retryOperation(
-                                            async () => await channel.send({
-                                                content: messageContent,
-                                                embeds: embeds
-                                            }),
-                                            2,
-                                            1000,
-                                            'Send Message '
-                                        );
-                                        stats.messagesRestored++;
-                                    }
-                                } catch (error) {
-                                    console.error(`فشل إرسال رسالة في ${channel.name}`);
-                                }
-                            }
-                        }
-                    })
-                );
-            }
-
-            // استعادة الثريدات بالتوازي
-            const threadChannels = Object.entries(backupData.data.threads || {});
-
-            for (let i = 0; i < threadChannels.length; i += channelBatchSize) {
-                const batch = threadChannels.slice(i, i + channelBatchSize);
-
-                await Promise.allSettled(
-                    batch.map(async ([oldChannelId, threads]) => {
-                        const newChannelId = channelMap.get(oldChannelId);
-                        const channel = newChannelId ? guild.channels.cache.get(newChannelId) : null;
-
-                        if (channel && channel.type === ChannelType.GuildText && threads && threads.length > 0) {
-                            for (const threadData of threads) {
-                                try {
-                                    const thread = await retryOperation(
-                                        async () => await channel.threads.create({
-                                            name: threadData.name,
-                                            autoArchiveDuration: threadData.autoArchiveDuration,
-                                            reason: 'Backup Loading'
-                                        }),
-                                        2,
-                                        1000,
-                                        ` Threads.: ${threadData.name}`
-                                    );
-
-                                    for (const msgData of threadData.messages || []) {
+                                if (channel && channel.type === ChannelType.GuildText && messages && messages.length > 0) {
+                                    const messagesToRestore = messages.slice(0, 100);
+                                    for (const messageData of messagesToRestore) {
                                         try {
-                                            const content = msgData.content || '';
-                                            const embeds = msgData.embeds || [];
+                                            const content = messageData.content || '';
+                                            const embeds = messageData.embeds || [];
 
                                             if (content || embeds.length > 0) {
-                                                // تحديد اسم المرسل
                                                 let senderName = 'Unknown User';
-                                                if (msgData.author && msgData.author.id) {
-                                                    try {
-                                                        // محاولة جلب العضو من السيرفر
-                                                        const member = await guild.members.fetch(msgData.author.id).catch(() => null);
-                                                        if (member) {
-                                                            // العضو موجود - استخدام المنشن
-                                                            senderName = `<@${msgData.author.id}>`;
-                                                        } else {
-                                                            // العضو غير موجود - استخدام النكنيم العام (global_name)
-                                                            senderName = msgData.author.global_name || msgData.author.username || msgData.author.tag || `User#${msgData.author.id}`;
-                                                        }
-                                                    } catch (error) {
-                                                        // فشل الجلب - استخدام النكنيم العام
-                                                        senderName = msgData.author.global_name || msgData.author.username || msgData.author.tag || `User#${msgData.author.id}`;
-                                                    }
+                                                if (messageData.author && messageData.author.id) {
+                                                    const member = await guild.members.fetch(messageData.author.id).catch(() => null);
+                                                    senderName = member ? `<@${messageData.author.id}>` : (messageData.author.global_name || messageData.author.username || messageData.author.tag || `User#${messageData.author.id}`);
                                                 }
 
-                                                // بناء الرسالة مع معلومات المرسل
                                                 const messageContent = `**From :** ${senderName}\n${content}`;
 
-                                                await thread.send({
-                                                    content: messageContent,
-                                                    embeds: embeds
-                                                });
+                                                await retryOperation(
+                                                    async () => await channel.send({ content: messageContent, embeds: embeds }),
+                                                    2,
+                                                    50,
+                                                    'Send Message'
+                                                );
+                                                stats.messagesRestored++;
                                             }
                                         } catch (error) {
-                                            console.error(`فشل إرسال رسالة في ثريد ${thread.name}`);
+                                            console.error(`فشل إرسال رسالة في ${channel.name}`);
                                         }
                                     }
+                                }
+                            })
+                        );
+                    }
 
-                                    if (threadData.archived) {
-                                        await thread.setArchived(true);
+                    // استعادة الثريدات
+                    const threadChannels = Object.entries(backupData.data.threads || {});
+                    for (let i = 0; i < threadChannels.length; i += channelBatchSize) {
+                        const batch = threadChannels.slice(i, i + channelBatchSize);
+
+                        await Promise.allSettled(
+                            batch.map(async ([oldChannelId, threads]) => {
+                                const newChannelId = channelMap.get(oldChannelId);
+                                const channel = newChannelId ? guild.channels.cache.get(newChannelId) : null;
+
+                                if (channel && channel.type === ChannelType.GuildText && threads && threads.length > 0) {
+                                    for (const threadData of threads) {
+                                        try {
+                                            const thread = await retryOperation(
+                                                async () => await channel.threads.create({
+                                                    name: threadData.name,
+                                                    autoArchiveDuration: threadData.autoArchiveDuration,
+                                                    reason: 'Backup Loading'
+                                                }),
+                                                2,
+                                                500,
+                                                `Threads: ${threadData.name}`
+                                            );
+
+                                            for (const msgData of threadData.messages || []) {
+                                                try {
+                                                    const content = msgData.content || '';
+                                                    const embeds = msgData.embeds || [];
+
+                                                    if (content || embeds.length > 0) {
+                                                        let senderName = 'Unknown User';
+                                                        if (msgData.author && msgData.author.id) {
+                                                            const member = await guild.members.fetch(msgData.author.id).catch(() => null);
+                                                            senderName = member ? `<@${msgData.author.id}>` : (msgData.author.global_name || msgData.author.username || msgData.author.tag || `User#${msgData.author.id}`);
+                                                        }
+
+                                                        const messageContent = `**From :** ${senderName}\n${content}`;
+                                                        await thread.send({ content: messageContent, embeds: embeds });
+                                                    }
+                                                } catch (error) {
+                                                    console.error(`فشل إرسال رسالة في ثريد ${thread.name}`);
+                                                }
+                                            }
+
+                                            if (threadData.archived) await thread.setArchived(true);
+                                            stats.threadsRestored++;
+                                        } catch (error) {
+                                            console.error(`فشل إنشاء ثريد ${threadData.name}:`, error);
+                                        }
+                                    }
+                                }
+                            })
+                        );
+                    }
+                })());
+            }
+
+            // 🔹 عملية 2: استعادة الحظر
+            if (hasBans) {
+                parallelOperations.push((async () => {
+                    const currentBans = await guild.bans.fetch();
+                    const backupBanIds = new Set((backupData.data.bans || []).map(b => b.userId));
+                    const currentBanIds = new Set(currentBans.keys());
+
+                    // فك الحظر بالتوازي
+                    await Promise.allSettled(
+                        Array.from(currentBanIds).map(async (bannedUserId) => {
+                            if (!backupBanIds.has(bannedUserId)) {
+                                try {
+                                    await guild.members.unban(bannedUserId, 'Backup restore');
+                                } catch (err) {
+                                    stats.errors.push(`فشل فك حظر ${bannedUserId}: ${err.message}`);
+                                }
+                            }
+                        })
+                    );
+
+                    // إضافة الحظر بالتوازي
+                    const banResults = await Promise.allSettled(
+                        (backupData.data.bans || []).map(async (banData) => {
+                            if (!currentBanIds.has(banData.userId)) {
+                                try {
+                                    await guild.members.ban(banData.userId, { reason: `Backup restore: ${banData.reason}` });
+                                    return true;
+                                } catch (err) {
+                                    stats.errors.push(`فشل حظر ${banData.username}: ${err.message}`);
+                                    return false;
+                                }
+                            }
+                            return true;
+                        })
+                    );
+
+                    stats.bansRestored = banResults.filter(r => r.status === 'fulfilled' && r.value).length;
+                })());
+            }
+
+            // 🔹 عملية 3: استعادة رولات الأعضاء
+            if (hasMemberRoles) {
+                parallelOperations.push((async () => {
+                    await guild.members.fetch({ limit: 1000 });
+
+                    const batchSize = 30; // زيادة إلى 30 عضو بالتوازي لتسريع أكبر
+                    for (let i = 0; i < backupData.data.members.length; i += batchSize) {
+                        const batch = backupData.data.members.slice(i, i + batchSize);
+
+                        const results = await Promise.allSettled(
+                            batch.map(async (memberData) => {
+                                try {
+                                    const member = guild.members.cache.get(memberData.userId);
+                                    if (!member) return { success: false };
+
+                                    const rolesToAdd = memberData.roles
+                                        .map(oldRoleId => roleMap.get(oldRoleId))
+                                        .filter(newRoleId => newRoleId && guild.roles.cache.has(newRoleId));
+
+                                    if (rolesToAdd.length > 0) {
+                                        await retryOperation(
+                                            async () => await member.roles.add(rolesToAdd),
+                                            2,
+                                            200,
+                                            `Add roles to ${memberData.username}`
+                                        );
                                     }
 
-                                    stats.threadsRestored++;
-                                } catch (error) {
-                                    console.error(`فشل إنشاء ثريد ${threadData.name}:`, error);
-                                }
-                            }
-                        }
-                    })
-                );
-            }
-        }
+                                    if (memberData.nickname) {
+                                        await member.setNickname(memberData.nickname).catch(() => {});
+                                    }
 
-        // استعادة الحظر - مطابقة القائمة بالضبط
-        if (options.includes('bans')) {
-            if (progressMessage) {
-                await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Bans Loading...');
-            }
-
-            // جلب الباندات الحالية
-            const currentBans = await guild.bans.fetch();
-            const backupBanIds = new Set((backupData.data.bans || []).map(b => b.userId));
-            const currentBanIds = new Set(currentBans.keys());
-
-            // فك الحظر عن المستخدمين المحظورين حالياً ومش موجودين في النسخة
-            for (const bannedUserId of currentBanIds) {
-                if (!backupBanIds.has(bannedUserId)) {
-                    try {
-                        await guild.members.unban(bannedUserId, 'Backup restore - إزالة باند غير موجود في النسخة');
-                    } catch (err) {
-                        stats.errors.push(`فشل فك حظر ${bannedUserId}: ${err.message}`);
-                    }
-                }
-            }
-
-            // حظر المستخدمين الموجودين في النسخة ومش محظورين حالياً
-            for (const banData of backupData.data.bans || []) {
-                if (!currentBanIds.has(banData.userId)) {
-                    try {
-                        await guild.members.ban(banData.userId, {
-                            reason: `Backup restore: ${banData.reason}`
-                        });
-                        stats.bansRestored++;
-                    } catch (err) {
-                        stats.errors.push(`فشل حظر ${banData.username}: ${err.message}`);
-                    }
-                } else {
-                    stats.bansRestored++;
-                }
-            }
-        }
-
-        // استعادة رولات الأعضاء (محسّن للسيرفرات الكبيرة + معالجة فائقة السرعة)
-        if (options.includes('memberroles') && backupData.data.members && backupData.data.members.length > 0) {
-            if (progressMessage) {
-                await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, 'Members Roles Loading...');
-            }
-
-            await guild.members.fetch({ limit: 1000 });
-
-            const totalMembers = backupData.data.members.length;
-            let processedCount = 0;
-            const batchSize = 20; // زيادة إلى 20 عضو بالتوازي
-
-            // معالجة الأعضاء بالدفعات الكبيرة لتسريع العملية
-            for (let i = 0; i < backupData.data.members.length; i += batchSize) {
-                const batch = backupData.data.members.slice(i, i + batchSize);
-
-                const results = await Promise.allSettled(
-                    batch.map(async (memberData) => {
-                        try {
-                            const member = guild.members.cache.get(memberData.userId);
-                            if (!member) return { success: false };
-
-                            const rolesToAdd = memberData.roles
-                                .map(oldRoleId => roleMap.get(oldRoleId))
-                                .filter(newRoleId => newRoleId && guild.roles.cache.has(newRoleId));
-
-                            if (rolesToAdd.length > 0) {
-                                await retryOperation(
-                                    async () => await member.roles.add(rolesToAdd),
-                                    2,
-                                    300,
-                                    `Add roles to ${memberData.username}`
-                                );
-                            }
-
-                            // تطبيق النكنيم بدون retry (غير حرج)
-                            if (memberData.nickname) {
-                                try {
-                                    await member.setNickname(memberData.nickname);
+                                    return { success: true };
                                 } catch (err) {
-                                    // تجاهل أخطاء النكنيم
+                                    return { success: false, error: err.message, username: memberData.username };
                                 }
+                            })
+                        );
+
+                        for (const result of results) {
+                            if (result.status === 'fulfilled' && result.value.success) {
+                                stats.memberRolesRestored++;
+                            } else if (result.status === 'fulfilled' && result.value.error) {
+                                stats.errors.push(`فشل استعادة رولات ${result.value.username}: ${result.value.error}`);
                             }
-
-                            return { success: true };
-                        } catch (err) {
-                            return { success: false, error: err.message, username: memberData.username };
                         }
-                    })
-                );
 
-                // معالجة النتائج
-                for (const result of results) {
-                    if (result.status === 'fulfilled' && result.value.success) {
-                        stats.memberRolesRestored++;
-                    } else if (result.status === 'fulfilled' && result.value.error) {
-                        stats.errors.push(`فشل استعادة رولات ${result.value.username}: ${result.value.error}`);
+                        // تقليل التأخير إلى 200ms
+                        if (i + batchSize < backupData.data.members.length) {
+                            await new Promise(resolve => setTimeout(resolve, 200));
+                        }
                     }
-                }
-
-                processedCount += batch.length;
-
-                // تحديث التقدم كل 50 عضو (تقليل التحديثات)
-                if (progressMessage && processedCount % 50 === 0) {
-                    await updateProgress(
-                        progressMessage, 
-                        'Backup Loading', 
-                        currentStep, 
-                        totalSteps, 
-                        `Members Roles: ${processedCount}/${totalMembers}`,
-                        true
-                    );
-                }
-
-                // تقليل الانتظار إلى 300ms لتسريع العملية
-                if (i + batchSize < backupData.data.members.length) {
-                    await new Promise(resolve => setTimeout(resolve, 300));
-                }
+                })());
             }
+
+            // تنفيذ جميع العمليات بالتوازي الكامل
+            await Promise.allSettled(parallelOperations);
         }
+
 
         return {
             success: true,
@@ -1498,10 +1271,10 @@ module.exports = {
                 const allBackups = getAllBackups();
 
                 if (allBackups.length === 0) {
-                    return interaction.reply({
-                        content: '❌ **لا توجد نسخ احتياطية متوفرة**',
-                        ephemeral: true
-                    });
+                    return interaction.editReply({
+                        embeds: [colorManager.createEmbed().setDescription('❌ **لا توجد نسخ احتياطية متوفرة**')],
+                        components: []
+                    }).catch(() => {});
                 }
 
                 const options = allBackups.map(backup => ({
@@ -1614,7 +1387,7 @@ module.exports = {
 
                 let currentPage = global.backupListPage.get(interaction.user.id) || 0;
                 const backups = getAllBackups();
-                
+
                 if (backups.length === 0) {
                     return interaction.editReply({ 
                         embeds: [colorManager.createEmbed().setDescription('❌ لا توجد نسخ احتياطية')],
@@ -1634,9 +1407,9 @@ module.exports = {
 
                 const backup = backups[currentPage];
                 if (!backup) {
-                    return interaction.followUp({ 
-                        content: '❌ خطأ في تحميل النسخة', 
-                        ephemeral: true 
+                    return interaction.editReply({ 
+                        embeds: [colorManager.createEmbed().setDescription('❌ **خطأ في تحميل النسخة**')],
+                        components: []
                     }).catch(() => {});
                 }
 
@@ -1703,6 +1476,14 @@ module.exports = {
 
             } else if (interaction.customId === 'backup_delete') {
                 const backups = getAllBackups();
+
+                if (backups.length === 0) {
+                    return interaction.editReply({
+                        embeds: [colorManager.createEmbed().setDescription('❌ **لا توجد نسخ احتياطية للحذف**')],
+                        components: []
+                    }).catch(() => {});
+                }
+
                 const options = backups.map(backup => ({
                     label: backup.name,
                     description: `${backup.guildName || 'Server'} | ${new Date(backup.createdAt).toLocaleString('en-US')}`,
@@ -1715,9 +1496,9 @@ module.exports = {
                     .addOptions(options);
 
                 await interaction.editReply({
-                    embeds: [colorManager.createEmbed().setTitle('Backup Deleted')],
+                    embeds: [colorManager.createEmbed().setTitle('Delete Backup').setDescription('**اختر النسخة المراد حذفها**')],
                     components: [new ActionRowBuilder().addComponents(selectMenu)]
-                });
+                }).catch(() => {});
 
             } else if (interaction.customId === 'backup_back') {
                 if (global.backupListPage) {
@@ -1841,7 +1622,10 @@ module.exports = {
             } else if (interaction.customId.startsWith('conf_')) {
                 const confirmData = global.backupConfirmData?.get(interaction.customId);
                 if (!confirmData) {
-                    return interaction.reply({ content: '❌ انتهت صلاحية هذا الطلب، الرجاء المحاولة مرة أخرى', ephemeral: true });
+                    return interaction.editReply({
+                        embeds: [colorManager.createEmbed().setDescription('❌ **انتهت صلاحية هذا الطلب، الرجاء المحاولة مرة أخرى**')],
+                        components: []
+                    }).catch(() => {});
                 }
 
                 const fileName = confirmData.fileName;
@@ -1931,20 +1715,20 @@ let modalHandlerRegistered = false;
 
 function registerBackupModalHandler(client) {
     if (modalHandlerRegistered) return;
-    
+
     client.on('interactionCreate', async interaction => {
         if (!interaction.isModalSubmit() || interaction.customId !== 'backup_create_modal') return;
-        
+
         // فحص صلاحية التفاعل
         if (!interaction.isRepliable()) return;
-        
+
         // فحص إذا تم الرد مسبقاً
         if (interaction.replied || interaction.deferred) return;
-        
+
         // فحص عمر التفاعل
         const interactionAge = Date.now() - interaction.createdTimestamp;
         if (interactionAge > 180000) return; // 3 دقائق
-        
+
         try {
             await interaction.deferReply({ ephemeral: true });
 
@@ -1995,9 +1779,9 @@ function registerBackupModalHandler(client) {
                 console.log('تم تجاهل خطأ معروف في backup_create_modal');
                 return;
             }
-            
+
             console.error('❌ خطأ في معالجة مودال backup_create:', error);
-            
+
             try {
                 if (!interaction.replied && !interaction.deferred) {
                     await interaction.reply({
@@ -2010,7 +1794,7 @@ function registerBackupModalHandler(client) {
             }
         }
     });
-    
+
     modalHandlerRegistered = true;
     console.log('✅ تم تسجيل معالج backup_create_modal');
 }

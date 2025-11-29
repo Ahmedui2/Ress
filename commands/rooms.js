@@ -354,21 +354,44 @@ async function showAdminRolesActivity(message, client, ADMIN_ROLES) {
                     });
                 } else if (interaction.customId === 'rooms_mention') {
                     if (interaction.replied || interaction.deferred) return;
-                    const mentions = memberActivities.map(data => `<@${data.member.id}>`).join(' ');
+                    
+                    // تقسيم المنشنات إلى مجموعات لتجنب تجاوز حد 2000 حرف
+                    const mentions = memberActivities.map(data => `<@${data.member.id}>`);
+                    const mentionChunks = [];
+                    let currentChunk = '';
+                    
+                    for (const mention of mentions) {
+                        if ((currentChunk + mention + ' ').length > 1900) { // ترك مساحة آمنة
+                            mentionChunks.push(currentChunk.trim());
+                            currentChunk = mention + ' ';
+                        } else {
+                            currentChunk += mention + ' ';
+                        }
+                    }
+                    if (currentChunk.trim()) {
+                        mentionChunks.push(currentChunk.trim());
+                    }
 
                     const mentionEmbed = colorManager.createEmbed()
                         .setTitle(`**Admin Roles**`)
-                        .setDescription(`**تم منشن جميع أعضاء رولات الأدمن بنجاح**`)
-            .setThumbnail(client.user.displayAvatarURL({ format: 'png', size: 128 }))
-
+                        .setDescription(`**تم منشن ${memberActivities.length} عضو من رولات الأدمن**\n**عدد الرسائل:** ${mentionChunks.length}`)
+                        .setThumbnail(client.user.displayAvatarURL({ format: 'png', size: 128 }))
                         .setFooter({ text: 'By Ahmed.' })
                         .setTimestamp();
 
+                    // إرسال أول رسالة كـ update
                     await interaction.update({
-                        content: mentions,
+                        content: mentionChunks[0] || 'لا يوجد أعضاء',
                         embeds: [mentionEmbed],
                         components: generateButtons(currentPage)
                     });
+                    
+                    // إرسال باقي الرسائل كرسائل منفصلة
+                    for (let i = 1; i < mentionChunks.length; i++) {
+                        await interaction.channel.send({
+                            content: mentionChunks[i]
+                        });
+                    }
                 } else if (interaction.customId === 'rooms_notify') {
                     console.log(`🔔 بدء معالجة زر التنبيه للأدمن - حالة: replied=${interaction.replied}, deferred=${interaction.deferred}, inProgress=${isNotifyInProgress}`);
 
@@ -724,21 +747,44 @@ async function showRoleActivity(message, role, client) {
                     });
                 } else if (interaction.customId === 'rooms_mention') {
                     if (interaction.replied || interaction.deferred) return;
-                    const mentions = memberActivities.map(data => `<@${data.member.id}>`).join(' ');
+                    
+                    // تقسيم المنشنات إلى مجموعات لتجنب تجاوز حد 2000 حرف
+                    const mentions = memberActivities.map(data => `<@${data.member.id}>`);
+                    const mentionChunks = [];
+                    let currentChunk = '';
+                    
+                    for (const mention of mentions) {
+                        if ((currentChunk + mention + ' ').length > 1900) { // ترك مساحة آمنة
+                            mentionChunks.push(currentChunk.trim());
+                            currentChunk = mention + ' ';
+                        } else {
+                            currentChunk += mention + ' ';
+                        }
+                    }
+                    if (currentChunk.trim()) {
+                        mentionChunks.push(currentChunk.trim());
+                    }
 
                     const mentionEmbed = colorManager.createEmbed()
-                        .setTitle(`**Mention :  ${role.name}**`)
-                        .setDescription(`**تم منشن جميع أعضاء الرول بنجاح**`)
-            .setThumbnail(client.user.displayAvatarURL({ format: 'png', size: 128 }))
-
+                        .setTitle(`**Mention: ${role.name}**`)
+                        .setDescription(`**تم منشن ${memberActivities.length} عضو من الرول**\n**عدد الرسائل:** ${mentionChunks.length}`)
+                        .setThumbnail(client.user.displayAvatarURL({ format: 'png', size: 128 }))
                         .setFooter({ text: 'By Ahmed.' })
                         .setTimestamp();
 
+                    // إرسال أول رسالة كـ update
                     await interaction.update({
-                        content: mentions,
+                        content: mentionChunks[0] || 'لا يوجد أعضاء',
                         embeds: [mentionEmbed],
                         components: generateButtons(currentPage)
                     });
+                    
+                    // إرسال باقي الرسائل كرسائل منفصلة
+                    for (let i = 1; i < mentionChunks.length; i++) {
+                        await interaction.channel.send({
+                            content: mentionChunks[i]
+                        });
+                    }
                 } else if (interaction.customId === 'rooms_notify') {
                     console.log(`🔔 بدء معالجة زر التنبيه - حالة: replied=${interaction.replied}, deferred=${interaction.deferred}, inProgress=${isNotifyInProgress}`);
 

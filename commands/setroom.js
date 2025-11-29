@@ -1083,7 +1083,7 @@ async function createColorsImage(guild, guildConfig) {
         ctx.shadowBlur = 10;
         ctx.textAlign = 'left';
         // النص يبدأ من نفس موضع startX (بداية المربعات)
-        ctx.fillText('Colors List :', startX - 150, startY - 33);
+        ctx.fillText('', startX - 150, startY - 33);
         ctx.shadowBlur = 20;
         
         // رسم المربعات

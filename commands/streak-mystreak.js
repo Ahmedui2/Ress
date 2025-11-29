@@ -182,10 +182,10 @@ module.exports = {
         let statusText;
         let statusColor;
         if (isActiveToday) {
-            statusText = '<:emoji_63:1442587778964525077>';
+            statusText = '<:emoji_64:1442587807150243932>';
             statusColor = '#FFFFFF';
         } else {
-            statusText = '<:emoji_64:1442587807150243932>';
+            statusText = '<:emoji_63:1442587778964525077>';
             statusColor = '#FFFFFF';
         }
 
@@ -194,8 +194,8 @@ module.exports = {
         const streakEmbed = colorManager.createEmbed()
             .setTitle(` معلومات الـ Streak`)
                         .addFields([
-                { name: 'Your Streak', value: `**${userStreak.current_streak}**<:emoji_29:1432242213185650721> `, inline: true },
-                { name: 'Longest Streak', value: `**${userStreak.longest_streak}**<:emoji_29:1432242213185650721> `, inline: true },
+                { name: 'Your Streak', value: `**${userStreak.current_streak}** <:emoji_60:1442587701474754760>`, inline: true },
+                { name: 'Longest Streak', value: `**${userStreak.longest_streak}** <:emoji_61:1442587727387427009> `, inline: true },
                 { name: 'Status', value: statusText, inline: false },
                 { name: 'Last Pic', value: userStreak.last_post_date || 'لا يوجد', inline: true },
                 { name: 'Total Pic', value: `**${userStreak.total_posts}**`, inline: true },

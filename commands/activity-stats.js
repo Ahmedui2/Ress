@@ -1,9 +1,11 @@
 const { EmbedBuilder, ButtonBuilder, ActionRowBuilder, ButtonStyle } = require('discord.js');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
+const { isChannelBlocked } = require('./chatblock.js');
 const { getDatabase } = require('../utils/database.js');
 
 const name = 'تفاعلي';
+const aliases = ['تواجدي', 'me'];
 
 function formatDuration(milliseconds) {
     if (!milliseconds || milliseconds <= 0) return '0';
@@ -25,6 +27,10 @@ function formatDuration(milliseconds) {
 }
 
 async function execute(message, args, { client }) {
+    if (isChannelBlocked(message.channel.id)) {
+        return;
+    }
+
     if (isUserBlocked(message.author.id)) {
         const blockedEmbed = colorManager.createEmbed()
             .setDescription('**🚫 أنت محظور من استخدام أوامر البوت**\n**للاستفسار، تواصل مع إدارة السيرفر**')
@@ -312,5 +318,6 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
 
 module.exports = {
     name,
+    aliases,
     execute
 };

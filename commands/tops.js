@@ -1,6 +1,7 @@
 const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
+const { isChannelBlocked } = require('./chatblock.js');
 const { getDatabase } = require('../utils/database.js');
 const moment = require('moment-timezone');
 const sqlite3 = require('sqlite3').verbose();
@@ -310,6 +311,10 @@ async function isStreakSystemEnabled(guildId) {
 }
 
 async function execute(message, args, { client }) {
+    if (isChannelBlocked(message.channel.id)) {
+        return;
+    }
+
     if (isUserBlocked(message.author.id)) {
         const blockedEmbed = colorManager.createEmbed()
             .setDescription('**🚫 أنت محظور من استخدام أوامر البوت**\n**للاستفسار، تواصل مع إدارة السيرفر**')

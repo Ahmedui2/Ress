@@ -1,6 +1,7 @@
 const { EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
+const moment = require('moment-timezone');
 const { collectUserStats, createUserStatsEmbed } = require('../utils/userStatsCollector');
 const colorManager = require('../utils/colorManager');
 
@@ -124,9 +125,9 @@ function formatTimeLeft(milliseconds) {
     const minutes = Math.floor((milliseconds % (1000 * 60 * 60)) / (1000 * 60));
 
     if (hours > 0) {
-        return `${hours} ساعة و ${minutes} دقيقة`;
+        return `${hours}h and ${minutes}m`;
     } else {
-        return `${minutes} دقيقة`;
+        return `${minutes}m`;
     }
 }
 
@@ -210,7 +211,7 @@ module.exports = {
             // التحقق من وجود أدوار إدارية للمرشح
             if (candidateHasAdminRoles(candidate)) {
                 await interaction.reply({
-                    content: `**${candidate.displayName} لديه بالفعل رولات إدارية.**`
+                    content: `**<@${candidateId}> لديه بالفعل رولات إدارية.**`
                 });
                 return;
             }
@@ -220,7 +221,7 @@ module.exports = {
             if (cooldownCheck) {
                 const timeLeft = formatTimeLeft(cooldownCheck.timeLeft);
                 await interaction.reply({
-                    content: `**${candidate.displayName} تم رفضه مسبقاً وعليه كولداون.\nالوقت المتبقي: ${timeLeft}**`
+                    content: `**<@${candidateId}> تم رفضه مسبقاً وعليه كولداون.\nالوقت المتبقي: ${timeLeft}**`
                 });
                 return;
             }
@@ -228,7 +229,7 @@ module.exports = {
             // التحقق من وجود طلب معلق للمرشح
             if (hasPendingApplication(candidateId, settings)) {
                 await interaction.reply({
-                    content: `**${candidate.displayName} لديه بالفعل طلب تقديم معلق.**`
+                    content: `**<@${candidateId}> لديه بالفعل طلب تقديم معلق.**`
                 });
                 return;
             }
@@ -242,19 +243,43 @@ module.exports = {
             // إنشاء معرف فريد أبسط للطلب مع معلومات إضافية
             const applicationId = `${Date.now()}_${candidateId}_${interaction.user.id}`;
 
-            // إنشاء embed مبسط للعرض الأولي مع النصوص الديناميكية
-            const simpleEmbed = await createUserStatsEmbed(userStats, colorManager, true, interaction.member.displayName);
+            // إنشاء embed محسّن للآيفون
+            const simpleEmbed = await createUserStatsEmbed(userStats, colorManager, true, interaction.member.displayName, `<@${interaction.user.id}>`);
+            
+            // تقليل حجم الـ embed للآيفون
+            if (simpleEmbed.data && simpleEmbed.data.fields) {
+                // الحد الأقصى للحقول: 3-4 حقول لضمان الظهور الكامل
+                const maxFields = 4;
+                if (simpleEmbed.data.fields.length > maxFields) {
+                    simpleEmbed.data.fields = simpleEmbed.data.fields.slice(0, maxFields);
+                }
+                
+                // تقصير نصوص الحقول إذا كانت طويلة
+                simpleEmbed.data.fields = simpleEmbed.data.fields.map(field => {
+                    if (field.value && field.value.length > 200) {
+                        field.value = field.value.substring(0, 197) + '...';
+                    }
+                    return field;
+                });
+            }
+            
+            // تقصير الوصف إذا كان طويلاً
+            if (simpleEmbed.data && simpleEmbed.data.description && simpleEmbed.data.description.length > 500) {
+                simpleEmbed.data.description = simpleEmbed.data.description.substring(0, 497) + '...';
+            }
 
             // إنشاء أزرار الموافقة والرفض
             const approveButton = new ButtonBuilder()
                 .setCustomId(`admin_approve_${applicationId}`)
                 .setLabel('Approve')
-                .setStyle(ButtonStyle.Success);
+                .setEmoji('<:emoji_1:1436850272734285856>')
+                .setStyle(ButtonStyle.Secondary);
 
             const rejectButton = new ButtonBuilder()
                 .setCustomId(`admin_reject_${applicationId}`)
                 .setLabel('Reject')
-                .setStyle(ButtonStyle.Danger);
+                .setEmoji('<:emoji_1:1436850215154880553>')
+                .setStyle(ButtonStyle.Secondary);
 
             // إنشاء منيو للتفاصيل الإضافية (للمعتمدين فقط)
             const detailsMenu = new StringSelectMenuBuilder()
@@ -309,9 +334,9 @@ module.exports = {
                 // حفظ الطلب في البيانات فقط بعد نجاح الإرسال
                 settings.pendingApplications[applicationId] = {
                     candidateId: candidateId,
-                    candidateName: candidate.displayName,
+                    candidateMention: `<@${candidateId}>`,
                     requesterId: interaction.user.id,
-                    requesterName: interaction.member.displayName,
+                    requesterMention: `<@${interaction.user.id}>`,
                     createdAt: new Date().toISOString(),
                     userStats: userStats
                 };
@@ -474,13 +499,13 @@ async function handleAdminApplicationInteraction(interaction) {
             switch (selectedDetail) {
                 case 'dates':
                     detailEmbed = colorManager.createEmbed()
-                        .setTitle(` ** Dates - ${userStats.displayName}**`)
+                        .setTitle(` ** Dates - ${userStats.mention}**`)
                         .setThumbnail(userStats.avatar)
                         .addFields([
                             { name: '**انضمام السيرفر**', value: `**${userStats.joinedServerFormatted}**`, inline: false },
                             { name: '**إنشاء الحساب**', value: `**${userStats.accountCreatedFormatted}**`, inline: false },
-                            { name: '**المدة في السيرفر**', value: `**${userStats.timeInServerFormatted}**`, inline: true },
-                            { name: '**عمر الحساب**', value: `**${userStats.accountAgeFormatted}**`, inline: true },
+                            { name: '**المدة في السيرفر**', value: `${userStats.timeInServerFormatted}`, inline: true },
+                            { name: '**عمر الحساب**', value: `${userStats.accountAgeFormatted}`, inline: true },
                             { name: ' **آخر نشاط**', value: `**${userStats.lastActivity}**`, inline: true }
                         ])
 ;
@@ -498,9 +523,9 @@ async function handleAdminApplicationInteraction(interaction) {
                     const reactionCount = evaluationSettings.minReactions.resetWeekly ? userStats.weeklyReactions || 0 : userStats.reactionsGiven || 0;
 
                     // تحديد النصوص المناسبة
-                    const messageLabel = evaluationSettings.minMessages.resetWeekly ? "الرسائل : (أسبوعي)" : "الرسائل : (الإجمالي)";
-                    const voiceLabel = evaluationSettings.minVoiceTime.resetWeekly ? "الفويس : (أسبوعي)" : "الفويس : (الإجمالي)";
-                    const reactionLabel = evaluationSettings.minReactions.resetWeekly ? "الرياكتات : (أسبوعي)" : "الرياكتات : (الإجمالي)";
+                    const messageLabel = evaluationSettings.minMessages.resetWeekly ? "<:emoji:1443616698996359380> Messages : ( week )" : "<:emoji:1443616698996359380> Messages : ( All )";
+                    const voiceLabel = evaluationSettings.minVoiceTime.resetWeekly ? "<:emoji:1443616700707635343> Voice : ( All )" : "<:emoji:1443616700707635343> Voice : ( All ) ";
+                    const reactionLabel = evaluationSettings.minReactions.resetWeekly ? "Reactions : ( week )" : "Reactions : ( All )";
 
                     // تحديد التقييم العام
                     const evaluation = getEvaluationType(
@@ -519,10 +544,10 @@ async function handleAdminApplicationInteraction(interaction) {
                         .setThumbnail(userStats.avatar)
                         .addFields([
                             { name: ` **${messageLabel}**`, value: `**${messageCount.toLocaleString()}**`, inline: true },
-                            { name: ` **${voiceLabel}**`, value: `**${evaluationSettings.minVoiceTime.resetWeekly ? userStats.formattedWeeklyVoiceTime || 'لا يوجد' : userStats.formattedVoiceTime || 'لا يوجد'}**`, inline: true },
+                            { name: ` **${voiceLabel}**`, value: `**${evaluationSettings.minVoiceTime.resetWeekly ? userStats.formattedWeeklyVoiceTime || 'No Data' : userStats.formattedVoiceTime || 'No Data'}**`, inline: true },
                             { name: ` **${reactionLabel}**`, value: `**${reactionCount.toLocaleString()}**`, inline: true },
-                            { name: ' **النشاط**', value: userStats.activeDays >= evaluationSettings.activeDaysPerWeek.minimum ? '🟢 **نشط**' : '🔴 **غير نشط**', inline: true },
-                            { name: '  **الخبرة**', value: timeInServerDays >= evaluationSettings.timeInServerDays.excellent ? '🟢 **خبرة ممتازة**' : timeInServerDays >= evaluationSettings.timeInServerDays.minimum ? '🟡 **خبرة جيدة**' : '🔴 **جديد**', inline: true }
+                            { name: ' **Active**', value: userStats.activeDays >= evaluationSettings.activeDaysPerWeek.minimum ? '🟢 **نشط**' : '🔴 **غير نشط**', inline: true },
+                            { name: '  **الخبرة حسب المدة**', value: timeInServerDays >= evaluationSettings.timeInServerDays.excellent ? '🟢 **خبرة ممتازة**' : timeInServerDays >= evaluationSettings.timeInServerDays.minimum ? '🟡 **خبرة جيدة**' : '🔴 **جديد**', inline: true }
                         ])
                         
                     break;
@@ -533,7 +558,7 @@ async function handleAdminApplicationInteraction(interaction) {
                         : '**لا توجد رولات إضافية**';
 
                     detailEmbed = colorManager.createEmbed()
-                        .setTitle(` ** Roles - ${userStats.displayName}**`)
+                        .setTitle(` ** Roles - ${userStats.mention}**`)
                         .setThumbnail(userStats.avatar)
                         .addFields([
                             { name: '**إجمالي الرولات**', value: `**${userStats.roleCount}** رول`, inline: true },
@@ -545,15 +570,15 @@ async function handleAdminApplicationInteraction(interaction) {
 
                 case 'advanced_stats':
                     detailEmbed = colorManager.createEmbed()
-                        .setTitle(` ** Stats - ${userStats.displayName}**`)
+                        .setTitle(` ** Stats - ${userStats.mention}**`)
                         .setThumbnail(userStats.avatar)
                         .addFields([
-                            { name: ' **الرسائل**', value: `**${userStats.realMessages.toLocaleString()}** رسالة`, inline: true },
-                            { name: ' **الوقت الصوتي**', value: `${userStats.formattedVoiceTime}`, inline: true },
-                            { name: ' **انضمامات الفويس**', value: `**${userStats.joinedChannels}** مرة`, inline: true },
-                            { name: ' **التفاعلات**', value: `**${userStats.reactionsGiven}** تفاعل`, inline: true },
-                            { name: ' **أيام النشاط**', value: `**${userStats.activeDays}** يوم`, inline: true },
-                            { name: ' **نوع الحساب**', value: userStats.isBot ? ' **بوت**' : ' **حقيقي**', inline: true }
+                            { name: ' **Messages**', value: `**${userStats.realMessages.toLocaleString()}** رسالة`, inline: true },
+                            { name: ' **In voice**', value: `${userStats.formattedVoiceTime}`, inline: true },
+                            { name: ' **Join voice**', value: `**${userStats.joinedChannels}** `, inline: true },
+                            { name: ' **Reactions**', value: `**${userStats.reactionsGiven}** `, inline: true },
+                            { name: ' **Active days**', value: `**${userStats.activeDays}** `, inline: true },
+                            { name: ' **Bot?**', value: userStats.isBot ? ' **بوت**' : ' **حقيقي**', inline: true }
                         ])
                         
                     break;
@@ -561,7 +586,7 @@ async function handleAdminApplicationInteraction(interaction) {
                 case 'simple_view':
                 default:
                     // العودة للعرض البسيط مع النصوص الديناميكية
-                    detailEmbed = await createUserStatsEmbed(userStats, colorManager, true, application.requesterName);
+                    detailEmbed = await createUserStatsEmbed(userStats, colorManager, true, application.requesterName, application.requesterMention);
                     break;
             }
 
@@ -569,12 +594,14 @@ async function handleAdminApplicationInteraction(interaction) {
             const approveButton = new ButtonBuilder()
                 .setCustomId(`admin_approve_${applicationId}`)
                 .setLabel('Approve')
-                .setStyle(ButtonStyle.Success);
+.setEmoji('<:emoji_1:1436850272734285856>')
+                .setStyle(ButtonStyle.Secondary);
 
             const rejectButton = new ButtonBuilder()
                 .setCustomId(`admin_reject_${applicationId}`)
                 .setLabel('Reject')
-                .setStyle(ButtonStyle.Danger);
+.setEmoji('<:emoji_1:1436850215154880553>')
+                .setStyle(ButtonStyle.Secondary);
 
             const detailsMenu = new StringSelectMenuBuilder()
                 .setCustomId(`admin_details_${applicationId}`)
@@ -622,214 +649,6 @@ async function handleAdminApplicationInteraction(interaction) {
                 embeds: [detailEmbed],
                 components: [row1, row2]
             });
-
-            return true;
-        }
-
-        // معالجة اختيار الأدوار مع تحسينات
-        if (customId.startsWith('admin_select_roles_')) {
-            const applicationId = customId.replace('admin_select_roles_', '');
-
-            // التحقق من صحة معرف الطلب
-            if (!applicationId || applicationId.length < 5) {
-                await interaction.reply({
-                    content: '**❌ معرف طلب التقديم غير صحيح.**',
-                    ephemeral: true
-                });
-                return true;
-            }
-
-            const selectedRoles = interaction.values;
-            if (!selectedRoles || selectedRoles.length === 0) {
-                await interaction.reply({
-                    content: '**❌ يجب اختيار رول واحد على الأقل.**',
-                    ephemeral: true
-                });
-                return true;
-            }
-
-            const settings = loadAdminApplicationSettings();
-            const application = settings.pendingApplications[applicationId];
-
-            if (!application) {
-                console.log(`❌ لم يتم العثور على الطلب: ${applicationId}`);
-                console.log('📋 الطلبات المتاحة:', Object.keys(settings.pendingApplications));
-                
-                await interaction.reply({
-                    content: '**❌ لم يتم العثور على طلب التقديم أو تم معالجته مسبقاً.**',
-                    ephemeral: true
-                });
-                return true;
-            }
-
-            console.log(`✅ تم العثور على طلب التقديم: ${applicationId} للمرشح: ${application.candidateId}`);
-
-            // محاولة جلب المرشح مع تحسين معالجة الأخطاء
-            let candidate;
-            try {
-                candidate = await interaction.guild.members.fetch(application.candidateId);
-                if (!candidate) {
-                    throw new Error('المرشح غير موجود');
-                }
-            } catch (fetchError) {
-                console.error('❌ خطأ في جلب المرشح:', fetchError);
-                
-                await interaction.reply({
-                    content: '**❌ لم يتم العثور على المرشح في السيرفر. ربما غادر المرشح السيرفر.**',
-                    ephemeral: true
-                });
-
-                // حذف الطلب لأن المرشح لم يعد موجود
-                delete settings.pendingApplications[applicationId];
-                saveAdminApplicationSettings(settings);
-                return true;
-            }
-
-            // التحقق من صحة الأدوار المختارة
-            const validRoles = [];
-            const invalidRoles = [];
-
-            for (const roleId of selectedRoles) {
-                const role = interaction.guild.roles.cache.get(roleId);
-                if (role) {
-                    if (!candidate.roles.cache.has(roleId)) {
-                        validRoles.push(roleId);
-                    } else {
-                        console.log(`⚠️ المرشح ${candidate.displayName} لديه بالفعل الدور: ${role.name}`);
-                    }
-                } else {
-                    invalidRoles.push(roleId);
-                }
-            }
-
-            if (invalidRoles.length > 0) {
-                console.warn('⚠️ أدوار غير صحيحة:', invalidRoles);
-            }
-
-            if (validRoles.length === 0) {
-                await interaction.reply({
-                    content: '⚠️ جميع الأدوار المختارة غير صحيحة أو موجودة لدى المرشح بالفعل.',
-                    ephemeral: true
-                });
-                return true;
-            }
-
-            // إضافة الأدوار مع معالجة محسنة للأخطاء
-            let addedRoles = [];
-            let failedRoles = [];
-
-            try {
-                // الرد تم تأجيله بالفعل في بداية الدالة
-                for (const roleId of validRoles) {
-                    try {
-                        const role = interaction.guild.roles.cache.get(roleId);
-                        await candidate.roles.add(roleId, `موافقة على طلب التقديم الإداري - بواسطة ${interaction.user.tag}`);
-                        addedRoles.push({ id: roleId, name: role.name });
-                        console.log(`✅ تم إضافة الدور ${role.name} للمرشح ${candidate.displayName}`);
-
-                        // تأخير بسيط بين إضافة الأدوار لتجنب rate limiting
-                        if (validRoles.length > 1) {
-                            await new Promise(resolve => setTimeout(resolve, 500));
-                        }
-                    } catch (roleError) {
-                        console.error(`❌ فشل في إضافة الدور ${roleId}:`, roleError);
-                        const role = interaction.guild.roles.cache.get(roleId);
-                        failedRoles.push(role ? role.name : `دور ${roleId}`);
-                    }
-                }
-
-            } catch (roleError) {
-                console.error('❌ خطأ عام في إضافة الأدوار:', roleError);
-                await interaction.reply({
-                    content: '**❌ حدث خطأ في إضافة لرولات الإدارية. تحقق من صلاحيات البوت وترتيب الرولات.**',
-                    ephemeral: true
-                });
-                return true;
-            }
-
-            // إنشاء تقرير النتائج
-            let resultMessage = '';
-            if (addedRoles.length > 0) {
-                resultMessage += `✅ تم إضافة: ${addedRoles.map(r => r.name).join(', ')}`;
-            }
-            if (failedRoles.length > 0) {
-                resultMessage += `\n❌ فشل في إضافة: ${failedRoles.join(', ')}`;
-            }
-
-            // تحديث الرسالة بالنتيجة النهائية
-            const approvedEmbed = colorManager.createEmbed()
-                .setTitle('✅ Accepted')
-                .setDescription(`**قبلة مسؤول الإدارة :** ${interaction.member.displayName}\n\n ** الاداري الجديد ** :  ${candidate.displayName}\n\n**الرول الذي عُطي :** ${addedRoles.length > 0 ? addedRoles.map(r => r.name).join('** , **') : 'لا يوجد'}\n\n**تاريخ الموافقة :** **${new Date().toLocaleDateString('en-US')}**`)
-                .setTimestamp();
-
-            if (failedRoles.length > 0) {
-                approvedEmbed.addFields([
-                    { name: ' ملاحظات', value: `فشل في إضافة: ${failedRoles.join(', ')}`, inline: false }
-                ]);
-            }
-
-            await interaction.update({
-                embeds: [approvedEmbed],
-                components: []
-            });
-
-            // إرسال إشعار مفصل للمرشح فقط إذا تم إضافة رول واحد على الأقل
-            if (addedRoles.length > 0) {
-                try {
-                    const approvalDate = new Date().toLocaleString('en-US', {
-                        timeZone: 'Asia/Riyadh',
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric',
-                        weekday: 'long',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit',
-                        hour12: true
-                    });
-
-                    const notificationEmbed = colorManager.createEmbed()
-                        .setTitle('تم قبول طلبك للإدارة')
-                        .setDescription(`**قبلك مسؤول الإدارة :** ${interaction.member.displayName}\n\n**رولك الذي عُطي :** ${addedRoles.map(r => r.name).join(', ')}\n\n**تاريخ الموافقة:** ${new Date().toLocaleDateString('en-US')}`)
-                        .setTimestamp();
-
-                    notificationEmbed.addFields([
-                        { name: '**اارولات الإدارية الجديدة**', value: `**${addedRoles.map(r => `\`${r.name}\``).join(' • ')}**`, inline: false },
-                        { name: '**تذكير مهم**', value: ' راجع روم القوانين وكل المعلومات التي تحتاجها كإداري', inline: false }
-                    ]);
-
-                    await candidate.user.send({ embeds: [notificationEmbed] });
-                    console.log(`📧 تم إرسال إشعار مفصل للمرشح ${candidate.displayName}`);
-                } catch (dmError) {
-                    console.log(`⚠️ تعذر إرسال إشعار خاص للمرشح ${candidate.displayName}:`, dmError.message);
-
-                    // محاولة إرسال في القناة العامة كبديل
-                    try {
-                        const publicNotification = `**تهانينا ${candidate}!** تم قبول طلبك للحصول على إدارة! (تم الإرسال هنا لأن رسائلك الخاصة مغلقة)`;
-                        await interaction.followUp({
-                            content: publicNotification,
-                            flags: 64
-                        });
-                    } catch (publicError) {
-                        console.log(`⚠️ فشل أيضاً في الإرسال في القناة العامة:`, publicError.message);
-                    }
-                }
-
-                // حذف الطلب من الطلبات المعلقة فقط بعد نجاح إضافة رول واحد على الأقل
-                delete settings.pendingApplications[applicationId];
-                const saveResult = saveAdminApplicationSettings(settings);
-
-                if (!saveResult) {
-                    console.error('❌ فشل في حفظ إعدادات التقديم بعد الموافقة');
-                } else {
-                    console.log('✅ تم حفظ إعدادات التقديم بنجاح وحذف الطلب');
-                }
-
-                console.log(`✅ تمت الموافقة على طلب إداري: ${application.candidateId} (${candidate.displayName}) بواسطة ${interaction.user.id} - أدوار مضافة: ${addedRoles.length}`);
-            } else {
-                // إذا فشلت جميع الأدوار، لا نحذف الطلب
-                console.log(`⚠️ فشلت جميع الأدوار في الإضافة، الطلب لا يزال موجوداً: ${applicationId}`);
-            }
 
             return true;
         }
@@ -893,81 +712,113 @@ async function handleAdminApplicationInteraction(interaction) {
         }
 
         if (isApproval) {
-            // معالجة الموافقة
-            const adminRoles = loadAdminRoles();
+            // معالجة الموافقة - استخدام الرولات المحددة مسبقاً
+            await interaction.deferReply({ ephemeral: true });
 
-            if (adminRoles.length === 0) {
-                await interaction.reply({
-                    content: '**❌ لا توجد رولات إدارية **',
-                    ephemeral: true
+            const adminRolesToGrant = settings.settings.adminRolesToGrant || [];
+
+            if (adminRolesToGrant.length === 0) {
+                await interaction.editReply({
+                    content: '**❌ لم يتم تحديد رولات إدارية لإعطائها. استخدم أمر `setadmin` لتحديد الرولات أولاً.**'
                 });
                 return true;
             }
 
-            // فلترة الأدوار حسب hierarchy - الأدوار الأقل من رتبة المعتمد
-            const approverHighestRole = interaction.member.roles.cache
-                .filter(role => role.id !== interaction.guild.id)
-                .sort((a, b) => b.position - a.position)
-                .first();
+            // فلترة الرولات الصحيحة وإضافتها
+            let addedRoles = [];
+            let failedRoles = [];
 
-            const availableRoles = adminRoles.filter(roleId => {
-                const role = interaction.guild.roles.cache.get(roleId);
-                if (!role || candidate.roles.cache.has(roleId)) return false;
+            for (const roleId of adminRolesToGrant) {
+                try {
+                    const role = interaction.guild.roles.cache.get(roleId);
+                    if (!role) {
+                        failedRoles.push(`رول ${roleId} (محذوف)`);
+                        continue;
+                    }
 
-                // إذا كان المعتمد مالك السيرفر أو مالك البوت، يمكنه إعطاء أي رول
-                const BOT_OWNERS = global.BOT_OWNERS || [];
-                const isOwner = BOT_OWNERS.includes(interaction.user.id) || interaction.guild.ownerId === interaction.user.id;
-                if (isOwner) return true;
+                    if (candidate.roles.cache.has(roleId)) {
+                        console.log(`⚠️ المرشح ${candidate.displayName} لديه بالفعل الدور: ${role.name}`);
+                        continue;
+                    }
 
-                // التحقق من hierarchy الأدوار
-                return !approverHighestRole || role.position < approverHighestRole.position;
-            });
+                    await candidate.roles.add(roleId, `موافقة على طلب التقديم الإداري - بواسطة ${interaction.user.tag}`);
+                    addedRoles.push({ id: roleId, name: role.name });
+                    console.log(`✅ تم إضافة الدور ${role.name} للمرشح ${candidate.displayName}`);
 
-            if (availableRoles.length === 0) {
-                await interaction.reply({
-                    content: '**❌ لا توجد رولات متاحة يمكنك منحها للعضو (بناءً على رتبتك في السيرفر).**',
-                    ephemeral: true
-                });
-                return true;
+                    // تأخير بسيط بين إضافة الأدوار لتجنب rate limiting
+                    if (adminRolesToGrant.length > 1) {
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                    }
+                } catch (roleError) {
+                    console.error(`❌ فشل في إضافة الدور ${roleId}:`, roleError);
+                    const role = interaction.guild.roles.cache.get(roleId);
+                    failedRoles.push(role ? role.name : `دور ${roleId}`);
+                }
             }
 
-            // إنشاء قائمة اختيار الأدوار
-            const roleOptions = availableRoles.slice(0, 25).map(roleId => {
-                const role = interaction.guild.roles.cache.get(roleId);
-                return {
-                    label: role.name,
-                    description: `أعضاء: ${role.members.size}`,
-                    value: roleId
-                };
-            });
-
-            const selectMenu = new StringSelectMenuBuilder()
-                .setCustomId(`admin_select_roles_${applicationId}`)
-                .setPlaceholder('اختر الرولات التي تريد منحها العضو')
-                .setMinValues(1)
-                .setMaxValues(Math.min(roleOptions.length, 25))
-                .addOptions(roleOptions);
-
-            const selectRow = new ActionRowBuilder().addComponents(selectMenu);
-
-            // تحديث الرسالة بقائمة الأدوار (لا نحذف الطلب هنا)
-            const selectEmbed = colorManager.createEmbed()
-                .setTitle('** Choose admin roles**')
-                .setDescription(`**اختر الرولات التي تريد منحها للعضو** **${candidate.displayName}**`)
+            // تحديث الرسالة الأصلية
+            const approvedEmbed = colorManager.createEmbed()
+                .setTitle('✅ Accepted')
+                .setDescription(`**By : <@${interaction.user.id}>\nNew Admin : <@${candidateId}> **`)
                 .addFields([
-                    { name: '**العضو **', value: candidate.toString(), inline: true },
-                    { name: '**معتمد من**', value: `**${interaction.member.displayName}**`, inline: true },
-                    { name: '**الرولات المتاحة**', value: `**${availableRoles.length}** رول`, inline: true }
+                    { 
+                        name: '**Added role**', 
+                        value: addedRoles.length > 0 ? addedRoles.map(r => r.name).slice(0, 5).join(', ') : 'لا يوجد', 
+                        inline: false 
+                    },
+                    { 
+                        name: '**Date**', 
+                        value: moment().tz('Asia/Riyadh').format('YYYY-MM-DD HH:mm'), 
+                        inline: true 
+                    }
                 ])
                 .setTimestamp();
 
-            await interaction.update({
-                embeds: [selectEmbed],
-                components: [selectRow]
+            if (failedRoles.length > 0) {
+                approvedEmbed.addFields([
+                    { name: 'ملاحظات', value: `فشل في إضافة : ${failedRoles.join(', ')}`, inline: false }
+                ]);
+            }
+
+            await interaction.message.edit({
+                embeds: [approvedEmbed],
+                components: []
             });
 
-            console.log(`عرض قائمة الأدوار للطلب: ${application.candidateId} بواسطة ${interaction.user.id}`);
-            // الطلب يبقى محفوظاً حتى يتم اكتمال عملية اختيار الأدوار
+            // إرسال إشعار للمرشح
+            if (addedRoles.length > 0) {
+                try {
+                    const notificationEmbed = colorManager.createEmbed()
+                        .setTitle('تم قبول طلبك للإدارة')
+                        .setDescription(`**قبلك مسؤول الإدارة :** <@${interaction.user.id}>\n\n**رولك الذي عُطي :** ${addedRoles.map(r => r.name).join(', ')}\n\n**تاريخ الموافقة :** ${moment().tz('Asia/Riyadh').format('YYYY-MM-DD HH:mm')}`)
+                        .setTimestamp();
+
+                    notificationEmbed.addFields([
+                        { name: '**الرولات الإدارية الجديدة**', value: `**${addedRoles.map(r => `\`${r.name}\``).join(' • ')}**`, inline: false },
+                        { name: '**تذكير مهم**', value: 'راجع روم القوانين وكل المعلومات التي تحتاجها كإداري', inline: false }
+                    ]);
+
+                    await candidate.user.send({ embeds: [notificationEmbed] });
+                    console.log(`📧 تم إرسال إشعار مفصل للمرشح <@${candidateId}>`);
+                } catch (dmError) {
+                    console.log(`⚠️ تعذر إرسال إشعار خاص للمرشح <@${candidateId}>:`, dmError.message);
+                }
+
+                // حذف الطلب من الطلبات المعلقة
+                delete settings.pendingApplications[applicationId];
+                const saveResult = saveAdminApplicationSettings(settings);
+
+                await interaction.editReply({
+                    content: `✅ تمت الموافقة على <@${candidateId}> بنجاح!\n**الرولات المضافة :** ${addedRoles.map(r => r.name).join(', ')}`
+                });
+
+                console.log(`✅ تمت الموافقة على طلب إداري: ${application.candidateId} (<@${candidateId}>) بواسطة ${interaction.user.id} - أدوار مضافة: ${addedRoles.length}`);
+            } else {
+                await interaction.editReply({
+                    content: '❌ فشلت جميع الأدوار في الإضافة. تحقق من صلاحيات البوت وترتيب الرولات.'
+                });
+            }
+
             return true;
 
         } else {
@@ -999,8 +850,20 @@ async function handleAdminApplicationInteraction(interaction) {
 
             const cooldownEnd = new Date(Date.now() + (settings.settings.rejectCooldownHours * 60 * 60 * 1000));
             const rejectedEmbed = colorManager.createEmbed()
-                .setTitle('rejected')
-                .setDescription(`**المسؤول :** ${interaction.member.displayName}\n\n ** المرفوض ** : ${candidate.displayName}\n\n**اخذ كولداون تقديم إدارة لمدة :** ${settings.settings.rejectCooldownHours} ساعة\n**ينتهي في :** ${cooldownEnd.toLocaleString('en-US')}`)
+                .setTitle('❌ Rejected')
+                .setDescription(`**المسؤول :** ${interaction.member.displayName}\n**المرفوض :** ${candidate.displayName}`)
+                .addFields([
+                    { 
+                        name: '**الكولداون**', 
+                        value: `${settings.settings.rejectCooldownHours} ساعة`, 
+                        inline: true 
+                    },
+                    { 
+                        name: '**ينتهي في**', 
+                        value: `<t:${Math.floor(cooldownEnd.getTime() / 1000)}:R>`, 
+                        inline: true 
+                    }
+                ])
                 .setTimestamp();
 
             await interaction.update({
