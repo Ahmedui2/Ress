@@ -766,6 +766,15 @@ client.once(Events.ClientReady, async () => {
         promoteManager.init(client);
         console.log('⚠️ تم تهيئة نظام الترقيات بدون قاعدة البيانات');
     }
+
+    // Initialize private roles manager
+    try {
+        const { initializePrivateRolesManager } = require('./utils/privateRolesManager');
+        await initializePrivateRolesManager();
+        console.log('✅ تم تهيئة نظام الرولات الخاصة بنجاح');
+    } catch (error) {
+        console.error('❌ خطأ في تهيئة نظام الرولات الخاصة:', error);
+    }
     // Initialize prayer reminder system
     try {
         const prayerReminder = require('./commands/prayer-reminder.js');
@@ -2209,6 +2218,76 @@ client.on('interactionCreate', async (interaction) => {
 
     // تم نقل معالجة تفاعلات التقارير إلى المعالج المستقل في report.js
     // لتجنب المعالجة المكررة والأخطاء
+
+    // --- Private Roles System Interaction Router ---
+    if (interaction.customId && (
+        interaction.customId.startsWith('private_') ||
+        interaction.customId.startsWith('pr_') ||
+        interaction.customId.startsWith('prc_') ||
+        interaction.customId.startsWith('pra_') ||
+        interaction.customId.startsWith('roly_') ||
+        interaction.customId.startsWith('rolk_') ||
+        interaction.customId.startsWith('perms_') ||
+        interaction.customId.startsWith('delete_') ||
+        interaction.customId.startsWith('setg_')
+    )) {
+        console.log(`معالجة تفاعل الرولات الخاصة: ${interaction.customId}`);
+
+        try {
+            const { getPrivateRolesManager } = require('./utils/privateRolesManager');
+            const prManager = getPrivateRolesManager();
+
+            if (interaction.isModalSubmit()) {
+                if (interaction.customId.startsWith('pr_')) {
+                    const privateCommand = client.commands.get('private');
+                    if (privateCommand && privateCommand.handleModalSubmit) {
+                        await privateCommand.handleModalSubmit(interaction, prManager, client);
+                    }
+                } else if (interaction.customId.startsWith('roly_')) {
+                    const rolyCommand = client.commands.get('رولي');
+                    if (rolyCommand && rolyCommand.handleModalSubmit) {
+                        await rolyCommand.handleModalSubmit(interaction, prManager, client);
+                    }
+                }
+                return;
+            }
+
+            if (interaction.customId.startsWith('rolk_')) {
+                const rolkCommand = client.commands.get('رولك');
+                if (rolkCommand && rolkCommand.handleApproval) {
+                    await rolkCommand.handleApproval(interaction, prManager, client, BOT_OWNERS);
+                }
+                return;
+            }
+
+            if (interaction.customId.startsWith('prc_')) {
+                const rolyCommand = client.commands.get('رولي');
+                if (rolyCommand) {
+                    const userRole = await prManager.getOwnedRole(interaction.user.id) || 
+                                     (await prManager.getUserRoles(interaction.user.id)).find(r => r.deputy_id === interaction.user.id);
+                    
+                    if (!userRole) {
+                        await interaction.reply({ content: '❌ ليس لديك رول خاص', ephemeral: true });
+                        return;
+                    }
+                }
+            }
+
+        } catch (error) {
+            console.error('خطأ في معالجة تفاعل الرولات الخاصة:', error);
+            try {
+                if (!interaction.replied && !interaction.deferred) {
+                    await interaction.reply({
+                        content: '❌ حدث خطأ في معالجة الطلب',
+                        flags: MessageFlags.Ephemeral
+                    });
+                }
+            } catch (replyError) {
+                console.error('خطأ في الرد:', replyError);
+            }
+        }
+        return;
+    }
 
     // --- SetAdmin System Interaction Router ---
     if (interaction.customId && (
@@ -4448,4 +4527,12 @@ process.on('unhandledRejection', (reason, promise) => {
   }
 });
 
-client.login('MTE0OTI1OTk4NjIyOTI3MjYwNg.Gjfqax.0nTjQ9PhqFiG1mtbyic_m0mPYpMzRmogKOjMXA');
+const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
+
+if (!DISCORD_TOKEN) {
+  console.error('❌ خطأ: لم يتم العثور على DISCORD_TOKEN في متغيرات البيئة');
+  console.error('💡 يرجى إضافة DISCORD_TOKEN في Secrets');
+  process.exit(1);
+}
+
+client.login(DISCORD_TOKEN);
