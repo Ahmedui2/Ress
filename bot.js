@@ -285,22 +285,7 @@ try {
     }, 3000); // انتظار 3 ثواني لضمان جاهزية البوت
   }
 
-  // فحص واستعادة الإيمبد المحذوف
-  if (setroomCommand.checkAndRestoreSetupEmbed) {
-    setTimeout(async () => {
-      await setroomCommand.checkAndRestoreSetupEmbed(client);
-      console.log('✅ تم فحص واستعادة إيمبد الروم');
-    }, 5000); // انتظار 5 ثواني لضمان جاهزية جميع القنوات
-  }
-
-  // تشغيل نظام الفحص الدوري المستمر
-  if (setroomCommand.startContinuousSetupEmbedCheck) {
-    setTimeout(() => {
-      setroomCommand.startContinuousSetupEmbedCheck(client);
-    }, 10000); // بدء بعد 10 ثواني من تشغيل البوت
-  }
-
-  // تشغيل نظام الحذف التلقائي للرسائل
+  // تشغيل نظام الحذف التلقائي للرسائل (يحذف كل الرسائل ويرسل الإيمبد كل 3 دقائق)
   if (setroomCommand.startAutoMessageDeletion) {
     setTimeout(() => {
       setroomCommand.startAutoMessageDeletion(client);
@@ -765,15 +750,6 @@ client.once(Events.ClientReady, async () => {
         // Initialize without database as fallback
         promoteManager.init(client);
         console.log('⚠️ تم تهيئة نظام الترقيات بدون قاعدة البيانات');
-    }
-
-    // Initialize private roles manager
-    try {
-        const { initializePrivateRolesManager } = require('./utils/privateRolesManager');
-        await initializePrivateRolesManager();
-        console.log('✅ تم تهيئة نظام الرولات الخاصة بنجاح');
-    } catch (error) {
-        console.error('❌ خطأ في تهيئة نظام الرولات الخاصة:', error);
     }
     // Initialize prayer reminder system
     try {
@@ -2219,76 +2195,6 @@ client.on('interactionCreate', async (interaction) => {
     // تم نقل معالجة تفاعلات التقارير إلى المعالج المستقل في report.js
     // لتجنب المعالجة المكررة والأخطاء
 
-    // --- Private Roles System Interaction Router ---
-    if (interaction.customId && (
-        interaction.customId.startsWith('private_') ||
-        interaction.customId.startsWith('pr_') ||
-        interaction.customId.startsWith('prc_') ||
-        interaction.customId.startsWith('pra_') ||
-        interaction.customId.startsWith('roly_') ||
-        interaction.customId.startsWith('rolk_') ||
-        interaction.customId.startsWith('perms_') ||
-        interaction.customId.startsWith('delete_') ||
-        interaction.customId.startsWith('setg_')
-    )) {
-        console.log(`معالجة تفاعل الرولات الخاصة: ${interaction.customId}`);
-
-        try {
-            const { getPrivateRolesManager } = require('./utils/privateRolesManager');
-            const prManager = getPrivateRolesManager();
-
-            if (interaction.isModalSubmit()) {
-                if (interaction.customId.startsWith('pr_')) {
-                    const privateCommand = client.commands.get('private');
-                    if (privateCommand && privateCommand.handleModalSubmit) {
-                        await privateCommand.handleModalSubmit(interaction, prManager, client);
-                    }
-                } else if (interaction.customId.startsWith('roly_')) {
-                    const rolyCommand = client.commands.get('رولي');
-                    if (rolyCommand && rolyCommand.handleModalSubmit) {
-                        await rolyCommand.handleModalSubmit(interaction, prManager, client);
-                    }
-                }
-                return;
-            }
-
-            if (interaction.customId.startsWith('rolk_')) {
-                const rolkCommand = client.commands.get('رولك');
-                if (rolkCommand && rolkCommand.handleApproval) {
-                    await rolkCommand.handleApproval(interaction, prManager, client, BOT_OWNERS);
-                }
-                return;
-            }
-
-            if (interaction.customId.startsWith('prc_')) {
-                const rolyCommand = client.commands.get('رولي');
-                if (rolyCommand) {
-                    const userRole = await prManager.getOwnedRole(interaction.user.id) || 
-                                     (await prManager.getUserRoles(interaction.user.id)).find(r => r.deputy_id === interaction.user.id);
-                    
-                    if (!userRole) {
-                        await interaction.reply({ content: '❌ ليس لديك رول خاص', ephemeral: true });
-                        return;
-                    }
-                }
-            }
-
-        } catch (error) {
-            console.error('خطأ في معالجة تفاعل الرولات الخاصة:', error);
-            try {
-                if (!interaction.replied && !interaction.deferred) {
-                    await interaction.reply({
-                        content: '❌ حدث خطأ في معالجة الطلب',
-                        flags: MessageFlags.Ephemeral
-                    });
-                }
-            } catch (replyError) {
-                console.error('خطأ في الرد:', replyError);
-            }
-        }
-        return;
-    }
-
     // --- SetAdmin System Interaction Router ---
     if (interaction.customId && (
         interaction.customId === 'setadmin_menu' ||
@@ -2296,13 +2202,20 @@ client.on('interactionCreate', async (interaction) => {
         interaction.customId === 'select_approver_type' ||
         interaction.customId === 'select_approver_roles' ||
         interaction.customId === 'select_approver_responsibility' ||
+        interaction.customId === 'select_acceptance_role' ||
         interaction.customId === 'set_pending_limit_modal' ||
         interaction.customId === 'set_cooldown_modal' ||
         interaction.customId === 'select_evaluation_setting' ||
         interaction.customId === 'messages_criteria_modal' ||
         interaction.customId === 'voice_time_criteria_modal' ||
         interaction.customId === 'activity_criteria_modal' ||
-        interaction.customId === 'server_time_criteria_modal'
+        interaction.customId === 'server_time_criteria_modal' ||
+        interaction.customId === 'reactions_criteria_modal' ||
+        interaction.customId.startsWith('channel_page_') ||
+        interaction.customId.startsWith('roles_page_') ||
+        interaction.customId.startsWith('acceptance_role_page_') ||
+        interaction.customId.startsWith('resp_page_') ||
+        interaction.customId === 'back_to_setadmin_menu'
     )) {
         console.log(`معالجة تفاعل setadmin: ${interaction.customId}`);
 
@@ -4527,12 +4440,4 @@ process.on('unhandledRejection', (reason, promise) => {
   }
 });
 
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-
-if (!DISCORD_TOKEN) {
-  console.error('❌ خطأ: لم يتم العثور على DISCORD_TOKEN في متغيرات البيئة');
-  console.error('💡 يرجى إضافة DISCORD_TOKEN في Secrets');
-  process.exit(1);
-}
-
-client.login(DISCORD_TOKEN);
+client.login('MTE0ODg4Mjc3NTQ0MTY5MDcyNQ.Gal49O.JUykqSzscJHSqF9Q1cNgZR69ma5qYkWRWObUn8');
