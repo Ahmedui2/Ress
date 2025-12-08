@@ -52,7 +52,7 @@ function formatDuration(milliseconds) {
     if (minutes > 0) parts.push(`**${minutes}**m`);
     if (seconds > 0 && days === 0) parts.push(`**${seconds}**s`);
 
-    return parts.length > 0 ? parts.join(' و ') : '**أقل من ثانية**';
+    return parts.length > 0 ? parts.join(' and ') : '**أقل من ثانية**';
 }
 
 // دالة لحساب الوقت الصوتي لهذا الأسبوع فقط من قاعدة البيانات
@@ -186,7 +186,7 @@ async function getRealUserStats(userId) {
         return {
             messages: stats.totalMessages || 0,
             voiceTime: stats.totalVoiceTime || 0,
-            lastActivity: stats.lastActivity ? new Date(stats.lastActivity).toLocaleDateString('ar-EG') : 'غير معروف',
+            lastActivity: stats.lastActivity ? new Date(stats.lastActivity).toLocaleDateString('en-US') : 'غير معروف',
             joinedChannels: stats.totalVoiceJoins || 0,
             reactionsGiven: stats.totalReactions || 0,
             activeDays: stats.activeDays || 0, // أيام النشاط الفعلية من قاعدة البيانات
@@ -262,7 +262,7 @@ function getLastActivity(member) {
         const realStats = getRealUserStats(member.id);
 
         if (realStats.lastActivity && realStats.lastActivity !== 'غير معروف') {
-            return `آخر نشاط: ${realStats.lastActivity}`;
+            return `آخر نشاط : ${realStats.lastActivity}`;
         }
 
         // التحقق من الحالة الحالية للمستخدم
@@ -298,8 +298,50 @@ async function collectUserStats(member) {
         const now = Date.now();
 
         // حساب الأوقات
-        const timeInServer = now - joinedAt;
-        const accountAge = now - createdAt;
+        const timeInServerMs = now - joinedAt; // Renamed from timeInServer to timeInServerMs for clarity
+        const accountAgeMs = now - createdAt; // Renamed from accountAge to accountAgeMs for clarity
+
+        // تنسيق المدة في السيرفر
+        const timeInServerFormatted = formatTimeInServer(timeInServerMs);
+
+        function formatTimeInServer(ms) {
+            const totalSeconds = Math.floor(ms / 1000);
+            const totalMinutes = Math.floor(totalSeconds / 60);
+            const totalHours = Math.floor(totalMinutes / 60);
+            const days = Math.floor(totalHours / 24);
+
+            const hours = totalHours % 24;
+            const minutes = totalMinutes % 60;
+
+            const parts = [];
+            if (days > 0) parts.push(`**${days}d**`);
+            if (hours > 0) parts.push(`**${hours}h**`);
+            if (minutes > 0) parts.push(`**${minutes}m**`);
+
+            return parts.length > 0 ? parts.join(' , ') : '**أقل من دقيقة**';
+        }
+
+        // تنسيق عمر الحساب
+        const accountAgeFormatted = formatAccountAge(createdAt);
+
+        function formatAccountAge(createdTimestamp) {
+            const ms = Date.now() - createdTimestamp;
+            const totalSeconds = Math.floor(ms / 1000);
+            const totalMinutes = Math.floor(totalSeconds / 60);
+            const totalHours = Math.floor(totalMinutes / 60);
+            const days = Math.floor(totalHours / 24);
+
+            const hours = totalHours % 24;
+            const minutes = totalMinutes % 60;
+
+            const parts = [];
+            if (days > 0) parts.push(`**${days}d**`);
+            if (hours > 0) parts.push(`**${hours}h**`);
+            if (minutes > 0) parts.push(`**${minutes}m**`);
+
+            return parts.length > 0 ? parts.join(' , ') : '**أقل من دقيقة**';
+        }
+
 
         // جمع الإحصائيات الفعلية
         const realStats = await getRealUserStats(userId);
@@ -370,10 +412,10 @@ async function collectUserStats(member) {
             }),
 
             // مدد زمنية
-            timeInServerMs: timeInServer,
-            timeInServerFormatted: formatDuration(timeInServer),
-            accountAgeMs: accountAge,
-            accountAgeFormatted: formatDuration(accountAge),
+            timeInServerMs: timeInServerMs,
+            timeInServerFormatted: timeInServerFormatted,
+            accountAgeMs: accountAgeMs,
+            accountAgeFormatted: accountAgeFormatted,
 
             // نشاط ووضع
             lastActivity: lastActivity,
@@ -595,7 +637,7 @@ function getCustomDownStatus(userId) {
 async function createUserStatsEmbed(userStats, colorManager, simpleView = false, requesterName = null, requesterMention = null) {
     // تحميل إعدادات التقييم في البداية
     const evaluationSettings = loadEvaluationSettings();
-    
+
     const embed = colorManager.createEmbed()
         .setTitle(simpleView ? ` تقديم إداري` : ` ${userStats.mention}`)
         .setThumbnail(userStats.avatar);
@@ -626,7 +668,7 @@ async function createUserStatsEmbed(userStats, colorManager, simpleView = false,
             },
             {
                 name: voiceLabel,
-                value: `**${formattedVoiceTime}**`,
+                value: `${formattedVoiceTime}`,
                 inline: true
             },
             {
