@@ -355,8 +355,27 @@ async function showAdminRolesActivity(message, client, ADMIN_ROLES) {
                 } else if (interaction.customId === 'rooms_mention') {
                     if (interaction.replied || interaction.deferred) return;
                     
+                    // فلترة الأعضاء - استبعاد الموجودين في الرومات الصوتية
+                    const membersToMention = [];
+                    for (const data of memberActivities) {
+                        try {
+                            const freshMember = await message.guild.members.fetch(data.member.id, { force: true });
+                            const isInVoice = freshMember.voice && 
+                                            freshMember.voice.channelId && 
+                                            freshMember.voice.channel !== null &&
+                                            message.guild.channels.cache.has(freshMember.voice.channelId);
+                            
+                            if (!isInVoice) {
+                                membersToMention.push(data.member.id);
+                            }
+                        } catch (error) {
+                            // إذا فشل جلب العضو، نضيفه للقائمة احتياطياً
+                            membersToMention.push(data.member.id);
+                        }
+                    }
+                    
                     // تقسيم المنشنات إلى مجموعات لتجنب تجاوز حد 2000 حرف
-                    const mentions = memberActivities.map(data => `<@${data.member.id}>`);
+                    const mentions = membersToMention.map(id => `<@${id}>`);
                     const mentionChunks = [];
                     let currentChunk = '';
                     
@@ -372,16 +391,17 @@ async function showAdminRolesActivity(message, client, ADMIN_ROLES) {
                         mentionChunks.push(currentChunk.trim());
                     }
 
+                    const skippedCount = memberActivities.length - membersToMention.length;
                     const mentionEmbed = colorManager.createEmbed()
                         .setTitle(`**Admin Roles**`)
-                        .setDescription(`**تم منشن ${memberActivities.length} عضو من رولات الأدمن**\n**عدد الرسائل:** ${mentionChunks.length}`)
+                        .setDescription(`**تم منشن ${membersToMention.length} عضو من رولات الأدمن**\n**تم استبعاد ${skippedCount} عضو (في الرومات الصوتية)**\n**عدد الرسائل:** ${mentionChunks.length}`)
                         .setThumbnail(client.user.displayAvatarURL({ format: 'png', size: 128 }))
                         .setFooter({ text: 'By Ahmed.' })
                         .setTimestamp();
 
                     // إرسال أول رسالة كـ update
                     await interaction.update({
-                        content: mentionChunks[0] || 'لا يوجد أعضاء',
+                        content: mentionChunks[0] || 'لا يوجد أعضاء للمنشن (جميعهم في الرومات الصوتية)',
                         embeds: [mentionEmbed],
                         components: generateButtons(currentPage)
                     });
@@ -748,8 +768,27 @@ async function showRoleActivity(message, role, client) {
                 } else if (interaction.customId === 'rooms_mention') {
                     if (interaction.replied || interaction.deferred) return;
                     
+                    // فلترة الأعضاء - استبعاد الموجودين في الرومات الصوتية
+                    const membersToMention = [];
+                    for (const data of memberActivities) {
+                        try {
+                            const freshMember = await message.guild.members.fetch(data.member.id, { force: true });
+                            const isInVoice = freshMember.voice && 
+                                            freshMember.voice.channelId && 
+                                            freshMember.voice.channel !== null &&
+                                            message.guild.channels.cache.has(freshMember.voice.channelId);
+                            
+                            if (!isInVoice) {
+                                membersToMention.push(data.member.id);
+                            }
+                        } catch (error) {
+                            // إذا فشل جلب العضو، نضيفه للقائمة احتياطياً
+                            membersToMention.push(data.member.id);
+                        }
+                    }
+                    
                     // تقسيم المنشنات إلى مجموعات لتجنب تجاوز حد 2000 حرف
-                    const mentions = memberActivities.map(data => `<@${data.member.id}>`);
+                    const mentions = membersToMention.map(id => `<@${id}>`);
                     const mentionChunks = [];
                     let currentChunk = '';
                     
@@ -765,16 +804,17 @@ async function showRoleActivity(message, role, client) {
                         mentionChunks.push(currentChunk.trim());
                     }
 
+                    const skippedCount = memberActivities.length - membersToMention.length;
                     const mentionEmbed = colorManager.createEmbed()
                         .setTitle(`**Mention: ${role.name}**`)
-                        .setDescription(`**تم منشن ${memberActivities.length} عضو من الرول**\n**عدد الرسائل:** ${mentionChunks.length}`)
+                        .setDescription(`**تم منشن ${membersToMention.length} عضو من الرول**\n**تم استبعاد ${skippedCount} عضو (في الرومات الصوتية)**\n**عدد الرسائل:** ${mentionChunks.length}`)
                         .setThumbnail(client.user.displayAvatarURL({ format: 'png', size: 128 }))
                         .setFooter({ text: 'By Ahmed.' })
                         .setTimestamp();
 
                     // إرسال أول رسالة كـ update
                     await interaction.update({
-                        content: mentionChunks[0] || 'لا يوجد أعضاء',
+                        content: mentionChunks[0] || 'لا يوجد أعضاء للمنشن (جميعهم في الرومات الصوتية)',
                         embeds: [mentionEmbed],
                         components: generateButtons(currentPage)
                     });

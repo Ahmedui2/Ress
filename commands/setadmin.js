@@ -185,6 +185,11 @@ module.exports = {
                     value: 'set_approvers'
                 },
                 {
+                    label: 'Acceptance Role',
+                    description: 'تحديد الرول الذي يُعطى للمرشح عند قبوله',
+                    value: 'set_acceptance_role'
+                },
+                {
                     label: 'Pending Limit',
                     description: 'تحديد عدد الطلبات المعلقة المسموح لكل إداري',
                     value: 'set_pending_limit'
@@ -532,6 +537,11 @@ async function handleSelectRoles(interaction, settings) {
                         value: 'set_approvers'
                     },
                     {
+                        label: 'Acceptance Role',
+                        description: 'تحديد الرول الذي يُعطى للمرشح عند قبوله',
+                        value: 'set_acceptance_role'
+                    },
+                    {
                         label: 'Pending Limit',
                         description: 'تحديد عدد الطلبات المعلقة المسموح لكل إداري',
                         value: 'set_pending_limit'
@@ -722,6 +732,11 @@ async function handleSelectResponsibility(interaction, settings) {
                             label: 'Approvers',
                             description: 'تحديد من يستطيع الموافقة على طلبات التقديم',
                             value: 'set_approvers'
+                        },
+                        {
+                            label: 'Acceptance Role',
+                            description: 'تحديد الرول الذي يُعطى للمرشح عند قبوله',
+                            value: 'set_acceptance_role'
                         },
                         {
                             label: 'Pending Limit',
@@ -1386,6 +1401,9 @@ async function handleInteraction(interaction) {
                 case 'set_approvers':
                     await handleSetApproversInteraction(interaction, settings);
                     break;
+                case 'set_acceptance_role':
+                    await handleSetAcceptanceRoleInteraction(interaction, settings);
+                    break;
                 case 'set_pending_limit':
                     await handleSetPendingLimitInteraction(interaction, settings);
                     break;
@@ -1470,6 +1488,41 @@ async function handleInteraction(interaction) {
             } else {
                 await interaction.update({
                     content: 'فشل في حفظ الإعدادات',
+                    components: []
+                });
+            }
+            return;
+        }
+
+        // معالجة اختيار رول القبول الإداري
+        if (customId === 'select_acceptance_role') {
+            const selectedRoles = interaction.values;
+            const roleNames = selectedRoles.map(roleId => 
+                interaction.guild.roles.cache.get(roleId)?.name || 'رول غير معروف'
+            );
+
+            settings.settings.adminRolesToGrant = selectedRoles;
+
+            if (saveAdminApplicationSettings(settings)) {
+                const successEmbed = colorManager.createEmbed()
+                    .setTitle('✅ تم تحديد رول القبول الإداري')
+                    .setDescription(`**الرولات المحددة:**\n${roleNames.map((name, i) => `${i + 1}. ${name}`).join('\n')}`)
+                    .addFields([
+                        { name: 'عدد الرولات', value: `${selectedRoles.length}`, inline: true },
+                        { name: 'الحالة', value: 'تم الحفظ بنجاح ✅', inline: true }
+                    ])
+                    .setTimestamp();
+
+                await interaction.update({
+                    embeds: [successEmbed],
+                    content: null,
+                    components: []
+                });
+                
+                console.log(`✅ تم حفظ رولات القبول الإداري: ${selectedRoles.join(', ')}`);
+            } else {
+                await interaction.update({
+                    content: '❌ فشل في حفظ الإعدادات',
                     components: []
                 });
             }
@@ -1869,6 +1922,185 @@ async function handleSetChannelInteraction(interaction, settings) {
                         label: 'Approvers',
                         description: 'تحديد من يستطيع الموافقة على طلبات التقديم',
                         value: 'set_approvers'
+                    },
+                    {
+                        label: 'Acceptance Role',
+                        description: 'تحديد الرول الذي يُعطى للمرشح عند قبوله',
+                        value: 'set_acceptance_role'
+                    },
+                    {
+                        label: 'Pending Limit',
+                        description: 'تحديد عدد الطلبات المعلقة المسموح لكل إداري',
+                        value: 'set_pending_limit'
+                    },
+                    {
+                        label: 'Cooldown Duration',
+                        description: 'تحديد مدة منع التقديم بعد الرفض (بالساعات)',
+                        value: 'set_cooldown'
+                    },
+                    {
+                        label: 'Evaluation Settings',
+                        description: 'تعديل معايير التقييم (الرسائل، النشاط، الوقت في السيرفر، الوقت الصوتي)',
+                        value: 'set_evaluation'
+                    },
+                    {
+                        label: 'Current Settings',
+                        description: 'عرض جميع الإعدادات الحالية للنظام',
+                        value: 'show_settings'
+                    }
+                ]);
+
+            const row = new ActionRowBuilder().addComponents(mainMenu);
+            
+            const embed = colorManager.createEmbed()
+                .setTitle('Admin system')
+                .setDescription('** اختار ماذا تريد ان تعدل فالنظام الاداري **')
+                .setTimestamp();
+
+            await i.update({
+                embeds: [embed],
+                components: [row]
+            });
+            collector.stop();
+        }
+    });
+
+    collector.on('end', async (collected, reason) => {
+        if (reason === 'time') {
+            await interaction.editReply({
+                content: '**انتهت مهلة الانتظار.**',
+                components: []
+            }).catch(() => {});
+        }
+    });
+}
+
+async function handleSetAcceptanceRoleInteraction(interaction, settings) {
+    const allRoles = interaction.guild.roles.cache
+        .filter(role => !role.managed && role.id !== interaction.guild.id)
+        .sort((a, b) => b.position - a.position);
+
+    if (allRoles.size === 0) {
+        return interaction.update({
+            content: 'لا توجد رولات متاحة في السيرفر',
+            components: []
+        });
+    }
+
+    let currentPage = 0;
+    const rolesPerPage = 25;
+    const totalPages = Math.ceil(allRoles.size / rolesPerPage);
+
+    const getRolePage = (page) => {
+        const start = page * rolesPerPage;
+        const end = start + rolesPerPage;
+        return Array.from(allRoles.values()).slice(start, end);
+    };
+
+    const createComponents = (page) => {
+        const roles = getRolePage(page);
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('select_acceptance_role')
+            .setPlaceholder('اختر الرول الذي يُعطى عند القبول')
+            .setMaxValues(Math.min(roles.length, 25))
+            .addOptions(
+                roles.map(role => ({
+                    label: role.name,
+                    description: `أعضاء: ${role.members.size}`,
+                    value: role.id
+                }))
+            );
+
+        const components = [new ActionRowBuilder().addComponents(selectMenu)];
+
+        // أزرار التنقل
+        const navigationButtons = [];
+        
+        if (totalPages > 1) {
+            navigationButtons.push(
+                new ButtonBuilder()
+                    .setCustomId('acceptance_role_page_prev')
+                    .setLabel('◀ السابق')
+                    .setStyle(ButtonStyle.Primary)
+                    .setDisabled(page === 0),
+                new ButtonBuilder()
+                    .setCustomId('acceptance_role_page_info')
+                    .setLabel(`صفحة ${page + 1}/${totalPages}`)
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(true),
+                new ButtonBuilder()
+                    .setCustomId('acceptance_role_page_next')
+                    .setLabel('التالي ▶')
+                    .setStyle(ButtonStyle.Primary)
+                    .setDisabled(page === totalPages - 1)
+            );
+        }
+        
+        // زر العودة
+        navigationButtons.push(
+            new ButtonBuilder()
+                .setCustomId('back_to_setadmin_menu')
+                .setLabel('🔙 عودة')
+                .setStyle(ButtonStyle.Secondary)
+        );
+
+        if (navigationButtons.length > 0) {
+            components.push(new ActionRowBuilder().addComponents(navigationButtons));
+        }
+
+        return components;
+    };
+
+    // عرض الرولات الحالية المحددة
+    const currentRoles = settings.settings.adminRolesToGrant || [];
+    const currentRolesText = currentRoles.length > 0 
+        ? `\n**الرولات الحالية:** ${currentRoles.map(id => interaction.guild.roles.cache.get(id)?.name || 'رول محذوف').join(', ')}`
+        : '\n**لم يتم تحديد رول بعد**';
+
+    await interaction.update({
+        content: `**اختر الرول الذي يُعطى للمرشح عند قبوله:**${currentRolesText}\n(إجمالي: ${allRoles.size} رول)`,
+        components: createComponents(currentPage)
+    });
+
+    // إنشاء collector للتعامل مع التفاعلات
+    const collector = interaction.channel.createMessageComponentCollector({
+        filter: i => i.user.id === interaction.user.id,
+        time: 120000
+    });
+
+    collector.on('collect', async (i) => {
+        if (i.customId === 'acceptance_role_page_prev') {
+            currentPage = Math.max(0, currentPage - 1);
+            await i.update({
+                content: `**اختر الرول الذي يُعطى للمرشح عند قبوله:**${currentRolesText}\n(إجمالي: ${allRoles.size} رول)`,
+                components: createComponents(currentPage)
+            });
+        } else if (i.customId === 'acceptance_role_page_next') {
+            currentPage = Math.min(totalPages - 1, currentPage + 1);
+            await i.update({
+                content: `**اختر الرول الذي يُعطى للمرشح عند قبوله:**${currentRolesText}\n(إجمالي: ${allRoles.size} رول)`,
+                components: createComponents(currentPage)
+            });
+        } else if (i.customId === 'back_to_setadmin_menu') {
+            // العودة للقائمة الرئيسية
+            const mainMenu = new StringSelectMenuBuilder()
+                .setCustomId('setadmin_menu')
+                .setPlaceholder('اختر الإعداد المراد تعديله')
+                .addOptions([
+                    {
+                        label: 'Application Channel',
+                        description: 'تحديد الروم التي ستظهر بها طلبات التقديم الإداري',
+                        value: 'set_channel'
+                    },
+                    {
+                        label: 'Approvers',
+                        description: 'تحديد من يستطيع الموافقة على طلبات التقديم',
+                        value: 'set_approvers'
+                    },
+                    {
+                        label: 'Acceptance Role',
+                        description: 'تحديد الرول الذي يُعطى للمرشح عند قبوله',
+                        value: 'set_acceptance_role'
                     },
                     {
                         label: 'Pending Limit',
@@ -2280,6 +2512,15 @@ async function handleShowSettingsInteraction(interaction, settings) {
         approversText = `المسؤولية: ${set.approvers.list[0]}`;
     }
 
+    // رول القبول الإداري
+    let acceptanceRoleText = 'غير محدد';
+    if (set.adminRolesToGrant && set.adminRolesToGrant.length > 0) {
+        const roleNames = set.adminRolesToGrant
+            .map(roleId => guild.roles.cache.get(roleId)?.name || 'رول محذوف')
+            .join(', ');
+        acceptanceRoleText = roleNames;
+    }
+
     const eval = set.evaluation || {};
     const minMessages = eval.minMessages || { weak: 20, good: 50, excellent: 100 };
     const minVoiceTime = eval.minVoiceTime || { weak: 2 * 60 * 60 * 1000, good: 5 * 60 * 60 * 1000, excellent: 10 * 60 * 60 * 1000 };
@@ -2292,6 +2533,7 @@ async function handleShowSettingsInteraction(interaction, settings) {
         .addFields([
             { name: 'Application Channel', value: channelText, inline: true },
             { name: 'Approvers', value: approversText, inline: true },
+            { name: 'Acceptance Role', value: acceptanceRoleText, inline: true },
             { name: 'Pending Limit', value: `${set.maxPendingPerAdmin} طلبات`, inline: true },
             { name: 'Cooldown Duration', value: `${set.rejectCooldownHours} ساعة`, inline: true },
             { name: 'Current Pending Applications', value: `${Object.keys(settings.pendingApplications).length} طلب`, inline: true },

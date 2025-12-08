@@ -89,6 +89,7 @@ function candidateHasAdminRoles(member) {
 
 // التحقق من الكولداون
 function isInCooldown(userId, settings) {
+    if (!settings.rejectedCooldowns) return false;
     const cooldown = settings.rejectedCooldowns[userId];
     if (!cooldown) return false;
 
@@ -111,11 +112,13 @@ function isInCooldown(userId, settings) {
 
 // التحقق من الطلبات المعلقة للمرشح
 function hasPendingApplication(userId, settings) {
+    if (!settings.pendingApplications) return false;
     return Object.values(settings.pendingApplications).some(app => app.candidateId === userId);
 }
 
 // عد الطلبات المعلقة للإداري
 function countPendingApplicationsByAdmin(adminId, settings) {
+    if (!settings.pendingApplications) return 0;
     return Object.values(settings.pendingApplications).filter(app => app.requesterId === adminId).length;
 }
 
@@ -125,9 +128,9 @@ function formatTimeLeft(milliseconds) {
     const minutes = Math.floor((milliseconds % (1000 * 60 * 60)) / (1000 * 60));
 
     if (hours > 0) {
-        return `${hours}h and ${minutes}m`;
+        return `**${hours}h and ${minutes}m**`;
     } else {
-        return `${minutes}m`;
+        return `**${minutes}m**`;
     }
 }
 
@@ -162,6 +165,14 @@ module.exports = {
             if (!applicationChannel) {
                 await interaction.reply({
                     content: '**روم التقديم الإداري غير موجودة أو محذوفة. استخدم أمر `setadmin` لإعادة تحديدها.**'
+                });
+                return;
+            }
+
+            // التحقق من تحديد رول القبول
+            if (!settings.settings.adminRolesToGrant || settings.settings.adminRolesToGrant.length === 0) {
+                await interaction.reply({
+                    content: '**لم يتم تحديد رول القبول الإداري بعد. استخدم أمر `setadmin` وحدد \"Acceptance Role\" أولاً.**'
                 });
                 return;
             }
@@ -245,7 +256,7 @@ module.exports = {
 
             // إنشاء embed محسّن للآيفون
             const simpleEmbed = await createUserStatsEmbed(userStats, colorManager, true, interaction.member.displayName, `<@${interaction.user.id}>`);
-            
+
             // تقليل حجم الـ embed للآيفون
             if (simpleEmbed.data && simpleEmbed.data.fields) {
                 // الحد الأقصى للحقول: 3-4 حقول لضمان الظهور الكامل
@@ -253,7 +264,7 @@ module.exports = {
                 if (simpleEmbed.data.fields.length > maxFields) {
                     simpleEmbed.data.fields = simpleEmbed.data.fields.slice(0, maxFields);
                 }
-                
+
                 // تقصير نصوص الحقول إذا كانت طويلة
                 simpleEmbed.data.fields = simpleEmbed.data.fields.map(field => {
                     if (field.value && field.value.length > 200) {
@@ -262,7 +273,7 @@ module.exports = {
                     return field;
                 });
             }
-            
+
             // تقصير الوصف إذا كان طويلاً
             if (simpleEmbed.data && simpleEmbed.data.description && simpleEmbed.data.description.length > 500) {
                 simpleEmbed.data.description = simpleEmbed.data.description.substring(0, 497) + '...';
@@ -290,31 +301,31 @@ module.exports = {
                         label: 'Dates',
                         description: 'عرض تواريخ الانضمام وإنشاء الحساب',
                         value: 'dates',
-                        
+
                     },
                     {
                         label: 'Evaluation',
                         description: 'عرض تقييم العضو والمعايير',
                         value: 'evaluation',
-                        
+
                     },
                     {
                         label: 'Roles',
                         description: 'عرض جميع الرولات للعضو',
                         value: 'roles',
-                       
+
                     },
                     {
                         label: 'Stats',
                         description: 'عرض تفاصيل النشاط',
                         value: 'advanced_stats',
-                       
+
                     },
                     {
                         label: 'first ep',
                         description: 'العودة للعرض الأساسي',
                         value: 'simple_view',
-                        
+
                     }
                 ]);
 
@@ -343,8 +354,8 @@ module.exports = {
 
                 if (saveAdminApplicationSettings(settings)) {
                     // إرسال رسالة نجاح للمستخدم
-                    
-                    
+
+
 
                     // إضافة ريأكشن للرسالة الأصلية
                     if (interaction.message) {
@@ -354,7 +365,7 @@ module.exports = {
                             console.log('⚠️ فشل إضافة رد الفعل (الرسالة قد تكون محذوفة):', reactError.message);
                         }
                     }
-            
+
                     console.log(`📋 تم إنشاء طلب تقديم إداري: ${candidateId} بواسطة ${interaction.user.id}`);
                 } else {
                     await interaction.editReply({
@@ -365,7 +376,7 @@ module.exports = {
             } catch (channelError) {
                 console.error('خطأ في إرسال الطلب للقناة:', channelError);
 
-                
+
                 if (interaction.message) {
                         try {
                             await interaction.message.react('❌️');
@@ -544,12 +555,12 @@ async function handleAdminApplicationInteraction(interaction) {
                         .setThumbnail(userStats.avatar)
                         .addFields([
                             { name: ` **${messageLabel}**`, value: `**${messageCount.toLocaleString()}**`, inline: true },
-                            { name: ` **${voiceLabel}**`, value: `**${evaluationSettings.minVoiceTime.resetWeekly ? userStats.formattedWeeklyVoiceTime || 'No Data' : userStats.formattedVoiceTime || 'No Data'}**`, inline: true },
+                            { name: ` **${voiceLabel}**`, value: `${evaluationSettings.minVoiceTime.resetWeekly ? userStats.formattedWeeklyVoiceTime || 'No Data' : userStats.formattedVoiceTime || 'No Data'}`, inline: true },
                             { name: ` **${reactionLabel}**`, value: `**${reactionCount.toLocaleString()}**`, inline: true },
                             { name: ' **Active**', value: userStats.activeDays >= evaluationSettings.activeDaysPerWeek.minimum ? '🟢 **نشط**' : '🔴 **غير نشط**', inline: true },
                             { name: '  **الخبرة حسب المدة**', value: timeInServerDays >= evaluationSettings.timeInServerDays.excellent ? '🟢 **خبرة ممتازة**' : timeInServerDays >= evaluationSettings.timeInServerDays.minimum ? '🟡 **خبرة جيدة**' : '🔴 **جديد**', inline: true }
                         ])
-                        
+
                     break;
 
                 case 'roles':
@@ -565,7 +576,7 @@ async function handleAdminApplicationInteraction(interaction) {
                             { name: ' **حالة الإدارة**', value: userStats.hasAdminRoles ? '✅ **لديه رولات إدارية**' : '❌ **لا يملك رولات إدارية**', inline: true },
                             { name: '**قائمة لرولات**', value: rolesText, inline: false }
                         ])
-                        
+
                     break;
 
                 case 'advanced_stats':
@@ -580,7 +591,7 @@ async function handleAdminApplicationInteraction(interaction) {
                             { name: ' **Active days**', value: `**${userStats.activeDays}** `, inline: true },
                             { name: ' **Bot?**', value: userStats.isBot ? ' **بوت**' : ' **حقيقي**', inline: true }
                         ])
-                        
+
                     break;
 
                 case 'simple_view':
@@ -611,31 +622,31 @@ async function handleAdminApplicationInteraction(interaction) {
                         label: 'Dates',
                         description: 'عرض تواريخ الانضمام وإنشاء الحساب',
                         value: 'dates',
-                        
+
                     },
                     {
                         label: 'evaluation',
                         description: 'عرض تقييم العضو والمعايير',
                         value: 'evaluation',
-                        
+
                     },
                     {
                         label: 'Roles',
                         description: 'عرض جميع رولات العضو',
                         value: 'roles',
-                        
+
                     },
                     {
                         label: 'Stats',
                         description: 'عرض تفاصيل النشاط للعضو',
                         value: 'advanced_stats',
-                        
+
                     },
                     {
                         label: 'First emp',
                         description: 'العودة للعرض الأساسي',
                         value: 'simple_view',
-                        
+
                     }
                 ]);
 
@@ -672,7 +683,7 @@ async function handleAdminApplicationInteraction(interaction) {
 
         if (!application) {
             console.log('لم يتم العثور على الطلب:', applicationId);
-            
+
             await interaction.reply({
                 content: '**❌ لم يتم العثور على طلب التقديم أو تم معالجته مسبقاً.**',
                 ephemeral: true
@@ -697,17 +708,17 @@ async function handleAdminApplicationInteraction(interaction) {
             // حذف الطلب إذا كان العضو غير موجود وتحديث الرسالة
             delete settings.pendingApplications[applicationId];
             saveAdminApplicationSettings(settings);
-            
+
             const errorEmbed = colorManager.createEmbed()
                 .setTitle('❌ خطأ')
                 .setDescription('**لم يتم العثور على العضو في السيرفر. تم حذف الطلب.**')
                 .setTimestamp();
-            
+
             await interaction.update({
                 embeds: [errorEmbed],
                 components: []
             });
-            
+
             return true;
         }
 
@@ -759,7 +770,8 @@ async function handleAdminApplicationInteraction(interaction) {
             // تحديث الرسالة الأصلية
             const approvedEmbed = colorManager.createEmbed()
                 .setTitle('✅ Accepted')
-                .setDescription(`**By : <@${interaction.user.id}>\nNew Admin : <@${candidateId}> **`)
+                .setDescription(`**By : <@${interaction.user.id}>\nNew Admin : <@${application.candidateId}> **`)
+.setThumbnail('https://cdn.discordapp.com/attachments/1438625863686947047/1444408639963267265/approved.png?ex=692c99df&is=692b485f&hm=bfba43d2e50051a44fca622483a3d952474c0e56beeb2900c6732debd241a5d4&')
                 .addFields([
                     { 
                         name: '**Added role**', 
@@ -791,6 +803,7 @@ async function handleAdminApplicationInteraction(interaction) {
                     const notificationEmbed = colorManager.createEmbed()
                         .setTitle('تم قبول طلبك للإدارة')
                         .setDescription(`**قبلك مسؤول الإدارة :** <@${interaction.user.id}>\n\n**رولك الذي عُطي :** ${addedRoles.map(r => r.name).join(', ')}\n\n**تاريخ الموافقة :** ${moment().tz('Asia/Riyadh').format('YYYY-MM-DD HH:mm')}`)
+.setThumbnail('https://cdn.discordapp.com/attachments/1438625863686947047/1444408639963267265/approved.png?ex=692c99df&is=692b485f&hm=bfba43d2e50051a44fca622483a3d952474c0e56beeb2900c6732debd241a5d4&')
                         .setTimestamp();
 
                     notificationEmbed.addFields([
@@ -799,9 +812,9 @@ async function handleAdminApplicationInteraction(interaction) {
                     ]);
 
                     await candidate.user.send({ embeds: [notificationEmbed] });
-                    console.log(`📧 تم إرسال إشعار مفصل للمرشح <@${candidateId}>`);
+                    console.log(`📧 تم إرسال إشعار مفصل للمرشح <@${application.candidateId}>`);
                 } catch (dmError) {
-                    console.log(`⚠️ تعذر إرسال إشعار خاص للمرشح <@${candidateId}>:`, dmError.message);
+                    console.log(`⚠️ تعذر إرسال إشعار خاص للمرشح <@${application.candidateId}>:`, dmError.message);
                 }
 
                 // حذف الطلب من الطلبات المعلقة
@@ -809,10 +822,10 @@ async function handleAdminApplicationInteraction(interaction) {
                 const saveResult = saveAdminApplicationSettings(settings);
 
                 await interaction.editReply({
-                    content: `✅ تمت الموافقة على <@${candidateId}> بنجاح!\n**الرولات المضافة :** ${addedRoles.map(r => r.name).join(', ')}`
+                    content: `✅ تمت الموافقة على <@${application.candidateId}> بنجاح!\n**الرولات المضافة :** ${addedRoles.map(r => r.name).join(', ')}`
                 });
 
-                console.log(`✅ تمت الموافقة على طلب إداري: ${application.candidateId} (<@${candidateId}>) بواسطة ${interaction.user.id} - أدوار مضافة: ${addedRoles.length}`);
+                console.log(`✅ تمت الموافقة على طلب إداري: ${application.candidateId} (<@${application.candidateId}>) بواسطة ${interaction.user.id} - أدوار مضافة: ${addedRoles.length}`);
             } else {
                 await interaction.editReply({
                     content: '❌ فشلت جميع الأدوار في الإضافة. تحقق من صلاحيات البوت وترتيب الرولات.'
@@ -851,7 +864,8 @@ async function handleAdminApplicationInteraction(interaction) {
             const cooldownEnd = new Date(Date.now() + (settings.settings.rejectCooldownHours * 60 * 60 * 1000));
             const rejectedEmbed = colorManager.createEmbed()
                 .setTitle('❌ Rejected')
-                .setDescription(`**المسؤول :** ${interaction.member.displayName}\n**المرفوض :** ${candidate.displayName}`)
+                .setDescription(`**المسؤول :** <@${interaction.user.id}>\n**المرفوض :** <@${application.candidateId}>`)
+.setThumbnail('https://cdn.discordapp.com/attachments/1438625863686947047/1444408644006314035/rejected.png?ex=692c99e0&is=692b4860&hm=575d50c46f5b1d513caadd15ce52312638a201f293b7190bba843641f8ccf84e&')
                 .addFields([
                     { 
                         name: '**الكولداون**', 
@@ -876,7 +890,8 @@ async function handleAdminApplicationInteraction(interaction) {
                 const cooldownEnd = new Date(Date.now() + (settings.settings.rejectCooldownHours * 60 * 60 * 1000));
                 const rejectNotificationEmbed = colorManager.createEmbed()
                     .setTitle(' تم رفض تقديمك للإدارة')
-                    .setDescription(`**المسؤول :** ${interaction.member.displayName}\n\n**عليك كولداون تقديم إدارة لمدة :** ${settings.settings.rejectCooldownHours} ساعة`)
+                    .setDescription(`**المسؤول :** <@${interaction.user.id}>\n\n**عليك كولداون تقديم إدارة لمدة :** ${settings.settings.rejectCooldownHours} ساعة`)
+.setThumbnail('https://cdn.discordapp.com/attachments/1438625863686947047/1444408644006314035/rejected.png?ex=692c99e0&is=692b4860&hm=575d50c46f5b1d513caadd15ce52312638a201f293b7190bba843641f8ccf84e&')
                     .setTimestamp();
 
                 await candidate.user.send({ embeds: [rejectNotificationEmbed] });

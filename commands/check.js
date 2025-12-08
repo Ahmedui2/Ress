@@ -215,7 +215,7 @@ async function showRoleActivityStats(message, role, client) {
     const now = moment().tz('Asia/Riyadh');
     const monthStart = now.clone().startOf('month');
 
-    const members = role.members.map(m => m.user.id);
+    const members = role.members.filter(m => !m.user.bot).map(m => m.user.id);
 
     if (members.length === 0) {
         await message.channel.send('**لا يوجد أعضاء في هذا الرول**');
