@@ -1159,6 +1159,162 @@ const { isChannelBlocked } = require('./commands/chatblock.js');
     return; // تجاهل الأوامر في القنوات المحظورة بصمت
   }
 
+  // ===== معالج اختصارات المنشن للمسؤوليات =====
+  try {
+    const content = message.content.trim();
+    
+    // دالة لتطبيع النص العربي (تحافظ على الكلمات منفصلة)
+    function normalizeArabicWord(text) {
+      if (!text) return '';
+      return text
+        .replace(/ى/g, 'ي')
+        .replace(/ة/g, 'ه')
+        .replace(/أ|إ|آ/g, 'ا')
+        .replace(/ئ/g, 'ي')
+        .trim()
+        .toLowerCase();
+    }
+    
+    // دالة لإزالة ال التعريف من كلمة واحدة
+    function removeArticle(word) {
+      if (word.startsWith('ال')) {
+        return word.slice(2);
+      }
+      return word;
+    }
+    
+    // الكلمات المفتاحية للمسؤولين (بدون ال التعريف، مُطبّعة)
+    const responsibleKeywordsNormalized = [
+      'مسؤولين', 'مسؤوليه', 'مسؤولية', 'مسيولين', 'مسيوليه'
+    ].map(normalizeArabicWord);
+    
+    // البحث عن المسؤولية المطابقة
+    let matchedResponsibility = null;
+    let extractedReason = '';
+    
+    for (const respName of Object.keys(responsibilities)) {
+      const resp = responsibilities[respName];
+      const prefix = resp.mentPrefix || '-';
+      const shortcut = resp.mentShortcut;
+      
+      if (!shortcut) continue;
+      
+      // التحقق من أن الرسالة تبدأ بالبريفكس الخاص بهذه المسؤولية
+      if (!content.startsWith(prefix)) continue;
+      
+      const afterPrefix = content.slice(prefix.length).trim();
+      if (!afterPrefix) continue;
+      
+      // تقسيم إلى كلمات
+      const words = afterPrefix.split(/\s+/);
+      const normalizedShortcut = normalizeArabicWord(removeArticle(shortcut));
+      
+      // الصيغة 1: الاختصار مباشرة (مثل: -دعم)
+      const firstWordNormalized = normalizeArabicWord(removeArticle(words[0]));
+      if (firstWordNormalized === normalizedShortcut) {
+        matchedResponsibility = respName;
+        extractedReason = words.slice(1).join(' ') || 'غير محدد';
+        break;
+      }
+      
+      // الصيغة 2: كلمة مسؤولين + الاختصار (مثل: -مسؤولين دعم، -المسؤولين الدعم)
+      const firstWordWithoutArticle = normalizeArabicWord(removeArticle(words[0]));
+      const isResponsibleKeyword = responsibleKeywordsNormalized.some(kw => 
+        firstWordWithoutArticle.includes(kw) || kw.includes(firstWordWithoutArticle)
+      );
+      
+      if (isResponsibleKeyword && words.length >= 2) {
+        const secondWordNormalized = normalizeArabicWord(removeArticle(words[1]));
+        if (secondWordNormalized === normalizedShortcut) {
+          matchedResponsibility = respName;
+          extractedReason = words.slice(2).join(' ') || 'غير محدد';
+          break;
+        }
+      }
+      
+      // الصيغة 3: كلمة ملتصقة (مثل: -مسؤوليندعم)
+      if (firstWordWithoutArticle.endsWith(normalizedShortcut)) {
+        const potentialKeyword = firstWordWithoutArticle.slice(0, -normalizedShortcut.length);
+        if (responsibleKeywordsNormalized.some(kw => potentialKeyword.includes(kw) || kw.includes(potentialKeyword))) {
+          matchedResponsibility = respName;
+          extractedReason = words.slice(1).join(' ') || 'غير محدد';
+          break;
+        }
+      }
+    }
+    
+    // إذا وجدنا مسؤولية مطابقة
+    if (matchedResponsibility) {
+      const resp = responsibilities[matchedResponsibility];
+      const responsibles = resp.responsibles || [];
+      
+      // التحقق من صلاحية الأدمن إذا كان الاختصار للأدمن فقط
+      if (resp.mentAdminOnly) {
+        const adminRoles = loadAdminRoles();
+        const member = message.member;
+        const hasAdminRole = member && member.roles.cache.some(role => adminRoles.includes(role.id));
+        
+        if (!hasAdminRole) {
+          const noPermEmbed = colorManager.createEmbed()
+            .setDescription(`**🔒 هذا الاختصار متاح لرولات الأدمن فقط**`)
+            .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400390144795738175/download__2_-removebg-preview.png');
+          await message.channel.send({ embeds: [noPermEmbed] });
+          return;
+        }
+      }
+      
+      if (responsibles.length === 0) {
+        const noRespEmbed = colorManager.createEmbed()
+          .setDescription(`**لا يوجد مسؤولين معينين لمسؤولية "${matchedResponsibility}"**`)
+          .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400390144795738175/download__2_-removebg-preview.png');
+        await message.channel.send({ embeds: [noRespEmbed] });
+        return;
+      }
+      
+      // إنشاء منشنات منظمة (1. 2. 3. الخ)
+      const numberedMentions = responsibles.map((id, index) => `${index + 1}. <@${id}>`).join('\n');
+      const timestamp = Date.now();
+      
+      // إنشاء زر الاستدعاء التفاعلي (يطلب السبب عند الضغط)
+      let callButtonId = `shortcut_call_${matchedResponsibility}_${timestamp}_${message.author.id}`;
+      if (callButtonId.length > 95) {
+        callButtonId = `shortcut_call_${matchedResponsibility}_${timestamp}`;
+      }
+      
+      const callButton = new ButtonBuilder()
+        .setCustomId(callButtonId)
+        .setLabel('Ticket')
+        .setStyle(ButtonStyle.Success);
+      
+      const row = new ActionRowBuilder().addComponents(callButton);
+      
+      // إنشاء رسالة نصية منظمة بدلاً من الإيمبد
+      const textMessage = `**مسؤولي: ${matchedResponsibility}**\n\n${numberedMentions}`;
+      
+      const sentMessage = await message.channel.send({ 
+        content: textMessage,
+        components: [row] 
+      });
+      
+      // حفظ بيانات الرسالة للاستخدام لاحقاً عند الضغط على زر الاستدعاء
+      if (!client.shortcutCallData) client.shortcutCallData = new Map();
+      client.shortcutCallData.set(callButtonId, {
+        responsibilityName: matchedResponsibility,
+        responsibles: responsibles,
+        requesterId: message.author.id,
+        channelId: message.channel.id,
+        messageId: sentMessage.id,
+        guildId: message.guild.id,
+        timestamp: timestamp
+      });
+      
+      return; // انتهاء المعالجة
+    }
+  } catch (error) {
+    console.error('❌ خطأ في معالج اختصارات المنشن:', error);
+  }
+  // ===== نهاية معالج اختصارات المنشن =====
+
   try {
     // التحقق من منشن البوت فقط (ليس الرولات) وليس ريبلاي
     if (message.mentions.users.has(client.user.id) && !message.mentions.everyone && !message.reference) {
@@ -2636,6 +2792,15 @@ client.on('interactionCreate', async (interaction) => {
       return;
 
     }
+    
+    // معالج منيو اختيار المسؤولية
+    if (customId === 'resp_info_select') {
+      const respCommand = client.commands.get('resp');
+      if (respCommand && respCommand.handleResponsibilitySelect) {
+        await respCommand.handleResponsibilitySelect(interaction, client);
+      }
+      return;
+    }
 
     // Handle resp modal submissions
 
@@ -2857,6 +3022,246 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // معالج report تم نقله إلى ملف report.js كمعالج مستقل
+
+    // === معالج زر الاستدعاء من اختصارات المنشن ===
+    if (interaction.isButton() && interaction.customId.startsWith('shortcut_call_')) {
+      console.log(`[SHORTCUT_CALL] زر استدعاء: ${interaction.customId}`);
+      
+      // فحص البلوك
+      const { isUserBlocked } = require('./commands/block.js');
+      if (isUserBlocked(interaction.user.id)) {
+        return;
+      }
+      
+      // جلب البيانات المحفوظة
+      const callData = client.shortcutCallData?.get(interaction.customId);
+      if (!callData) {
+        await interaction.reply({ content: '**انتهت صلاحية هذا الزر. يرجى استخدام الاختصار مرة أخرى.**', flags: 64 });
+        return;
+      }
+      
+      // التحقق من أن الضاغط هو نفس الشخص اللي استخدم الاختصار
+      if (interaction.user.id !== callData.requesterId) {
+        await interaction.reply({ content: '**هذا الزر مخصص فقط للشخص الذي استخدم الاختصار.**', flags: 64 });
+        return;
+      }
+      
+      // فحص الكولداون
+      const { checkCooldown } = require('./commands/cooldown.js');
+      const cooldownTime = checkCooldown(interaction.user.id, callData.responsibilityName);
+      if (cooldownTime > 0) {
+        await interaction.reply({
+          content: `**لقد استخدمت هذا الأمر مؤخرًا. يرجى الانتظار ${Math.ceil(cooldownTime / 1000)} ثانية أخرى.**`,
+          flags: 64
+        });
+        return;
+      }
+      
+      // إظهار نموذج لإدخال السبب
+      const modal = new ModalBuilder()
+        .setCustomId(`shortcut_call_modal_${interaction.customId.replace('shortcut_call_', '')}`)
+        .setTitle(`استدعاء مسؤولي: ${callData.responsibilityName}`);
+      
+      const reasonInput = new TextInputBuilder()
+        .setCustomId('call_reason')
+        .setLabel('سبب الاستدعاء')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true)
+        .setPlaceholder('اكتب سبب الاستدعاء...')
+        .setMaxLength(1000);
+      
+      const actionRow = new ActionRowBuilder().addComponents(reasonInput);
+      modal.addComponents(actionRow);
+      
+      await interaction.showModal(modal);
+      return;
+    }
+    
+    // === معالج نموذج الاستدعاء من اختصارات المنشن ===
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('shortcut_call_modal_')) {
+      console.log(`[SHORTCUT_CALL_MODAL] نموذج استدعاء: ${interaction.customId}`);
+      
+      // فحص البلوك
+      const { isUserBlocked } = require('./commands/block.js');
+      if (isUserBlocked(interaction.user.id)) {
+        return;
+      }
+      
+      // استخراج الـ customId الأصلي للزر
+      const buttonCustomId = 'shortcut_call_' + interaction.customId.replace('shortcut_call_modal_', '');
+      const callData = client.shortcutCallData?.get(buttonCustomId);
+      
+      if (!callData) {
+        await interaction.reply({ content: '**انتهت صلاحية هذا النموذج. يرجى استخدام الاختصار مرة أخرى.**', flags: 64 });
+        return;
+      }
+      
+      const reason = interaction.fields.getTextInputValue('call_reason').trim() || 'غير محدد';
+      const { responsibilityName, responsibles, requesterId, channelId, messageId, guildId, timestamp } = callData;
+      
+      // بدء الكولداون
+      const { startCooldown } = require('./commands/cooldown.js');
+      startCooldown(interaction.user.id, responsibilityName);
+      
+      // قراءة قناة الاستدعاء من الإعدادات
+      let targetChannelId = channelId;
+      let useCallChannel = false;
+      try {
+        const botConfigData = readJSONFile(DATA_FILES.botConfig, {});
+        if (botConfigData.settings && botConfigData.settings.callChannel) {
+          targetChannelId = botConfigData.settings.callChannel;
+          useCallChannel = true;
+        }
+      } catch (e) {
+        console.log('خطأ في قراءة قناة الاستدعاء');
+      }
+      
+      // إنشاء المنشنات
+      const mentions = responsibles.map(id => `<@${id}>`).join(' ');
+      
+      // إنشاء customId لزر الاستلام (مع علامة إذا كان في قناة الاستدعاء)
+      let claimId = `claim_task_${responsibilityName}_${timestamp}_${interaction.user.id}_${targetChannelId}_${messageId}`;
+      if (useCallChannel) {
+        claimId = `rclaim_${responsibilityName}_${timestamp}_${interaction.user.id}`;
+      }
+      if (claimId.length > 95) {
+        claimId = useCallChannel ? `rclaim_${responsibilityName}_${timestamp}` : `claim_task_${responsibilityName}_${timestamp}`;
+      }
+      
+      // حفظ بيانات الاستلام للاستخدام لاحقاً (خاصة لرابط الرسالة)
+      if (useCallChannel) {
+        if (!client.rclaimData) client.rclaimData = new Map();
+        client.rclaimData.set(claimId, {
+          originalChannelId: channelId,
+          originalMessageId: messageId,
+          guildId: guildId
+        });
+      }
+      
+      // إنشاء الإيمبد
+      const callEmbed = colorManager.createEmbed()
+        .setTitle(`استدعاء مسؤولي: ${responsibilityName}`)
+        .setDescription(`**من قِبل:** <@${interaction.user.id}>\n**السبب:** ${reason}\n\n**المسؤولين:**\n${mentions}`)
+        .setThumbnail('https://cdn.discordapp.com/emojis/1303973825591115846.png')
+        .setFooter({ text: 'By Ahmed.' })
+        .setTimestamp();
+      
+      const claimButton = new ButtonBuilder()
+        .setCustomId(claimId)
+        .setLabel('استلام')
+        .setStyle(ButtonStyle.Success);
+      
+      const buttonRow = new ActionRowBuilder().addComponents(claimButton);
+      
+      // إرسال رسالة الاستدعاء في القناة المحددة
+      const targetChannel = await client.channels.fetch(targetChannelId);
+      await targetChannel.send({
+        content: mentions,
+        embeds: [callEmbed],
+        components: [buttonRow]
+      });
+      
+      // تحديث رسالة المنشنات الأصلية لإزالة الزر
+      try {
+        const originalChannel = await client.channels.fetch(channelId);
+        const originalMessage = await originalChannel.messages.fetch(messageId);
+        await originalMessage.edit({ components: [] });
+      } catch (err) {
+        console.log('لم يتم العثور على الرسالة الأصلية للتحديث');
+      }
+      
+      // تسجيل الحدث
+      logEvent(client, interaction.guild, {
+        type: 'TASK_LOGS',
+        title: 'استدعاء مسؤولين (اختصار)',
+        description: `تم استدعاء مسؤولي "${responsibilityName}"`,
+        user: interaction.user,
+        fields: [
+          { name: 'المسؤولية', value: responsibilityName, inline: true },
+          { name: 'السبب', value: reason, inline: false },
+          { name: 'عدد المسؤولين', value: `${responsibles.length}`, inline: true }
+        ]
+      });
+      
+      await interaction.reply({ content: `**✅ تم استدعاء مسؤولي "${responsibilityName}" بنجاح!**`, flags: 64 });
+      
+      // حذف البيانات المحفوظة
+      client.shortcutCallData.delete(buttonCustomId);
+      return;
+    }
+
+    // === معالج زر الاستلام المقيد للمسؤولين فقط (rclaim) ===
+    if (interaction.isButton() && interaction.customId.startsWith('rclaim_')) {
+      console.log(`[RCLAIM] زر استلام مقيد: ${interaction.customId}`);
+      
+      // استخراج اسم المسؤولية من الـ customId
+      const parts = interaction.customId.replace('rclaim_', '').split('_');
+      const responsibilityName = parts[0];
+      
+      // التحقق من وجود المسؤولية
+      if (!responsibilities[responsibilityName]) {
+        await interaction.reply({ content: '**❌ المسؤولية غير موجودة!**', flags: 64 });
+        return;
+      }
+      
+      const responsibility = responsibilities[responsibilityName];
+      const responsibles = responsibility.responsibles || [];
+      
+      // التحقق من أن المستخدم مسؤول في هذه المسؤولية
+      if (!responsibles.includes(interaction.user.id)) {
+        await interaction.reply({ content: '**❌ فقط المسؤولين المعينين يمكنهم استلام هذا الطلب!**', flags: 64 });
+        return;
+      }
+      
+      // تحديث الرسالة لإظهار من استلم الطلب
+      try {
+        const originalEmbed = interaction.message.embeds[0];
+        const updatedEmbed = colorManager.createEmbed()
+          .setTitle(originalEmbed.title)
+          .setDescription(`${originalEmbed.description}\n\n**✅ تم الاستلام بواسطة:** <@${interaction.user.id}>`)
+          .setThumbnail(originalEmbed.thumbnail?.url)
+          .setFooter({ text: 'By Ahmed.' })
+          .setTimestamp()
+          .setColor('#00FF00');
+        
+        // إنشاء زر رابط الرسالة الأصلية
+        const rclaimData = client.rclaimData?.get(interaction.customId);
+        const components = [];
+        
+        if (rclaimData && rclaimData.originalChannelId && rclaimData.originalMessageId) {
+          const messageLink = `https://discord.com/channels/${rclaimData.guildId}/${rclaimData.originalChannelId}/${rclaimData.originalMessageId}`;
+          const linkButton = new ButtonBuilder()
+            .setLabel('رابط الرسالة')
+            .setStyle(ButtonStyle.Link)
+            .setURL(messageLink);
+          
+          const linkRow = new ActionRowBuilder().addComponents(linkButton);
+          components.push(linkRow);
+          
+          // حذف البيانات المحفوظة
+          client.rclaimData.delete(interaction.customId);
+        }
+        
+        await interaction.message.edit({ embeds: [updatedEmbed], components: components });
+        await interaction.reply({ content: `**✅ تم استلام الطلب بنجاح!**`, flags: 64 });
+        
+        // تسجيل الحدث
+        logEvent(client, interaction.guild, {
+          type: 'TASK_LOGS',
+          title: 'تم استلام طلب',
+          description: `تم استلام طلب في مسؤولية "${responsibilityName}"`,
+          user: interaction.user,
+          fields: [
+            { name: 'المسؤولية', value: responsibilityName, inline: true },
+            { name: 'المستلم', value: `<@${interaction.user.id}>`, inline: true }
+          ]
+        });
+      } catch (err) {
+        console.error('خطأ في معالجة زر الاستلام المقيد:', err);
+        await interaction.reply({ content: '**❌ حدث خطأ أثناء الاستلام!**', flags: 64 });
+      }
+      return;
+    }
 
     // Handle masoul interactions - تمرير جميع التفاعلات المتعلقة بـ masoul إلى معالج مستقل
     if (
@@ -4440,4 +4845,4 @@ process.on('unhandledRejection', (reason, promise) => {
   }
 });
 
-client.login('MTE0ODg4Mjc3NTQ0MTY5MDcyNQ.Gal49O.JUykqSzscJHSqF9Q1cNgZR69ma5qYkWRWObUn8');
+client.login('MTE0OTI1OTk4NjIyOTI3MjYwNg.GDcTYV.RFu5LWJO6RCN54Ap2OfML2AmEhcq4cH_dMxpQ4');
