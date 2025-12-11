@@ -449,82 +449,106 @@ try {
               await safeFollowUp(interaction, '**رقم غير صحيح. يرجى اختيار رقم من القائمة.**');
             }
           } else {
-            let userId = null;
+            let userIds = [];
 
+            // جمع جميع المنشنات
             if (msg.mentions.users.size > 0) {
-              userId = msg.mentions.users.first().id;
+              userIds = [...msg.mentions.users.keys()];
             } else {
-              const idMatch = content.match(/\d{17,19}/);
-              if (idMatch) {
-                userId = idMatch[0];
+              // البحث عن جميع الآي ديات في النص
+              const idMatches = content.match(/\d{17,19}/g);
+              if (idMatches) {
+                userIds = idMatches;
               }
             }
 
-            if (userId) {
-              try {
-                const member = await message.guild.members.fetch(userId);
-                const currentResponsibles = responsibility.responsibles || [];
+            if (userIds.length > 0) {
+              let addedCount = 0;
+              let alreadyExistsCount = 0;
+              let notFoundCount = 0;
+              let addedNames = [];
 
-                if (currentResponsibles.includes(userId)) {
-                  await safeFollowUp(interaction, '**هذا المستخدم مسؤول بالفعل!**');
-                } else {
-                  responsibility.responsibles.push(userId);
-                  await saveResponsibilities();
+              for (const userId of userIds) {
+                try {
+                  const member = await message.guild.members.fetch(userId);
+                  const currentResponsibles = responsibility.responsibles || [];
 
-                  // إعطاء المسؤول جميع رولات المسؤولية تلقائياً
-                  let rolesAdded = 0;
-                  if (responsibility.roles && responsibility.roles.length > 0) {
-                    for (const roleId of responsibility.roles) {
-                      try {
-                        const role = await message.guild.roles.fetch(roleId);
-                        if (role && !member.roles.cache.has(roleId)) {
-                          await member.roles.add(roleId, `إضافة رول المسؤولية: ${responsibilityName}`);
-                          rolesAdded++;
-                          console.log(`✅ تم إعطاء ${member.displayName} رول ${role.name}`);
+                  if (currentResponsibles.includes(userId)) {
+                    alreadyExistsCount++;
+                  } else {
+                    responsibility.responsibles.push(userId);
+                    addedCount++;
+                    addedNames.push(member.displayName || member.user.username);
+
+                    // إعطاء المسؤول جميع رولات المسؤولية تلقائياً
+                    if (responsibility.roles && responsibility.roles.length > 0) {
+                      for (const roleId of responsibility.roles) {
+                        try {
+                          const role = await message.guild.roles.fetch(roleId);
+                          if (role && !member.roles.cache.has(roleId)) {
+                            await member.roles.add(roleId, `إضافة رول المسؤولية: ${responsibilityName}`);
+                            console.log(`✅ تم إعطاء ${member.displayName} رول ${role.name}`);
+                          }
+                        } catch (error) {
+                          console.log(`❌ لا يمكن إضافة رول ${roleId} لـ ${userId}: ${error.message}`);
                         }
-                      } catch (error) {
-                        console.log(`❌ لا يمكن إضافة رول ${roleId} لـ ${userId}: ${error.message}`);
                       }
                     }
-                  }
 
-                  try {
-                    const welcomeEmbed = colorManager.createEmbed()
-                      .setTitle(' Resb')
-                      .setDescription(`**تم تعيينك كمسؤول عن: ${responsibilityName}**`)
-                      .addFields([
+                    try {
+                      const welcomeEmbed = colorManager.createEmbed()
+                        .setTitle(' Resb')
+                        .setDescription(`**تم تعيينك كمسؤول عن: ${responsibilityName}**`)
+                        .addFields([
+                          { name: 'المسؤولية', value: responsibilityName, inline: true },
+                          { name: 'السيرفر', value: message.guild.name, inline: true },
+                          { name: 'تم التعيين بواسطة', value: interaction.user.tag, inline: true }
+                        ])
+                        .setTimestamp();
+
+                      await member.send({ embeds: [welcomeEmbed] });
+                    } catch (error) {
+                      console.log(`لا يمكن إرسال رسالة للمستخدم ${userId}: ${error.message}`);
+                    }
+
+                    logEvent(client, message.guild, {
+                      type: 'RESPONSIBILITY_MANAGEMENT',
+                      title: 'تم إضافة مسؤول جديد',
+                      description: `تم إضافة ${member.displayName || member.user.username} كمسؤول عن ${responsibilityName}`,
+                      user: interaction.user,
+                      fields: [
                         { name: 'المسؤولية', value: responsibilityName, inline: true },
-                        { name: 'السيرفر', value: message.guild.name, inline: true },
-                        { name: 'تم التعيين بواسطة', value: interaction.user.tag, inline: true }
-                      ])
-                      .setTimestamp();
-
-                    await member.send({ embeds: [welcomeEmbed] });
-                  } catch (error) {
-                    console.log(`لا يمكن إرسال رسالة للمستخدم ${userId}: ${error.message}`);
+                        { name: 'المسؤول الجديد', value: `<@${userId}>`, inline: true }
+                      ]
+                    });
                   }
-
-                  const rolesMessage = rolesAdded > 0 ? `\n**تم إضافة ${rolesAdded} رول تلقائياً**` : '';
-                  await safeFollowUp(interaction, `**✅ تم إضافة ${member.displayName || member.user.username} كمسؤول**${rolesMessage}`);
-
-                  logEvent(client, message.guild, {
-                    type: 'RESPONSIBILITY_MANAGEMENT',
-                    title: 'تم إضافة مسؤول جديد',
-                    description: `تم إضافة ${member.displayName || member.user.username} كمسؤول عن ${responsibilityName}`,
-                    user: interaction.user,
-                    fields: [
-                      { name: 'المسؤولية', value: responsibilityName, inline: true },
-                      { name: 'المسؤول الجديد', value: `<@${userId}>`, inline: true }
-                    ]
-                  });
-
-                  // Regenerate and edit the message
-                  const newContent = await generateManagementContent(responsibilityName);
-                  await interaction.editReply(newContent);
+                } catch (error) {
+                  notFoundCount++;
                 }
-              } catch (error) {
-                await safeFollowUp(interaction, '**لم يتم العثور على المستخدم!**');
               }
+
+              // حفظ التغييرات مرة واحدة بعد إضافة الجميع
+              if (addedCount > 0) {
+                await saveResponsibilities();
+              }
+
+              // إنشاء رسالة النتيجة
+              let resultMessage = '';
+              if (addedCount > 0) {
+                resultMessage += `**✅ تم إضافة ${addedCount} مسؤول:** ${addedNames.join('، ')}\n`;
+              }
+              if (alreadyExistsCount > 0) {
+                resultMessage += `**⚠️ ${alreadyExistsCount} مسؤول موجود بالفعل**\n`;
+              }
+              if (notFoundCount > 0) {
+                resultMessage += `**❌ ${notFoundCount} مستخدم غير موجود**`;
+              }
+
+              await safeFollowUp(interaction, resultMessage || '**لم يتم إضافة أي مسؤول**');
+
+              // Regenerate and edit the message
+              const newContent = await generateManagementContent(responsibilityName);
+              await interaction.editReply(newContent);
             } else {
               await safeFollowUp(interaction, '**يرجى منشن المستخدم أو كتابة الآي دي الصحيح**');
             }
@@ -929,6 +953,11 @@ try {
             .setLabel('role')
             .setStyle(ButtonStyle.Success);
 
+          const mentButton = new ButtonBuilder()
+            .setCustomId(`ment_${selected}`)
+            .setLabel('ment')
+            .setStyle(ButtonStyle.Primary);
+
           const orderedKeys = getOrderedResponsibilities();
           const currentIndex = orderedKeys.indexOf(selected);
           
@@ -938,6 +967,7 @@ try {
             .setStyle(ButtonStyle.Secondary);
 
           const buttonsRow1 = new ActionRowBuilder().addComponents(editButton, renameButton, deleteButton, manageButton, roleButton);
+          const buttonsRowMent = new ActionRowBuilder().addComponents(mentButton);
           
           // إنشاء select menu للترتيب (محدود بـ 25 عنصر)
           let positionOptions = orderedKeys.map((key, index) => ({
@@ -955,7 +985,7 @@ try {
             positionOptions = positionOptions.slice(start, end);
           }
 
-          const components = [buttonsRow1];
+          const components = [buttonsRow1, buttonsRowMent];
           
           if (positionOptions.length > 1) {
             const positionSelect = new StringSelectMenuBuilder()
@@ -1065,6 +1095,28 @@ try {
           await showResponsibleManagement(interaction, responsibilityName);
         } else if (action === 'role') {
           await showRoleManagement(interaction, responsibilityName);
+        } else if (action === 'ment') {
+          // إعداد اختصار المنشن للمسؤولية
+          const modal = new ModalBuilder()
+            .setCustomId(`ment_modal_${responsibilityName}`)
+            .setTitle(`اختصار منشن: ${responsibilityName}`);
+
+          const shortcutInput = new TextInputBuilder()
+            .setCustomId('ment_shortcut')
+            .setLabel('اكتب الكلمة المختصرة (بدون البريفكس)')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setPlaceholder('مثال: يوسف، محمد، مسؤولين');
+
+          // جلب الاختصار الحالي إن وجد
+          const currentShortcut = responsibilities[responsibilityName].mentShortcut || '';
+          if (currentShortcut) {
+            shortcutInput.setValue(currentShortcut);
+          }
+
+          const actionRow = new ActionRowBuilder().addComponents(shortcutInput);
+          modal.addComponents(actionRow);
+          await interaction.showModal(modal);
         } else if (action === 'search') {
           // إظهار نافذة البحث عن الأعضاء
           const modal = new ModalBuilder()

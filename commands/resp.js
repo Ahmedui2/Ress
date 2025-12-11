@@ -112,6 +112,76 @@ function createResponsibilitiesEmbed(responsibilities) {
     return embed;
 }
 
+// دالة لإنشاء رسالة نصية للمسؤوليات
+function createResponsibilitiesText(responsibilities) {
+    const categories = readJSONFile(DATA_FILES.categories, {});
+    
+    if (Object.keys(responsibilities).length === 0 && Object.keys(categories).length === 0) {
+        return '**Responsibilities**\n\nلا توجد مسؤوليات محددة حالياً';
+    }
+    
+    let text = '**Responsibilities**\n';
+    
+    if (Object.keys(categories).length > 0) {
+        const sortedCategories = Object.entries(categories).sort((a, b) => (a[1].order || 0) - (b[1].order || 0));
+        
+        for (const [catName, catData] of sortedCategories) {
+            text += `\n**# ${catName} Category**\n\n`;    
+            const categoryResps = catData.responsibilities || [];
+            
+            if (categoryResps.length === 0) {
+                text += `*No Res*\n\n`;
+            } else {
+                for (const respName of categoryResps) {
+                    const respData = responsibilities[respName];
+                    if (respData) {
+                        text += `**المسؤوليه : ${respName}**\n`;
+                        if (respData.responsibles && respData.responsibles.length > 0) {
+                            const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' ، ');
+                            text += `المسؤولين : ${responsiblesList}\n\n`;
+                        } else {
+                            text += `المسؤولين : 0\n\n`;
+                        }
+                    }
+                }
+            }
+        }
+        
+        const uncategorizedResps = Object.keys(responsibilities).filter(respName => {
+            return !sortedCategories.some(([_, catData]) => 
+                catData.responsibilities && catData.responsibilities.includes(respName)
+            );
+        });
+        
+        if (uncategorizedResps.length > 0) {
+            text += `\n**# No categories**\n\n`;
+            
+            for (const respName of uncategorizedResps) {
+                const respData = responsibilities[respName];
+                text += `**المسؤوليه : ${respName}**\n`;
+                if (respData.responsibles && respData.responsibles.length > 0) {
+                    const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' ، ');
+                    text += `المسؤولين : ${responsiblesList}\n\n`;
+                } else {
+                    text += `المسؤولين : 0\n\n`;
+                }
+            }
+        }
+    } else {
+        for (const [respName, respData] of Object.entries(responsibilities)) {
+            text += `**المسؤولية :** ${respName}\n`;
+            if (respData.responsibles && respData.responsibles.length > 0) {
+                const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' ، ');
+                text += `**المسؤولين :** ${responsiblesList}\n\n`;
+            } else {
+                text += `**المسؤولين :** 0\n\n`;
+            }
+        }
+    }
+    
+    return text;
+}
+
 // دالة لإنشاء الزر
 function createSuggestionButton() {
     const row = new ActionRowBuilder()
@@ -129,26 +199,40 @@ function createSuggestionButton() {
 async function updateEmbedMessage(client) {
     const responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
     const newEmbed = createResponsibilitiesEmbed(responsibilities);
+    const newText = createResponsibilitiesText(responsibilities);
     const button = createSuggestionButton();
     
     for (const [guildId, embedData] of embedMessages.entries()) {
         try {
-            if (embedData.message) {
-                await embedData.message.edit({
+            // جلب نوع الرسالة من الكونفيغ
+            const config = readJSONFile(DATA_FILES.respConfig, { guilds: {} });
+            const format = config.guilds[guildId]?.messageFormat || embedData.format || 'embed';
+            
+            let editOptions;
+            if (format === 'text') {
+                editOptions = {
+                    content: newText,
+                    embeds: [],
+                    components: [button]
+                };
+            } else {
+                editOptions = {
+                    content: null,
                     embeds: [newEmbed],
                     components: [button]
-                });
-                console.log(`تم تحديث رسالة المسؤوليات في السيرفر ${guildId}`);
+                };
+            }
+            
+            if (embedData.message) {
+                await embedData.message.edit(editOptions);
+                console.log(`تم تحديث رسالة المسؤوليات في السيرفر ${guildId} (${format})`);
             } else if (embedData.messageId && embedData.channelId) {
                 // إعادة بناء مرجع الرسالة
                 const channel = await client.channels.fetch(embedData.channelId);
                 const message = await channel.messages.fetch(embedData.messageId);
-                await message.edit({
-                    embeds: [newEmbed],
-                    components: [button]
-                });
+                await message.edit(editOptions);
                 embedData.message = message;
-                console.log(`تم إعادة بناء وتحديث رسالة المسؤوليات في السيرفر ${guildId}`);
+                console.log(`تم إعادة بناء وتحديث رسالة المسؤوليات في السيرفر ${guildId} (${format})`);
             }
         } catch (error) {
             console.error(`خطأ في تحديث رسالة المسؤوليات للسيرفر ${guildId}:`, error);
@@ -268,6 +352,45 @@ module.exports = {
         const config = getGuildConfig(guildId);
         const guildConfig = config.guilds[guildId];
         
+        // دالة لسؤال نوع الرسالة
+        async function askMessageFormat(channel, authorId, callback) {
+            const formatRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('format_embed')
+                        .setLabel('إيمبد')
+                        .setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder()
+                        .setCustomId('format_text')
+                        .setLabel('نص عادي')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+            
+            const formatMsg = await channel.send({
+                content: 'اختر نوع رسالة المسؤوليات:',
+                components: [formatRow]
+            });
+            
+            const formatCollector = formatMsg.createMessageComponentCollector({
+                filter: i => i.user.id === authorId && (i.customId === 'format_embed' || i.customId === 'format_text'),
+                time: 60000,
+                max: 1
+            });
+            
+            formatCollector.on('collect', async (interaction) => {
+                const format = interaction.customId === 'format_embed' ? 'embed' : 'text';
+                setGuildConfig(guildId, { messageFormat: format });
+                await interaction.update({ content: `تم اختيار: ${format === 'embed' ? 'إيمبد' : 'نص عادي'}`, components: [] });
+                callback(format);
+            });
+            
+            formatCollector.on('end', (collected) => {
+                if (collected.size === 0) {
+                    formatMsg.edit({ content: 'انتهت مهلة الانتظار لاختيار نوع الرسالة', components: [] });
+                }
+            });
+        }
+
         // التحقق من وجود قناة الاقتراحات
         if (!guildConfig.suggestionsChannel) {
             await message.channel.send('منشن روم الاقتراحات');
@@ -310,8 +433,10 @@ module.exports = {
                     
                     setGuildConfig(guildId, { embedChannel: embedChannel.id });
                     
-                    // إرسال الايمبد
-                    await sendResponsibilitiesEmbed(embedChannel, client);
+                    // سؤال نوع الرسالة
+                    askMessageFormat(embedMsg.channel, message.author.id, async (format) => {
+                        await sendResponsibilitiesMessage(embedChannel, client, format);
+                    });
                 });
                 
                 embedCollector.on('end', (collected) => {
@@ -347,7 +472,10 @@ module.exports = {
                 
                 setGuildConfig(guildId, { embedChannel: embedChannel.id });
                 
-                await sendResponsibilitiesEmbed(embedChannel, client);
+                // سؤال نوع الرسالة
+                askMessageFormat(msg.channel, message.author.id, async (format) => {
+                    await sendResponsibilitiesMessage(embedChannel, client, format);
+                });
             });
             
             embedCollector.on('end', (collected) => {
@@ -357,11 +485,14 @@ module.exports = {
             });
             
         } else {
-            // إذا كانت القنوات محددة، أرسل الايمبد مباشرة
+            // إذا كانت القنوات محددة، اسأل عن نوع الرسالة ثم أرسلها
             try {
                 const embedChannel = await client.channels.fetch(guildConfig.embedChannel);
                 if (embedChannel && embedChannel.guild.id === guildId) {
-                    await sendResponsibilitiesEmbed(embedChannel, client);
+                    // سؤال نوع الرسالة
+                    askMessageFormat(message.channel, message.author.id, async (format) => {
+                        await sendResponsibilitiesMessage(embedChannel, client, format);
+                    });
                 } else {
                     await message.channel.send('روم الايمبد المحدد غير موجود أو غير صحيح، منشن روم جديد للايمبد');
                 }
@@ -387,7 +518,8 @@ function getGuildConfig(guildId) {
         config.guilds[guildId] = {
             suggestionsChannel: null,
             embedChannel: null,
-            embedData: null
+            embedData: null,
+            messageFormat: 'embed' // 'embed' or 'text'
         };
     }
     return config;
@@ -460,5 +592,45 @@ async function sendResponsibilitiesEmbed(channel, client) {
         
     } catch (error) {
         console.error('خطأ في إرسال ايمبد المسؤوليات:', error);
+    }
+}
+
+// دالة لإرسال رسالة المسؤوليات (إيمبد أو نص)
+async function sendResponsibilitiesMessage(channel, client, format = 'embed') {
+    try {
+        const responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
+        const button = createSuggestionButton();
+        let message;
+        
+        if (format === 'text') {
+            const textContent = createResponsibilitiesText(responsibilities);
+            message = await channel.send({
+                content: textContent,
+                components: [button]
+            });
+        } else {
+            const embed = createResponsibilitiesEmbed(responsibilities);
+            message = await channel.send({
+                embeds: [embed],
+                components: [button]
+            });
+        }
+        
+        // حفظ مرجع للرسالة
+        const guildId = channel.guild.id;
+        embedMessages.set(guildId, {
+            messageId: message.id,
+            channelId: channel.id,
+            message: message,
+            format: format
+        });
+        
+        // حفظ البيانات في الكونفيغ
+        updateStoredEmbedData();
+        
+        console.log(`تم إرسال رسالة المسؤوليات بنجاح (${format})`);
+        
+    } catch (error) {
+        console.error('خطأ في إرسال رسالة المسؤوليات:', error);
     }
 }
