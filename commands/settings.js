@@ -59,6 +59,85 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
     return;
   }
 
+  // === معالجة الأمر الفرعي settings chat ===
+  if (args[0] && args[0].toLowerCase() === 'chat') {
+    const botConfigPath = path.join(__dirname, '..', 'data', 'botConfig.json');
+    let botConfig = {};
+    try {
+      botConfig = JSON.parse(fs.readFileSync(botConfigPath, 'utf8'));
+    } catch (e) {
+      botConfig = { owners: [], prefix: null, settings: {} };
+    }
+    if (!botConfig.settings) botConfig.settings = {};
+
+    // إذا تم ذكر قناة
+    const channelMention = message.mentions.channels.first();
+    const channelId = channelMention ? channelMention.id : args[1];
+
+    if (channelId) {
+      // التحقق من صحة القناة
+      try {
+        const channel = await message.guild.channels.fetch(channelId);
+        if (!channel || !channel.isTextBased()) {
+          const errorEmbed = colorManager.createEmbed()
+            .setDescription('**❌ القناة غير موجودة أو ليست قناة نصية!**');
+          await message.channel.send({ embeds: [errorEmbed] });
+          return;
+        }
+
+        // حفظ القناة
+        botConfig.settings.callChannel = channelId;
+        fs.writeFileSync(botConfigPath, JSON.stringify(botConfig, null, 2));
+
+        const successEmbed = colorManager.createEmbed()
+          .setTitle('**✅ تم تحديد قناة الاستدعاء**')
+          .setDescription(`**القناة:** <#${channelId}>\n\n**الآن جميع استدعاءات المسؤوليات ستُرسل إلى هذه القناة**\n**وزر الاستلام سيعمل فقط للمسؤولين المعينين**`);
+        await message.channel.send({ embeds: [successEmbed] });
+        return;
+      } catch (error) {
+        const errorEmbed = colorManager.createEmbed()
+          .setDescription('**❌ حدث خطأ في التحقق من القناة!**');
+        await message.channel.send({ embeds: [errorEmbed] });
+        return;
+      }
+    } else {
+      // عرض القناة الحالية أو طلب تحديدها
+      const currentChannel = botConfig.settings.callChannel;
+      if (currentChannel) {
+        const infoEmbed = colorManager.createEmbed()
+          .setTitle('**قناة الاستدعاء الحالية**')
+          .setDescription(`**القناة:** <#${currentChannel}>\n\n**لتغييرها:** \`settings chat #القناة\`\n**لإزالتها:** \`settings chat remove\``);
+        await message.channel.send({ embeds: [infoEmbed] });
+      } else {
+        const infoEmbed = colorManager.createEmbed()
+          .setTitle('**قناة الاستدعاء**')
+          .setDescription('**لم يتم تحديد قناة استدعاء بعد**\n\n**للتحديد:** `settings chat #القناة`');
+        await message.channel.send({ embeds: [infoEmbed] });
+      }
+      return;
+    }
+  }
+
+  // === معالجة إزالة قناة الاستدعاء ===
+  if (args[0] && args[0].toLowerCase() === 'chat' && args[1] && args[1].toLowerCase() === 'remove') {
+    const botConfigPath = path.join(__dirname, '..', 'data', 'botConfig.json');
+    let botConfig = {};
+    try {
+      botConfig = JSON.parse(fs.readFileSync(botConfigPath, 'utf8'));
+    } catch (e) {
+      botConfig = { owners: [], prefix: null, settings: {} };
+    }
+    if (!botConfig.settings) botConfig.settings = {};
+
+    delete botConfig.settings.callChannel;
+    fs.writeFileSync(botConfigPath, JSON.stringify(botConfig, null, 2));
+
+    const successEmbed = colorManager.createEmbed()
+      .setDescription('**✅ تم إزالة قناة الاستدعاء**\n**الآن الاستدعاءات ستُرسل في نفس القناة**');
+    await message.channel.send({ embeds: [successEmbed] });
+    return;
+  }
+
   // حفظ البيانات في الملف مباشرة
   async function saveResponsibilities() {
     try {
@@ -256,6 +335,110 @@ try {
       await sentMessage.edit({ embeds: [embed], components: menuData.components });
     } catch (error) {
       console.error('خطأ في تحديث المنيو الرئيسي:', error);
+    }
+  }
+
+  // دالة للعودة إلى صفحة المسؤولية بعد التعديل
+  async function updateResponsibilityView(responsibilityName) {
+    try {
+      const responsibility = responsibilities[responsibilityName];
+      if (!responsibility) {
+        await updateMainMenu();
+        return;
+      }
+
+      const editButton = new ButtonBuilder()
+        .setCustomId(`edit_${responsibilityName}`)
+        .setLabel('الشرح')
+.setEmoji('<:emoji_16:1448570798380945539>')
+        .setStyle(ButtonStyle.Secondary);
+
+      const renameButton = new ButtonBuilder()
+        .setCustomId(`rename_${responsibilityName}`)
+        .setLabel('الأسم')
+.setEmoji('<:emoji_14:1448570732652003398>')
+        .setStyle(ButtonStyle.Secondary);
+
+      const manageButton = new ButtonBuilder()
+        .setCustomId(`manage_${responsibilityName}`)
+        .setLabel('المسؤولين')
+.setEmoji('<:emoji_17:1448570976097931406>')
+        .setStyle(ButtonStyle.Secondary);
+
+      const roleButton = new ButtonBuilder()
+        .setCustomId(`role_${responsibilityName}`)
+        .setLabel('رول المسؤولية')
+.setEmoji('<:emoji_14:1448570758849757285>')
+        .setStyle(ButtonStyle.Secondary);
+
+      const mentButton = new ButtonBuilder()
+        .setCustomId(`ment_${responsibilityName}`)
+        .setLabel('اختصار')
+.setEmoji('<:emoji_18:1448572201610776730>')
+        .setStyle(ButtonStyle.Secondary);
+
+const deleteButton = new ButtonBuilder()
+        .setCustomId(`delete_${responsibilityName}`)
+        .setLabel('حذف')
+.setEmoji('<:emoji_13:1448570702176452660>')
+        .setStyle(ButtonStyle.Danger);
+
+      const orderedKeys = getOrderedResponsibilities();
+      const currentIndex = orderedKeys.indexOf(responsibilityName);
+      
+      const backButton = new ButtonBuilder()
+        .setCustomId('back_to_menu')
+        .setLabel('main menu')
+        .setStyle(ButtonStyle.Secondary);
+
+      const buttonsRow1 = new ActionRowBuilder().addComponents(editButton, renameButton, deleteButton, manageButton, roleButton);
+      const buttonsRowMent = new ActionRowBuilder().addComponents(mentButton);
+      
+      // إنشاء select menu للترتيب (محدود بـ 25 عنصر)
+      let positionOptions = orderedKeys.map((key, index) => ({
+        label: `${index + 1}. ${key}`,
+        value: index.toString(),
+        default: index === currentIndex,
+        description: index === currentIndex ? '(الموضع الحالي)' : `نقل إلى الموضع ${index + 1}`
+      }));
+
+      // إذا كان هناك أكثر من 25 مسؤولية، نحد الخيارات
+      if (positionOptions.length > 25) {
+        const start = Math.max(0, currentIndex - 12);
+        const end = Math.min(orderedKeys.length, currentIndex + 13);
+        positionOptions = positionOptions.slice(start, end);
+      }
+
+      const components = [buttonsRow1, buttonsRowMent];
+      
+      if (positionOptions.length > 1) {
+        const positionSelect = new StringSelectMenuBuilder()
+          .setCustomId(`reorder_${responsibilityName}`)
+          .setPlaceholder(' اختر الموضع الجديد للمسؤولية')
+          .addOptions(positionOptions);
+        const selectRow = new ActionRowBuilder().addComponents(positionSelect);
+        components.push(selectRow);
+      }
+
+      const buttonsRow2 = new ActionRowBuilder().addComponents(backButton);
+      components.push(buttonsRow2);
+
+      const respList = responsibility.responsibles && responsibility.responsibles.length > 0
+        ? responsibility.responsibles.map(r => `<@${r}>`).join(', ')
+        : '**لا يوجد مسؤولين معينين**';
+
+      const desc = responsibility.description && responsibility.description.toLowerCase() !== 'لا'
+        ? responsibility.description
+        : '**لا يوجد شرح**';
+
+      const embedEdit = colorManager.createEmbed()
+        .setTitle(`**تعديل المسؤولية : ${responsibilityName}**`)
+        .setDescription(`**المسؤولون :** ${respList}\n**الشرح :** ${desc}\n**الترتيب :** ${currentIndex + 1} من ${orderedKeys.length}`);
+
+      await sentMessage.edit({ embeds: [embedEdit], components });
+    } catch (error) {
+      console.error('خطأ في تحديث صفحة المسؤولية:', error);
+      await updateMainMenu();
     }
   }
 
@@ -929,34 +1112,40 @@ try {
           }
 
           const editButton = new ButtonBuilder()
-            .setCustomId(`edit_${selected}`)
-            .setLabel('edit desc')
-            .setStyle(ButtonStyle.Primary);
+        .setCustomId(`edit_${responsibilityName}`)
+        .setLabel('الشرح')
+.setEmoji('<:emoji_16:1448570798380945539>')
+        .setStyle(ButtonStyle.Secondary);
 
-          const renameButton = new ButtonBuilder()
-            .setCustomId(`rename_${selected}`)
-            .setLabel('rename')
-            .setStyle(ButtonStyle.Primary);
+      const renameButton = new ButtonBuilder()
+        .setCustomId(`rename_${responsibilityName}`)
+        .setLabel('الأسم')
+.setEmoji('<:emoji_14:1448570732652003398>')
+        .setStyle(ButtonStyle.Secondary);
 
-          const deleteButton = new ButtonBuilder()
-            .setCustomId(`delete_${selected}`)
-            .setLabel('delete')
-            .setStyle(ButtonStyle.Danger);
+      const manageButton = new ButtonBuilder()
+        .setCustomId(`manage_${responsibilityName}`)
+        .setLabel('المسؤولين')
+.setEmoji('<:emoji_17:1448570976097931406>')
+        .setStyle(ButtonStyle.Secondary);
 
-          const manageButton = new ButtonBuilder()
-            .setCustomId(`manage_${selected}`)
-            .setLabel('manage')
-            .setStyle(ButtonStyle.Secondary);
+      const roleButton = new ButtonBuilder()
+        .setCustomId(`role_${responsibilityName}`)
+        .setLabel('رول المسؤولية')
+.setEmoji('<:emoji_14:1448570758849757285>')
+        .setStyle(ButtonStyle.Secondary);
 
-          const roleButton = new ButtonBuilder()
-            .setCustomId(`role_${selected}`)
-            .setLabel('role')
-            .setStyle(ButtonStyle.Success);
+      const mentButton = new ButtonBuilder()
+        .setCustomId(`ment_${responsibilityName}`)
+        .setLabel('اختصار')
+.setEmoji('<:emoji_18:1448572201610776730>')
+        .setStyle(ButtonStyle.Secondary);
 
-          const mentButton = new ButtonBuilder()
-            .setCustomId(`ment_${selected}`)
-            .setLabel('ment')
-            .setStyle(ButtonStyle.Primary);
+const deleteButton = new ButtonBuilder()
+        .setCustomId(`delete_${responsibilityName}`)
+        .setLabel('حذف')
+.setEmoji('<:emoji_13:1448570702176452660>')
+        .setStyle(ButtonStyle.Danger);
 
           const orderedKeys = getOrderedResponsibilities();
           const currentIndex = orderedKeys.indexOf(selected);
@@ -1101,12 +1290,26 @@ try {
             .setCustomId(`ment_modal_${responsibilityName}`)
             .setTitle(`اختصار منشن: ${responsibilityName}`);
 
+          const prefixInput = new TextInputBuilder()
+            .setCustomId('ment_prefix')
+            .setLabel('اترك فارغ للبريفكس الافتراضي (-)')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+            .setPlaceholder('اتركه فارغ = -')
+            .setMaxLength(5);
+
+          // جلب البريفكس الحالي إن وجد (لا نضعه إذا كان الافتراضي)
+          const currentPrefix = responsibilities[responsibilityName].mentPrefix;
+          if (currentPrefix && currentPrefix !== '-') {
+            prefixInput.setValue(currentPrefix);
+          }
+
           const shortcutInput = new TextInputBuilder()
             .setCustomId('ment_shortcut')
-            .setLabel('اكتب الكلمة المختصرة (بدون البريفكس)')
+            .setLabel('ضع كلمة الاختصار')
             .setStyle(TextInputStyle.Short)
             .setRequired(true)
-            .setPlaceholder('مثال: يوسف، محمد، مسؤولين');
+            .setPlaceholder('مثال : الدعم ، باند ، تكت');
 
           // جلب الاختصار الحالي إن وجد
           const currentShortcut = responsibilities[responsibilityName].mentShortcut || '';
@@ -1114,8 +1317,24 @@ try {
             shortcutInput.setValue(currentShortcut);
           }
 
-          const actionRow = new ActionRowBuilder().addComponents(shortcutInput);
-          modal.addComponents(actionRow);
+          const adminOnlyInput = new TextInputBuilder()
+            .setCustomId('ment_admin_only')
+            .setLabel('للأدمن فقط؟ (اكتب لا لإتاحته للجميع)')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+            .setPlaceholder('اتركه فارغ = للأدمن فقط، اكتب لا = للجميع')
+            .setMaxLength(10);
+
+          // جلب الإعداد الحالي إن وجد
+          const currentAdminOnly = responsibilities[responsibilityName].mentAdminOnly;
+          if (currentAdminOnly === false) {
+            adminOnlyInput.setValue('لا');
+          }
+
+          const prefixRow = new ActionRowBuilder().addComponents(prefixInput);
+          const shortcutRow = new ActionRowBuilder().addComponents(shortcutInput);
+          const adminOnlyRow = new ActionRowBuilder().addComponents(adminOnlyInput);
+          modal.addComponents(prefixRow, shortcutRow, adminOnlyRow);
           await interaction.showModal(modal);
         } else if (action === 'search') {
           // إظهار نافذة البحث عن الأعضاء
@@ -1184,30 +1403,42 @@ try {
             return;
           }
 
-          const editButton = new ButtonBuilder()
-            .setCustomId(`edit_${responsibilityName}`)
-            .setLabel('edit desc')
-            .setStyle(ButtonStyle.Primary);
+const editButton = new ButtonBuilder()
+        .setCustomId(`edit_${responsibilityName}`)
+        .setLabel('الشرح')
+.setEmoji('<:emoji_16:1448570798380945539>')
+        .setStyle(ButtonStyle.Secondary);
 
-          const renameButton = new ButtonBuilder()
-            .setCustomId(`rename_${responsibilityName}`)
-            .setLabel('rename')
-            .setStyle(ButtonStyle.Primary);
+      const renameButton = new ButtonBuilder()
+        .setCustomId(`rename_${responsibilityName}`)
+        .setLabel('الأسم')
+.setEmoji('<:emoji_14:1448570732652003398>')
+        .setStyle(ButtonStyle.Secondary);
 
-          const deleteButton = new ButtonBuilder()
-            .setCustomId(`delete_${responsibilityName}`)
-            .setLabel('delete')
-            .setStyle(ButtonStyle.Danger);
+      const manageButton = new ButtonBuilder()
+        .setCustomId(`manage_${responsibilityName}`)
+        .setLabel('المسؤولين')
+.setEmoji('<:emoji_17:1448570976097931406>')
+        .setStyle(ButtonStyle.Secondary);
 
-          const manageButton = new ButtonBuilder()
-            .setCustomId(`manage_${responsibilityName}`)
-            .setLabel('manage')
-            .setStyle(ButtonStyle.Secondary);
+      const roleButton = new ButtonBuilder()
+        .setCustomId(`role_${responsibilityName}`)
+        .setLabel('رول المسؤولية')
+.setEmoji('<:emoji_14:1448570758849757285>')
+        .setStyle(ButtonStyle.Secondary);
 
-          const roleButton = new ButtonBuilder()
-            .setCustomId(`role_${responsibilityName}`)
-            .setLabel('role')
-            .setStyle(ButtonStyle.Success);
+      const mentButton = new ButtonBuilder()
+        .setCustomId(`ment_${responsibilityName}`)
+        .setLabel('اختصار')
+.setEmoji('<:emoji_18:1448572201610776730>')
+        .setStyle(ButtonStyle.Secondary);
+
+const deleteButton = new ButtonBuilder()
+        .setCustomId(`delete_${responsibilityName}`)
+        .setLabel('حذف')
+.setEmoji('<:emoji_13:1448570702176452660>')
+        .setStyle(ButtonStyle.Danger);
+;
 
           const updatedOrderedKeys = getOrderedResponsibilities();
           const updatedIndex = updatedOrderedKeys.indexOf(responsibilityName);
@@ -1584,7 +1815,7 @@ try {
         await safeReply(interaction, `**✅ تم تعديل شرح المسؤولية: ${responsibilityName}**`);
 
         setTimeout(async () => {
-          await updateMainMenu();
+          await updateResponsibilityView(responsibilityName);
         }, 1500);
       } else if (interaction.customId.startsWith('rename_modal_')) {
         const oldName = interaction.customId.replace('rename_modal_', '');
@@ -1656,7 +1887,55 @@ try {
         await safeReply(interaction, `**✅ تم تغيير اسم المسؤولية من "${oldName}" إلى "${newName}"**`);
 
         setTimeout(async () => {
-          await updateMainMenu();
+          await updateResponsibilityView(newName);
+        }, 1500);
+      } else if (interaction.customId.startsWith('ment_modal_')) {
+        const responsibilityName = interaction.customId.replace('ment_modal_', '');
+        const mentPrefixInput = interaction.fields.getTextInputValue('ment_prefix').trim();
+        const mentShortcut = interaction.fields.getTextInputValue('ment_shortcut').trim();
+        const mentAdminOnlyInput = interaction.fields.getTextInputValue('ment_admin_only').trim().toLowerCase();
+
+        if (!responsibilities[responsibilityName]) {
+          return await safeReply(interaction, '**المسؤولية غير موجودة!**');
+        }
+
+        if (!mentShortcut) {
+          return await safeReply(interaction, '**يجب إدخال كلمة الاختصار!**');
+        }
+
+        // استخدام البريفكس الافتراضي (-) إذا كان الحقل فارغ
+        const mentPrefix = mentPrefixInput || '-';
+
+        // تحديد إذا كان للأدمن فقط (إذا كتب لا = false، إذا تركه فارغ أو كتب نعم = true)
+        const noValues = ['لا', 'no', 'false', '0', 'لأ'];
+        const mentAdminOnly = !noValues.includes(mentAdminOnlyInput);
+
+        responsibilities[responsibilityName].mentPrefix = mentPrefix;
+        responsibilities[responsibilityName].mentShortcut = mentShortcut;
+        responsibilities[responsibilityName].mentAdminOnly = mentAdminOnly;
+
+        const saved = await saveResponsibilities();
+        if (!saved) {
+          return await safeReply(interaction, '**فشل في حفظ إعدادات المنشن!**');
+        }
+
+        logEvent(client, message.guild, {
+          type: 'RESPONSIBILITY_MANAGEMENT',
+          title: 'تم تحديث اختصار المنشن',
+          description: `تم تحديث اختصار المنشن للمسؤولية: ${responsibilityName}`,
+          user: message.author,
+          fields: [
+            { name: 'البريفكس', value: mentPrefix, inline: true },
+            { name: 'الاختصار', value: mentShortcut, inline: true },
+            { name: 'للأدمن فقط', value: mentAdminOnly ? 'نعم' : 'لا', inline: true }
+          ]
+        });
+
+        const adminOnlyText = mentAdminOnly ? '\n**🔒 للأدمن فقط:** نعم' : '';
+        await safeReply(interaction, `**✅ تم حفظ إعدادات المنشن للمسؤولية: ${responsibilityName}**\n\n**البريفكس:** \`${mentPrefix}\`\n**الاختصار:** \`${mentShortcut}\`${adminOnlyText}\n\n**الاستخدام:** \`${mentPrefix}${mentShortcut}\``);
+
+        setTimeout(async () => {
+          await updateResponsibilityView(responsibilityName);
         }, 1500);
       } else if (interaction.customId.startsWith('search_members_modal_')) {
         const responsibilityName = interaction.customId.replace('search_members_modal_', '');

@@ -1,4 +1,4 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, ComponentType } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, ComponentType, StringSelectMenuBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const colorManager = require('../utils/colorManager.js');
@@ -67,9 +67,9 @@ function createResponsibilitiesEmbed(responsibilities) {
                         description += `**المسؤوليه : ${respName}**\n`;
                         if (respData.responsibles && respData.responsibles.length > 0) {
                             const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' ، ');
-                            description += `المسؤولين : ${responsiblesList}\n\n`;
+                            description += `**- المسؤولين : ${responsiblesList}\n\n**`;
                         } else {
-                            description += `المسؤولين : 0\n\n`;
+                            description += `**- المسؤولين : N/A \n\n**`;
                         }
                     }
                 }
@@ -90,9 +90,9 @@ function createResponsibilitiesEmbed(responsibilities) {
                 description += `**المسؤوليه : ${respName}**\n`;
                 if (respData.responsibles && respData.responsibles.length > 0) {
                     const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' ، ');
-                    description += `المسؤولين : ${responsiblesList}\n\n`;
+                    description += `**- المسؤولين : ${responsiblesList}\n\n**`;
                 } else {
-                    description += `المسؤولين : 0\n\n`;
+                    description += `**- المسؤولين : N/A \n\n**`;
                 }
             }
         }
@@ -101,9 +101,9 @@ function createResponsibilitiesEmbed(responsibilities) {
             description += `**المسؤولية :** ${respName}\n`;
             if (respData.responsibles && respData.responsibles.length > 0) {
                 const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' ، ');
-                description += `**المسؤولين :** ${responsiblesList}\n\n`;
+                description += `- **المسؤولين :** ${responsiblesList}\n\n`;
             } else {
-                description += `**المسؤولين :** 0\n\n`;
+                description += `**- المسؤولين : N/A\n\n**`;
             }
         }
     }
@@ -161,9 +161,9 @@ function createResponsibilitiesText(responsibilities) {
                 text += `**المسؤوليه : ${respName}**\n`;
                 if (respData.responsibles && respData.responsibles.length > 0) {
                     const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' ، ');
-                    text += `المسؤولين : ${responsiblesList}\n\n`;
+                    text += `- **المسؤولين  : ${responsiblesList}\n\n**`;
                 } else {
-                    text += `المسؤولين : 0\n\n`;
+                    text += `- **المسؤولين : N/A **\n\n`;
                 }
             }
         }
@@ -172,9 +172,9 @@ function createResponsibilitiesText(responsibilities) {
             text += `**المسؤولية :** ${respName}\n`;
             if (respData.responsibles && respData.responsibles.length > 0) {
                 const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' ، ');
-                text += `**المسؤولين :** ${responsiblesList}\n\n`;
+                text += `- **المسؤولين :** ${responsiblesList}\n\n`;
             } else {
-                text += `**المسؤولين :** 0\n\n`;
+                text += `- ** المسؤولين : N/A **\n\n`;
             }
         }
     }
@@ -182,17 +182,50 @@ function createResponsibilitiesText(responsibilities) {
     return text;
 }
 
-// دالة لإنشاء الزر
-function createSuggestionButton() {
-    const row = new ActionRowBuilder()
+// دالة لإنشاء الأزرار والمنيو
+function createSuggestionComponents() {
+    const responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
+    const components = [];
+    
+    // إنشاء منيو المسؤوليات إذا وجدت
+    if (Object.keys(responsibilities).length > 0) {
+        // ترتيب المسؤوليات حسب الـ order
+        const sortedResps = Object.entries(responsibilities)
+            .sort((a, b) => (a[1].order || 0) - (b[1].order || 0))
+            .slice(0, 25); // حد أقصى 25 خيار
+        
+        const options = sortedResps.map(([name, data]) => ({
+            label: name.length > 100 ? name.slice(0, 97) + '...' : name,
+            value: name.length > 100 ? name.slice(0, 100) : name,
+            description: data.description ? (data.description.length > 100 ? data.description.slice(0, 97) + '...' : data.description) : undefined
+        }));
+        
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('resp_info_select')
+            .setPlaceholder('اختر مسؤولية لعرض تفاصيلها')
+            .addOptions(options);
+        
+        const menuRow = new ActionRowBuilder().addComponents(selectMenu);
+        components.push(menuRow);
+    }
+    
+    // زر الاقتراحات
+    const buttonRow = new ActionRowBuilder()
         .addComponents(
             new ButtonBuilder()
                 .setCustomId('suggestion_button')
                 .setLabel('Suggestion')
-.setEmoji('<:emoji_72:1442588665913151619>')
+                .setEmoji('<:emoji_72:1442588665913151619>')
                 .setStyle(ButtonStyle.Secondary)
         );
-    return row;
+    components.push(buttonRow);
+    
+    return components;
+}
+
+// دالة قديمة للتوافقية
+function createSuggestionButton() {
+    return createSuggestionComponents();
 }
 
 // دالة لتحديث جميع رسائل الايمبد
@@ -200,7 +233,7 @@ async function updateEmbedMessage(client) {
     const responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
     const newEmbed = createResponsibilitiesEmbed(responsibilities);
     const newText = createResponsibilitiesText(responsibilities);
-    const button = createSuggestionButton();
+    const components = createSuggestionComponents();
     
     for (const [guildId, embedData] of embedMessages.entries()) {
         try {
@@ -213,13 +246,13 @@ async function updateEmbedMessage(client) {
                 editOptions = {
                     content: newText,
                     embeds: [],
-                    components: [button]
+                    components: components
                 };
             } else {
                 editOptions = {
                     content: null,
                     embeds: [newEmbed],
-                    components: [button]
+                    components: components
                 };
             }
             
@@ -326,6 +359,97 @@ async function handleSuggestionModal(interaction, client) {
     }
 }
 
+// دالة للتعامل مع اختيار مسؤولية من المنيو
+async function handleResponsibilitySelect(interaction, client) {
+    try {
+        const selectedResp = interaction.values[0];
+        const responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
+        
+        if (!responsibilities[selectedResp]) {
+            await interaction.reply({
+                content: '**المسؤولية غير موجودة!**',
+                ephemeral: true
+            });
+            return;
+        }
+        
+        const respData = responsibilities[selectedResp];
+        
+        // إنشاء إيمبد منظم
+        const embed = colorManager.createEmbed()
+            .setTitle(`معلومات المسؤولية : ${selectedResp}`)
+            .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true, size: 256 }))
+            .setTimestamp()
+            .setFooter({ text: `طلب بواسطة : ${interaction.user.tag}`, iconURL: interaction.user.displayAvatarURL({ dynamic: true }) });
+        
+        // إضافة الحقول
+        let fields = [];
+        
+        // حقل الاختصار
+        if (respData.mentShortcut) {
+            const prefix = respData.mentPrefix || '-';
+            fields.push({
+                name: ' الاختصار',
+                value: `\`${prefix}${respData.mentShortcut}\``,
+                inline: true
+            });
+        }
+        
+        // حقل للأدمن فقط
+        if (respData.mentShortcut) {
+            fields.push({
+                name: 'الاختصار للادمن بس؟',
+                value: respData.mentAdminOnly ? 'نعم' : 'لا',
+                inline: true
+            });
+        }
+        
+        // حقل الشرح
+        if (respData.description && respData.description.trim()) {
+            fields.push({
+                name: 'شرح المسؤوليه',
+                value: respData.description,
+                inline: false
+            });
+        }
+        
+        // حقل المسؤولين
+        if (respData.responsibles && respData.responsibles.length > 0) {
+            const responsiblesList = respData.responsibles.map((id, index) => `${index + 1}. <@${id}>`).join('\n');
+            fields.push({
+                name: ` المسؤولين : (${respData.responsibles.length})`,
+                value: responsiblesList,
+                inline: false
+            });
+        } else {
+            fields.push({
+                name: ' المسؤولين',
+                value: 'لا يوجد مسؤولين معينين',
+                inline: false
+            });
+        }
+        
+        // إضافة الحقول للإيمبد
+        if (fields.length > 0) {
+            embed.addFields(fields);
+        }
+        
+        await interaction.reply({
+            embeds: [embed],
+            ephemeral: true
+        });
+        
+    } catch (error) {
+        console.error('خطأ في عرض معلومات المسؤولية:', error);
+        if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({
+                content: 'حدث خطأ في عرض معلومات المسؤولية',
+                ephemeral: true
+            });
+        }
+    }
+}
+
 module.exports = {
     name: 'resp',
     description: 'عرض المسؤوليات وإعداد نظام الاقتراحات',
@@ -359,7 +483,7 @@ module.exports = {
                     new ButtonBuilder()
                         .setCustomId('format_embed')
                         .setLabel('إيمبد')
-                        .setStyle(ButtonStyle.Primary),
+                        .setStyle(ButtonStyle.Secondary),
                     new ButtonBuilder()
                         .setCustomId('format_text')
                         .setLabel('نص عادي')
@@ -380,7 +504,7 @@ module.exports = {
             formatCollector.on('collect', async (interaction) => {
                 const format = interaction.customId === 'format_embed' ? 'embed' : 'text';
                 setGuildConfig(guildId, { messageFormat: format });
-                await interaction.update({ content: `تم اختيار: ${format === 'embed' ? 'إيمبد' : 'نص عادي'}`, components: [] });
+                await interaction.update({ content: `تم اختيار : ${format === 'embed' ? 'إيمبد' : 'نص عادي'}`, components: [] });
                 callback(format);
             });
             
@@ -507,6 +631,7 @@ module.exports = {
     updateEmbedMessage,
     handleSuggestionButton,
     handleSuggestionModal,
+    handleResponsibilitySelect,
     initialize: (client) => loadEmbedData(client)
 };
 
@@ -570,11 +695,11 @@ async function sendResponsibilitiesEmbed(channel, client) {
     try {
         const responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
         const embed = createResponsibilitiesEmbed(responsibilities);
-        const button = createSuggestionButton();
+        const components = createSuggestionComponents();
         
         const message = await channel.send({
             embeds: [embed],
-            components: [button]
+            components: components
         });
         
         // حفظ مرجع للرسالة
@@ -599,20 +724,20 @@ async function sendResponsibilitiesEmbed(channel, client) {
 async function sendResponsibilitiesMessage(channel, client, format = 'embed') {
     try {
         const responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
-        const button = createSuggestionButton();
+        const components = createSuggestionComponents();
         let message;
         
         if (format === 'text') {
             const textContent = createResponsibilitiesText(responsibilities);
             message = await channel.send({
                 content: textContent,
-                components: [button]
+                components: components
             });
         } else {
             const embed = createResponsibilitiesEmbed(responsibilities);
             message = await channel.send({
                 embeds: [embed],
-                components: [button]
+                components: components
             });
         }
         
