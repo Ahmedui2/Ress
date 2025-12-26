@@ -796,54 +796,138 @@ client.once(Events.ClientReady, async () => {
         // 1. المستخدم انضم لقناة صوتية لأول مرة (لم يكن في أي قناة)
         if (!oldChannelId && newChannelId) {
             await trackUserActivity(userId, 'voice_join');
-            client.voiceSessions.set(userId, { startTime: now, channelId: newChannelId, channelName: newChannelName });
-            console.log(`🎤 ${displayName} انضم للقناة الصوتية ${newChannelName}`);
+            
+            const sessionStartTime = now;
+            let lastTrackedTime = now;
+            let isAFK = false;
+            const AFK_LIMIT = 12 * 60 * 60 * 1000; // 12 ساعة بالملي ثانية
+            
+            // حساب الفويس حي كل دقيقة بدقة
+            const interval = setInterval(async () => {
+                try {
+                    const currentTime = Date.now();
+                    const duration = currentTime - lastTrackedTime; // الفرق الفعلي
+                    const totalSessionDuration = currentTime - sessionStartTime;
+
+                    // حماية AFK: إذا تجاوز 12 ساعة متواصلة، نتوقف عن الحساب الحي
+                    if (totalSessionDuration >= AFK_LIMIT && !isAFK) {
+                        isAFK = true;
+                        console.log(`⚠️ حماية AFK: ${displayName} تجاوز 12 ساعة متواصلة. تم إيقاف الحساب الحي.`);
+                        return; // توقف عن تسجيل الدقائق الحية
+                    }
+                    
+                    if (!isAFK && duration >= 60000) { // تسجيل إذا مرت دقيقة على الأقل ولم يكن AFK
+                        await trackUserActivity(userId, 'voice_time', {
+                            duration: duration,
+                            channelId: newChannelId,
+                            channelName: newChannelName,
+                            startTime: lastTrackedTime,
+                            endTime: currentTime
+                        });
+                        lastTrackedTime = currentTime; // تحديث آخر وقت تسجيل
+                    }
+                } catch (error) {
+                    console.error(`❌ خطأ في حساب الفويس للمستخدم ${userId}:`, error);
+                }
+            }, 30000); // فحص كل 30 ثانية للدقة
+            
+            client.voiceSessions.set(userId, { channelId: newChannelId, channelName: newChannelName, interval, sessionStartTime, lastTrackedTime, isAFK });
+            console.log(`🎤 ${displayName} انضم للقناة الصوتية ${newChannelName} - بدء احتساب الفويس (حد الـ AFK: 12 ساعة)`);
         }
 
         // 2. المستخدم غادر القناة الصوتية كلياً (من قناة إلى لا شيء)
         else if (oldChannelId && !newChannelId) {
             if (existingSession) {
-                const sessionDuration = now - existingSession.startTime;
-                if (sessionDuration > 0 && existingSession.startTime && existingSession.channelId) {
+                const currentTime = Date.now();
+                const remainingDuration = currentTime - existingSession.lastTrackedTime;
+                
+                // في نظام الجلسة: نحسب الوقت الكلي عند الخروج إذا كان AFK أو نضيف الثواني المتبقية
+                if (remainingDuration > 0) {
                     await trackUserActivity(userId, 'voice_time', {
-                        duration: sessionDuration,
-                        channelId: existingSession.channelId,
-                        channelName: existingSession.channelName,
-                        startTime: existingSession.startTime,
-                        endTime: now
+                        duration: remainingDuration,
+                        channelId: oldChannelId,
+                        channelName: oldChannelName,
+                        startTime: existingSession.lastTrackedTime,
+                        endTime: currentTime
                     });
-
-                    // فحص تلقائي للترقية في مستوى الفويس
-                    await checkAutoLevelUp(userId, 'voice', client);
                 }
+
+                // إيقاف العداد
+                if (existingSession.interval) {
+                    clearInterval(existingSession.interval);
+                }
+                
+                // فحص تلقائي للترقية في مستوى الفويس
+                await checkAutoLevelUp(userId, 'voice', client);
+                
                 client.voiceSessions.delete(userId);
-                console.log(`🎤 ${displayName} غادر القناة الصوتية ${existingSession.channelName} - المدة: ${Math.round(sessionDuration / 1000)} ثانية`);
+                const logMsg = existingSession.isAFK ? "نظام الجلسة (بعد 12 ساعة)" : "الحساب الحي";
+                console.log(`🎤 ${displayName} غادر القناة الصوتية - تم الحفظ عبر ${logMsg}`);
             }
         }
 
         // 3. المستخدم انتقل بين القنوات (من قناة إلى قناة أخرى)
         else if (oldChannelId && newChannelId && oldChannelId !== newChannelId) {
-            // حفظ الوقت في القناة السابقة
             if (existingSession) {
-                const sessionDuration = now - existingSession.startTime;
-                if (sessionDuration > 0 && existingSession.startTime && existingSession.channelId) {
+                const currentTime = Date.now();
+                const remainingDuration = currentTime - existingSession.lastTrackedTime;
+                
+                if (remainingDuration > 0) {
                     await trackUserActivity(userId, 'voice_time', {
-                        duration: sessionDuration,
-                        channelId: existingSession.channelId,
-                        channelName: existingSession.channelName,
-                        startTime: existingSession.startTime,
-                        endTime: now
+                        duration: remainingDuration,
+                        channelId: oldChannelId,
+                        channelName: oldChannelName,
+                        startTime: existingSession.lastTrackedTime,
+                        endTime: currentTime
                     });
+                }
 
-                    // فحص تلقائي للترقية في مستوى الفويس
-                    await checkAutoLevelUp(userId, 'voice', client);
+                // إيقاف العداد القديم
+                if (existingSession.interval) {
+                    clearInterval(existingSession.interval);
                 }
             }
 
+            // فحص تلقائي للترقية في مستوى الفويس
+            await checkAutoLevelUp(userId, 'voice', client);
+
             // تسجيل انضمام للقناة الجديدة وبدء جلسة جديدة
             await trackUserActivity(userId, 'voice_join');
-            client.voiceSessions.set(userId, { startTime: now, channelId: newChannelId, channelName: newChannelName });
-            console.log(`🔄 ${displayName} انتقل من ${oldChannelName} إلى ${newChannelName}`);
+            
+            const newSessionStartTime = now;
+            let newLastTrackedTime = now;
+            let isAFK = false;
+            const AFK_LIMIT = 12 * 60 * 60 * 1000;
+
+            const newInterval = setInterval(async () => {
+                try {
+                    const currentTime = Date.now();
+                    const duration = currentTime - newLastTrackedTime;
+                    const totalSessionDuration = currentTime - newSessionStartTime;
+
+                    if (totalSessionDuration >= AFK_LIMIT && !isAFK) {
+                        isAFK = true;
+                        console.log(`⚠️ حماية AFK: ${displayName} تجاوز 12 ساعة في القناة الجديدة.`);
+                        return;
+                    }
+
+                    if (!isAFK && duration >= 60000) {
+                        await trackUserActivity(userId, 'voice_time', {
+                            duration: duration,
+                            channelId: newChannelId,
+                            channelName: newChannelName,
+                            startTime: newLastTrackedTime,
+                            endTime: currentTime
+                        });
+                        newLastTrackedTime = currentTime;
+                    }
+                } catch (error) {
+                    console.error(`❌ خطأ في حساب الفويس للمستخدم ${userId}:`, error);
+                }
+            }, 30000);
+            
+            client.voiceSessions.set(userId, { channelId: newChannelId, channelName: newChannelName, interval: newInterval, sessionStartTime: newSessionStartTime, lastTrackedTime: newLastTrackedTime, isAFK });
+            console.log(`🔄 ${displayName} انتقل من ${oldChannelName} إلى ${newChannelName} - تم تصفير عداد الـ 12 ساعة`);
         }
 
         // 4. أي تغيير آخر ضمن نفس القناة (mute/unmute, deafen/undeafen, etc.)
@@ -874,10 +958,66 @@ client.once(Events.ClientReady, async () => {
 
 
   // تهيئة نظام المهام النشطة الجديد - بعد تحميل الأوامر
-  setTimeout(() => {
+  setTimeout(async () => {
     try {
       initializeActiveTasks();
       loadPendingReports();
+
+      // فحص الأعضاء الموجودين في الرومات الصوتية عند تشغيل البوت
+      const { trackUserActivity } = require('./utils/userStatsCollector');
+      const now = Date.now();
+      
+      for (const guild of client.guilds.cache.values()) {
+        for (const voiceState of guild.voiceStates.cache.values()) {
+          // تجاهل البوتات والمستخدمين الذين ليس لديهم قناة
+          if (!voiceState.member || voiceState.member.user.bot || !voiceState.channelId) continue;
+          
+          const userId = voiceState.member.id;
+          const channelId = voiceState.channelId;
+          const channelName = voiceState.channel.name;
+          const displayName = voiceState.member.displayName;
+
+          // إذا لم يكن هناك جلسة مسجلة بالفعل
+          if (!client.voiceSessions.has(userId)) {
+            await trackUserActivity(userId, 'voice_join');
+            
+            const sessionStartTime = now;
+            let lastTrackedTime = now;
+            let isAFK = false;
+            const AFK_LIMIT = 12 * 60 * 60 * 1000;
+            
+            const interval = setInterval(async () => {
+              try {
+                const currentTime = Date.now();
+                const duration = currentTime - lastTrackedTime;
+                const totalSessionDuration = currentTime - sessionStartTime;
+
+                if (totalSessionDuration >= AFK_LIMIT && !isAFK) {
+                  isAFK = true;
+                  console.log(`⚠️ حماية AFK (بدء التشغيل): ${displayName} تجاوز 12 ساعة.`);
+                  return;
+                }
+                
+                if (!isAFK && duration >= 60000) {
+                  await trackUserActivity(userId, 'voice_time', {
+                    duration: duration,
+                    channelId: channelId,
+                    channelName: channelName,
+                    startTime: lastTrackedTime,
+                    endTime: currentTime
+                  });
+                  lastTrackedTime = currentTime;
+                }
+              } catch (error) {
+                console.error(`❌ خطأ في حساب الفويس للمستخدم ${userId} (عند البدء):`, error);
+              }
+            }, 30000);
+            
+            client.voiceSessions.set(userId, { channelId, channelName, interval, sessionStartTime, lastTrackedTime, isAFK });
+            console.log(`📡 تم اكتشاف ${displayName} في القناة ${channelName} عند بدء التشغيل - بدأ الحساب الحي.`);
+          }
+        }
+      }
     } catch (error) {
       console.error('خطأ في تهيئة الأنظمة:', error);
     }
@@ -1283,13 +1423,14 @@ const { isChannelBlocked } = require('./commands/chatblock.js');
       
       const callButton = new ButtonBuilder()
         .setCustomId(callButtonId)
-        .setLabel('Ticket')
-        .setStyle(ButtonStyle.Success);
+        .setLabel('Call')
+.setEmoji('<:emoji_11:1448570617950371861>')
+        .setStyle(ButtonStyle.Secondary);
       
       const row = new ActionRowBuilder().addComponents(callButton);
       
       // إنشاء رسالة نصية منظمة بدلاً من الإيمبد
-      const textMessage = `**مسؤولي: ${matchedResponsibility}**\n\n${numberedMentions}`;
+      const textMessage = `- **مسؤولين ال${matchedResponsibility}**\n\n${numberedMentions}`;
       
       const sentMessage = await message.channel.send({ 
         content: textMessage,
@@ -3140,15 +3281,16 @@ client.on('interactionCreate', async (interaction) => {
       
       // إنشاء الإيمبد
       const callEmbed = colorManager.createEmbed()
-        .setTitle(`استدعاء مسؤولي: ${responsibilityName}`)
-        .setDescription(`**من قِبل:** <@${interaction.user.id}>\n**السبب:** ${reason}\n\n**المسؤولين:**\n${mentions}`)
+        .setTitle(`استدعاء مسؤولي : ${responsibilityName}`)
+        .setDescription(`**من قِبل :** <@${interaction.user.id}>\n**السبب :** ${reason}\n\n**المسؤولين :**\n${mentions}`)
         .setThumbnail('https://cdn.discordapp.com/emojis/1303973825591115846.png')
         .setFooter({ text: 'By Ahmed.' })
         .setTimestamp();
       
       const claimButton = new ButtonBuilder()
         .setCustomId(claimId)
-        .setLabel('استلام')
+        .setLabel('claim')
+.setEmoji('<:emoji_11:1448570670270251079>')
         .setStyle(ButtonStyle.Success);
       
       const buttonRow = new ActionRowBuilder().addComponents(claimButton);
@@ -3218,11 +3360,10 @@ client.on('interactionCreate', async (interaction) => {
         const originalEmbed = interaction.message.embeds[0];
         const updatedEmbed = colorManager.createEmbed()
           .setTitle(originalEmbed.title)
-          .setDescription(`${originalEmbed.description}\n\n**✅ تم الاستلام بواسطة:** <@${interaction.user.id}>`)
+          .setDescription(`${originalEmbed.description}\n\n**✅ تم الاستلام بواسطة :** <@${interaction.user.id}>\n\n**السبب كان :** ${reason}`)
           .setThumbnail(originalEmbed.thumbnail?.url)
           .setFooter({ text: 'By Ahmed.' })
-          .setTimestamp()
-          .setColor('#00FF00');
+          .setTimestamp();
         
         // إنشاء زر رابط الرسالة الأصلية
         const rclaimData = client.rclaimData?.get(interaction.customId);
@@ -3231,7 +3372,7 @@ client.on('interactionCreate', async (interaction) => {
         if (rclaimData && rclaimData.originalChannelId && rclaimData.originalMessageId) {
           const messageLink = `https://discord.com/channels/${rclaimData.guildId}/${rclaimData.originalChannelId}/${rclaimData.originalMessageId}`;
           const linkButton = new ButtonBuilder()
-            .setLabel('رابط الرسالة')
+            .setLabel(' message')
             .setStyle(ButtonStyle.Link)
             .setURL(messageLink);
           
@@ -3359,6 +3500,7 @@ client.on('interactionCreate', async (interaction) => {
       const claimButton = new ButtonBuilder()
         .setCustomId(`claim_task_${responsibilityName}_${Date.now()}_${interaction.user.id}`)
         .setLabel('claim')
+.setEmoji('<:emoji_11:1448570670270251079>')
         .setStyle(ButtonStyle.Success);
 
       const buttonRow = new ActionRowBuilder().addComponents(claimButton);
@@ -4845,4 +4987,4 @@ process.on('unhandledRejection', (reason, promise) => {
   }
 });
 
-client.login('MTE0OTI1OTk4NjIyOTI3MjYwNg.GDcTYV.RFu5LWJO6RCN54Ap2OfML2AmEhcq4cH_dMxpQ4');
+client.login('MTE0ODg4Mjc3NTQ0MTY5MDcyNQ.Gg7zTy.9O7sHKU_h2O2mNbCMycIctk_bJLpVdQNVp0IFk');
