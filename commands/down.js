@@ -986,12 +986,15 @@ async function handleDownInteractions(interaction, context) {
             .setTitle('تفاصيل الداون');
 
         const durationInput = new TextInputBuilder()
-            .setCustomId('down_duration')
-            .setLabel('المدة (مثل: 7d أو 12h أو permanent)')
-            .setStyle(TextInputStyle.Short)
-            .setRequired(true)
-            .setPlaceholder('7d, 12h, 30m, permanent');
+    .setCustomId('down_duration')
 
+    .setLabel('المدة (مثل: 7d أو 12h أو permanent أو شفوي)')
+
+    .setStyle(TextInputStyle.Short)
+
+    .setRequired(true)
+
+    .setPlaceholder('7d, 12h, permanent, شفوي');
         const reasonInput = new TextInputBuilder()
             .setCustomId('down_reason')
             .setLabel('السبب')
@@ -1037,7 +1040,7 @@ async function handleDownInteractions(interaction, context) {
 
             return {
                 label: `تعديل داون: ${roleName}`,
-                value: downData.downId,
+                value: downData.id,
                 description: `الداون ينتهي ${downData.endTime ? `<t:${Math.floor(downData.endTime / 1000)}:R>` : 'نهائي'}`,
             };
         }).slice(0, 25); // Limit to 25 options
@@ -1110,7 +1113,7 @@ async function handleDownInteractions(interaction, context) {
 
             return {
                 label: `إنهاء داون: ${roleName}`,
-                value: downData.downId,
+                value: downData.id,
                 description: `الداون ينتهي ${endTimeText}`,
             };
         }).slice(0, 25); // Limit to 25 options

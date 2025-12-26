@@ -1112,37 +1112,37 @@ const deleteButton = new ButtonBuilder()
           }
 
           const editButton = new ButtonBuilder()
-        .setCustomId(`edit_${responsibilityName}`)
+        .setCustomId(`edit_${selected}`)
         .setLabel('الشرح')
 .setEmoji('<:emoji_16:1448570798380945539>')
         .setStyle(ButtonStyle.Secondary);
 
       const renameButton = new ButtonBuilder()
-        .setCustomId(`rename_${responsibilityName}`)
+        .setCustomId(`rename_${selected}`)
         .setLabel('الأسم')
 .setEmoji('<:emoji_14:1448570732652003398>')
         .setStyle(ButtonStyle.Secondary);
 
       const manageButton = new ButtonBuilder()
-        .setCustomId(`manage_${responsibilityName}`)
+        .setCustomId(`manage_${selected}`)
         .setLabel('المسؤولين')
 .setEmoji('<:emoji_17:1448570976097931406>')
         .setStyle(ButtonStyle.Secondary);
 
       const roleButton = new ButtonBuilder()
-        .setCustomId(`role_${responsibilityName}`)
+        .setCustomId(`role_${selected}`)
         .setLabel('رول المسؤولية')
 .setEmoji('<:emoji_14:1448570758849757285>')
         .setStyle(ButtonStyle.Secondary);
 
       const mentButton = new ButtonBuilder()
-        .setCustomId(`ment_${responsibilityName}`)
+        .setCustomId(`ment_${selected}`)
         .setLabel('اختصار')
 .setEmoji('<:emoji_18:1448572201610776730>')
         .setStyle(ButtonStyle.Secondary);
 
 const deleteButton = new ButtonBuilder()
-        .setCustomId(`delete_${responsibilityName}`)
+        .setCustomId(`delete_${selected}`)
         .setLabel('حذف')
 .setEmoji('<:emoji_13:1448570702176452660>')
         .setStyle(ButtonStyle.Danger);
