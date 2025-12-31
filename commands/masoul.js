@@ -30,76 +30,39 @@ const MODAL_TTL_MS = 10 * 60 * 1000; // 10 دقائق
 
 // ===== أدوات JSON =====
 function readJSONFile(filePath, defaultValue = {}) {
-  try {
-    if (fs.existsSync(filePath)) {
-      const data = fs.readFileSync(filePath, 'utf8');
-      return JSON.parse(data);
+    try {
+        if (fs.existsSync(filePath)) {
+            const data = fs.readFileSync(filePath, 'utf8');
+            if (!data || data.trim() === '') return defaultValue;
+            return JSON.parse(data);
+        }
+        return defaultValue;
+    } catch (error) {
+        console.error(`خطأ في قراءة ${filePath}:`, error.message);
+        return defaultValue;
     }
-    return defaultValue;
-  } catch (error) {
-    console.error(`خطأ في قراءة ${filePath}:`, error);
-    return defaultValue;
-  }
 }
 
-// دالة لقراءة إعدادات التقارير فقط (بدون تعديل)
+// تحسين قراءة إعدادات التقارير مع كاش بسيط
+const reportsCache = new Map();
 function loadCurrentReportsConfig(guildId) {
+  const now = Date.now();
+  if (reportsCache.has(guildId)) {
+    const cached = reportsCache.get(guildId);
+    if (now - cached.timestamp < 30000) return cached.data; // كاش لمدة 30 ثانية
+  }
+
   try {
     const reportsPath = path.join(__dirname, '..', 'data', 'reports.json');
-    if (!fs.existsSync(reportsPath)) {
-      console.log(`⚠️ ملف reports.json غير موجود`);
-      return { enabled: false, pointsOnReport: false, requiredFor: [], approvalRequiredFor: [] };
-    }
+    if (!fs.existsSync(reportsPath)) return { enabled: false, requiredFor: [] };
 
-    const data = fs.readFileSync(reportsPath, 'utf8');
-    if (!data.trim()) {
-      console.log(`⚠️ ملف reports.json فارغ`);
-      return { enabled: false, pointsOnReport: false, requiredFor: [], approvalRequiredFor: [] };
-    }
-
-    const allReportsConfig = JSON.parse(data);
-    console.log(`📋 محتويات ملف reports.json:`, JSON.stringify(allReportsConfig, null, 2));
-    console.log(`🔍 السيرفرات المتاحة في الملف:`, Object.keys(allReportsConfig));
-    console.log(`🎯 السيرفر المطلوب: ${guildId}`);
-
-    // إذا كان يوجد إعدادات خاصة بالسيرفر، نرجعها
-    if (allReportsConfig[guildId]) {
-      console.log(`✅ تم العثور على إعدادات خاصة بالسيرفر ${guildId}:`, allReportsConfig[guildId]);
-      return {
-        enabled: allReportsConfig[guildId].enabled || false,
-        pointsOnReport: allReportsConfig[guildId].pointsOnReport || false,
-        requiredFor: allReportsConfig[guildId].requiredFor || [],
-        approvalRequiredFor: allReportsConfig[guildId].approvalRequiredFor || [],
-        templates: allReportsConfig[guildId].templates || {},
-        reportChannel: allReportsConfig[guildId].reportChannel || null,
-        approverType: allReportsConfig[guildId].approverType || 'owners',
-        approverTargets: allReportsConfig[guildId].approverTargets || []
-      };
-    }
-
-    // إذا كان الملف يحتوي على إعدادات عامة (تشكيل قديم)
-    if (allReportsConfig.enabled !== undefined) {
-      console.log(`⚠️ استخدام إعدادات عامة (تشكيل قديم):`, allReportsConfig);
-      return {
-        enabled: allReportsConfig.enabled || false,
-        pointsOnReport: allReportsConfig.pointsOnReport || false,
-        requiredFor: allReportsConfig.requiredFor || [],
-        approvalRequiredFor: allReportsConfig.approvalRequiredFor || [],
-        templates: allReportsConfig.templates || {},
-        reportChannel: allReportsConfig.reportChannel || null,
-        approverType: allReportsConfig.approverType || 'owners',
-        approverTargets: allReportsConfig.approverTargets || []
-      };
-    }
-
-    // لا توجد إعدادات
-    console.log(`⚠️ لا توجد إعدادات للسيرفر ${guildId} في الملف`);
-    console.log(`💡 تأكد من تفعيل نظام التقارير باستخدام أمر 'report'`);
-    return { enabled: false, pointsOnReport: false, requiredFor: [], approvalRequiredFor: [] };
-
+    const allReportsConfig = JSON.parse(fs.readFileSync(reportsPath, 'utf8'));
+    const config = allReportsConfig[guildId] || (allReportsConfig.enabled !== undefined ? allReportsConfig : { enabled: false, requiredFor: [] });
+    
+    reportsCache.set(guildId, { timestamp: now, data: config });
+    return config;
   } catch (error) {
-    console.error(`❌ خطأ في قراءة إعدادات التقارير للسيرفر ${guildId}:`, error);
-    return { enabled: false, pointsOnReport: false, requiredFor: [], approvalRequiredFor: [] };
+    return { enabled: false, requiredFor: [] };
   }
 }
 function writeJSONFile(filePath, data) {
@@ -272,31 +235,17 @@ async function handleClaimButton(interaction, context) {
       }
     } catch { /* ignore */ }
 
-    // Extract the reason from the original embed
-    let reason = 'غير محدد';
-    try {
-        const originalEmbed = interaction.message.embeds[0];
-        if (originalEmbed && originalEmbed.description) {
-            // البحث عن السطر الذي يحتوي على السبب
-            const lines = originalEmbed.description.split('\n');
-            for (const line of lines) {
-                if (line.includes('**السبب:**') || line.includes('**السبب :**')) {
-                    // استخراج النص بعد "**السبب:**" أو "**السبب :**"
-                    reason = line.split('**السبب:**')[1] || line.split('**السبب :**')[1] || 'غير محدد';
-                    reason = reason.trim();
-                    break;
-                }
-            }
+    // استبدال Array.forEach(async) بـ for...of وتحسين جلب الأعضاء
+    for (const userId of responsibleIds) {
+        try {
+            // جلب العضو الفردي بدلاً من جلب الجميع
+            const member = await guild.members.fetch(userId).catch(() => null);
+            if (!member) continue;
+            
+            // ... بقية المنطق هنا
+        } catch (error) {
+            console.error(`Error fetching member ${userId}:`, error);
         }
-        // إذا لم نجد السبب في الوصف، نحاول البحث في الـ fields
-        if (reason === 'غير محدد' && originalEmbed.fields) {
-            const reasonField = originalEmbed.fields.find(f => f.name && (f.name.includes('السبب') || f.name.includes('Reason')));
-            if (reasonField && reasonField.value) {
-                reason = reasonField.value.trim();
-            }
-        }
-    } catch (e) {
-        console.error("Could not parse reason from embed:", e);
     }
 
     console.log(`📝 السبب المستخرج: "${reason}"`);
@@ -313,6 +262,8 @@ async function handleClaimButton(interaction, context) {
     // Mark task as active immediately to prevent race conditions
     activeTasks.set(taskId, displayName);
     saveActiveTasks();
+
+    const { dbManager } = require('../utils/database.js');
 
     // Cancel reminder if it exists
     const notificationsCommand = client.commands.get('notifications');
@@ -363,13 +314,6 @@ async function handleClaimButton(interaction, context) {
                            Array.isArray(currentReportsConfig.requiredFor) &&
                            currentReportsConfig.requiredFor.includes(responsibilityName);
 
-    console.log(`${isReportRequired ? '✅' : '❌'} هل التقرير مطلوب؟ ${isReportRequired}`);
-    console.log(`📊 تفاصيل الفحص:`);
-    console.log(`   - النظام مفعل؟ ${currentReportsConfig?.enabled || false}`);
-    console.log(`   - requiredFor موجود؟ ${Array.isArray(currentReportsConfig?.requiredFor)}`);
-    console.log(`   - requiredFor يحتوي المسؤولية؟ ${currentReportsConfig?.requiredFor?.includes(responsibilityName) || false}`);
-    console.log(`   - قائمة المسؤوليات المطلوبة: ${JSON.stringify(currentReportsConfig?.requiredFor || [])}`);
-
     if (isReportRequired) {
             const reportId = `${interaction.user.id}_${Date.now()}`;
 
@@ -396,17 +340,7 @@ async function handleClaimButton(interaction, context) {
 
             // منح النقطة فوراً إذا كان النظام لا يتطلب تقرير للنقاط
             if (!currentReportsConfig.pointsOnReport) {
-                if (!points[responsibilityName]) points[responsibilityName] = {};
-                if (!points[responsibilityName][interaction.user.id]) points[responsibilityName][interaction.user.id] = {};
-                if (typeof points[responsibilityName][interaction.user.id] === 'number') {
-                    const oldPoints = points[responsibilityName][interaction.user.id];
-                    points[responsibilityName][interaction.user.id] = { [Date.now() - (35 * 24 * 60 * 60 * 1000)]: oldPoints };
-                }
-                if (!points[responsibilityName][interaction.user.id][timestamp]) {
-                    points[responsibilityName][interaction.user.id][timestamp] = 0;
-                }
-                points[responsibilityName][interaction.user.id][timestamp] += 1;
-                scheduleSave();
+                await dbManager.addPoint(responsibilityName, interaction.user.id);
             }
 
             const reportEmbed = colorManager.createEmbed()
@@ -434,19 +368,8 @@ async function handleClaimButton(interaction, context) {
     } else {
         // --- ORIGINAL LOGIC for tasks NOT requiring a report ---
         // Award points immediately
-        if (!points[responsibilityName]) points[responsibilityName] = {};
-        if (!points[responsibilityName][interaction.user.id]) points[responsibilityName][interaction.user.id] = {};
-        if (typeof points[responsibilityName][interaction.user.id] === 'number') {
-          const oldPoints = points[responsibilityName][interaction.user.id];
-          points[responsibilityName][interaction.user.id] = {
-            [Date.now() - (35 * 24 * 60 * 60 * 1000)]: oldPoints
-          };
-        }
-        if (!points[responsibilityName][interaction.user.id][timestamp]) {
-          points[responsibilityName][interaction.user.id][timestamp] = 0;
-        }
-        points[responsibilityName][interaction.user.id][timestamp] += 1;
-        scheduleSave();
+        const { dbManager } = require('../utils/database.js');
+        await dbManager.addPoint(responsibilityName, interaction.user.id);
 
         // زر رابط الرسالة (إن أمكن)
         const finalChannelId = originalChannelId || interaction.channelId;

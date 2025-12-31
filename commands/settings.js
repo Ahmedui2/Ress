@@ -84,9 +84,7 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
       const roles = responsibility.roles;
       const responsibleIds = responsibility.responsibles || [];
 
-      // جلب جميع أعضاء السيرفر لضمان دقة الفحص
-      await guild.members.fetch();
-
+      // جلب جميع أعضاء السيرفر لضمان دقة الفحص (تحسين: جلب فردي عند الحاجة)
       for (const userId of responsibleIds) {
         try {
           const member = await guild.members.fetch(userId).catch(() => null);
@@ -106,43 +104,34 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
     }
   }
 
-  // حفظ البيانات في الملف مباشرة
+  // جلب البيانات من الذاكرة إذا كانت متوفرة لتقليل الضغط
+  const currentResponsibilities = responsibilities || {};
+  
   async function saveResponsibilities() {
     try {
-      const fs = require('fs');
-      const path = require('path');
       const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
-
-      if (!fs.existsSync(path.dirname(responsibilitiesPath))) {
-        fs.mkdirSync(path.dirname(responsibilitiesPath), { recursive: true });
-      }
-
-      fs.writeFileSync(responsibilitiesPath, JSON.stringify(responsibilities, null, 2));
+      // الكتابة بشكل غير متزامن لتجنب حظر الـ Event Loop
+      await fs.promises.writeFile(responsibilitiesPath, JSON.stringify(responsibilities, null, 2));
       console.log('✅ [SETTINGS] تم حفظ المسؤوليات بنجاح');
-
-      // Update all setup menus
-      try {
-        const setupCommand = client.commands.get('setup');
-        if (setupCommand && setupCommand.updateAllSetupMenus) {
-          setupCommand.updateAllSetupMenus(client);
-        }
-      } catch (error) {
-        console.error('خطأ في تحديث منيو السيتب:', error);
-}
-try {
-        const respCommand = client.commands.get('resp');
-        if (respCommand && respCommand.updateEmbedMessage) {
-          await respCommand.updateEmbedMessage(client);
-          console.log('✅ [SETTINGS] تم تحديث إيمبد Resp');
-        }
-      } catch (error) {
-        console.error('خطأ في تحديث إيمبد Resp:', error);
-      }
-
+      
+      // التحديثات اللاحقة
+      updateRespEmbeds(client);
       return true;
     } catch (error) {
       console.error('❌ [SETTINGS] خطأ في حفظ المسؤوليات:', error.message);
       return false;
+    }
+  }
+
+  // دالة مساعدة لتحديث الإيمبدات بتأخير
+  function updateRespEmbeds(client) {
+    const respCommand = client.commands.get('resp');
+    if (respCommand && respCommand.updateEmbedMessage) {
+        respCommand.updateEmbedMessage(client);
+    }
+    const setupCommand = client.commands.get('setup');
+    if (setupCommand && setupCommand.updateAllSetupMenus) {
+        setupCommand.updateAllSetupMenus(client);
     }
   }
 
@@ -256,26 +245,22 @@ try {
 
     const menuData = createPaginatedMenu(page);
     
-    return await message.channel.send({ embeds: [embed], components: menuData.components });
+    const response = await message.channel.send({ embeds: [embed], components: menuData.components });
+    return response;
   }
 
   const sentMessage = await sendSettingsMenu();
 
   // Collector with a 5-minute timeout
   const filter = i => i.user.id === message.author.id;
-  const collector = message.channel.createMessageComponentCollector({ filter, time: 3600000 }); // ساعة واحدة بدلاً من 5 دقائق
+  const collector = message.channel.createMessageComponentCollector({ filter, time: 600000 }); // 10 minutes
 
   activeCommandCollectors.set(message.author.id, collector);
 
-  const refreshInterval = setInterval(async () => {
-    try {
-      await updateMainMenu();
-    } catch (error) {
-      console.error('خطأ في التحديث التلقائي:', error);
-    }
-  }, 60000);
+  const refreshInterval = null; // تعطيل التحديث التلقائي لتقليل استهلاك CPU
 
   collector.on('end', (collected, reason) => {
+    collector.removeAllListeners();
     activeCommandCollectors.delete(message.author.id);
     console.log(`Settings collector for ${message.author.id} ended. Reason: ${reason}`);
     if (reason !== 'new_command') {
@@ -543,11 +528,12 @@ const deleteButton = new ButtonBuilder()
                 console.log(`لا يمكن جلب معلومات المستخدم ${removedUserId}`);
               }
 
-              responsibility.responsibles.splice(index, 1);
-              await saveResponsibilities();
-
-              // مزامنة الرولات
-              await syncResponsibilityRoles(responsibilityName, message.guild);
+      responsibility.responsibles.splice(index, 1);
+      const { dbManager } = require('../utils/database.js');
+      await dbManager.updateResponsibility(responsibilityName, responsibility);
+      
+      // مزامنة الرولات
+      await syncResponsibilityRoles(responsibilityName, message.guild);
 
               // تحديث إيمبد Resp
               try {

@@ -9,36 +9,33 @@ const DATA_FILES = {
     categories: path.join(__dirname, '..', 'data', 'respCategories.json')
 };
 
-// دالة لقراءة ملف JSON
+// دالة لقراءة ملف JSON (للكونفيغ فقط)
 function readJSONFile(filePath, defaultValue = {}) {
     try {
         if (fs.existsSync(filePath)) {
             const data = fs.readFileSync(filePath, 'utf8');
+            if (!data || data.trim() === '') return defaultValue;
             return JSON.parse(data);
         }
         return defaultValue;
     } catch (error) {
-        console.error(`خطأ في قراءة ${filePath}:`, error);
+        console.error(`خطأ في قراءة ${filePath}:`, error.message);
         return defaultValue;
     }
 }
 
-// دالة لكتابة ملف JSON
-function writeJSONFile(filePath, data) {
-    try {
-        fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
-        return true;
-    } catch (error) {
-        console.error(`خطأ في كتابة ${filePath}:`, error);
-        return false;
-    }
-}
+const { dbManager } = require('../utils/database.js');
 
 // متغير لتخزين رسائل الايمبد (دعم عدة سيرفرات)
 let embedMessages = new Map(); // guildId -> { messageId, channelId, message }
 
-// دالة لإنشاء الايمبد
-function createResponsibilitiesEmbed(responsibilities) {
+async function getResponsibilities() {
+    return await dbManager.getResponsibilities();
+}
+
+// دالة لإنشاء الايمبد باستخدام الكاش
+async function createResponsibilitiesEmbed() {
+    const responsibilities = await getResponsibilities();
     const embed = colorManager.createEmbed()
         .setTitle('Responsibilities');
     
@@ -251,53 +248,46 @@ function createSuggestionButton() {
     return createSuggestionComponents();
 }
 
-// دالة لتحديث جميع رسائل الايمبد
+// دالة لتحديث جميع رسائل الايمبد (مع تقليل مرات الاستدعاء)
 async function updateEmbedMessage(client) {
-    const responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
-    const newEmbed = createResponsibilitiesEmbed(responsibilities);
-    const newText = createResponsibilitiesText(responsibilities);
-    const components = createSuggestionComponents();
+    if (global.isUpdatingResp) return;
+    global.isUpdatingResp = true;
     
-    for (const [guildId, embedData] of embedMessages.entries()) {
+    setTimeout(async () => {
         try {
-            // جلب نوع الرسالة من الكونفيغ
-            const config = readJSONFile(DATA_FILES.respConfig, { guilds: {} });
-            const format = config.guilds[guildId]?.messageFormat || embedData.format || 'embed';
+            const responsibilities = await dbManager.getResponsibilities();
+            const newEmbed = createResponsibilitiesEmbed(responsibilities);
+            const newText = createResponsibilitiesText(responsibilities);
+            const components = createSuggestionComponents();
             
-            let editOptions;
-            if (format === 'text') {
-                editOptions = {
-                    content: newText,
-                    embeds: [],
-                    components: components
-                };
-            } else {
-                editOptions = {
-                    content: null,
-                    embeds: [newEmbed],
-                    components: components
-                };
+            for (const [guildId, embedData] of embedMessages.entries()) {
+                try {
+                    const config = readJSONFile(DATA_FILES.respConfig, { guilds: {} });
+                    const format = config.guilds[guildId]?.messageFormat || embedData.format || 'embed';
+                    
+                    let editOptions = format === 'text' ? { content: newText, embeds: [], components } : { content: null, embeds: [newEmbed], components };
+                    
+                    if (embedData.message) {
+                        await embedData.message.edit(editOptions);
+                    } else if (embedData.messageId && embedData.channelId) {
+                        const channel = await client.channels.fetch(embedData.channelId);
+                        const message = await channel.messages.fetch(embedData.channelId, embedData.messageId);
+                        await message.edit(editOptions);
+                        embedData.message = message;
+                    }
+                } catch (error) {
+                    console.error(`خطأ في تحديث رسالة المسؤوليات للسيرفر ${guildId}:`, error);
+                }
             }
-            
-            if (embedData.message) {
-                await embedData.message.edit(editOptions);
-                console.log(`تم تحديث رسالة المسؤوليات في السيرفر ${guildId} (${format})`);
-            } else if (embedData.messageId && embedData.channelId) {
-                // إعادة بناء مرجع الرسالة
-                const channel = await client.channels.fetch(embedData.channelId);
-                const message = await channel.messages.fetch(embedData.messageId);
-                await message.edit(editOptions);
-                embedData.message = message;
-                console.log(`تم إعادة بناء وتحديث رسالة المسؤوليات في السيرفر ${guildId} (${format})`);
-            }
-        } catch (error) {
-            console.error(`خطأ في تحديث رسالة المسؤوليات للسيرفر ${guildId}:`, error);
-            // إزالة البيانات التالفة
-            embedMessages.delete(guildId);
-            updateStoredEmbedData();
+        } finally {
+            global.isUpdatingResp = false;
         }
-    }
+    }, 5000); 
 }
+
+// التصدير للتوافق مع الأنظمة الأخرى
+global.updateRespEmbeds = updateEmbedMessage;
+
 
 // دالة للتعامل مع زر الاقتراحات
 async function handleSuggestionButton(interaction, client) {
@@ -617,8 +607,12 @@ module.exports = {
                 // انتظار منشن روم الايمبد
                 const embedCollector = msg.channel.createMessageCollector({
                     filter: m => m.author.id === message.author.id && m.mentions.channels.size > 0,
-                    time: 60000,
+                    time: 600000, // 10 minutes
                     max: 1
+                });
+
+                embedCollector.on('end', () => {
+                    embedCollector.removeAllListeners();
                 });
                 
                 embedCollector.on('collect', async (embedMsg) => {

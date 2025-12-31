@@ -57,50 +57,12 @@ module.exports = {
 
         let userId = targetUser.id;
 
-        // تحميل المسؤوليات الحديثة من الملف مباشرة
-
-        const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
-
-        const categoriesPath = path.join(__dirname, '..', 'data', 'respCategories.json');
-
+        // تحميل المسؤوليات الحديثة من SQLite
         let currentResponsibilities = {};
-
-        let categories = {};
-
         try {
-
-            if (fs.existsSync(responsibilitiesPath)) {
-
-                const data = fs.readFileSync(responsibilitiesPath, 'utf8');
-
-                currentResponsibilities = JSON.parse(data);
-
-            }
-
+            currentResponsibilities = await dbManager.getResponsibilities();
         } catch (error) {
-
-            console.error('خطأ في قراءة المسؤوليات:', error);
-
-            currentResponsibilities = responsibilities || {};
-
-        }
-
-        try {
-
-            if (fs.existsSync(categoriesPath)) {
-
-                const data = fs.readFileSync(categoriesPath, 'utf8');
-
-                categories = JSON.parse(data);
-
-            }
-
-        } catch (error) {
-
-            console.error('خطأ في قراءة الأقسام:', error);
-
-            categories = {};
-
+            console.error('خطأ في جلب المسؤوليات من SQLite:', error);
         }
 
         // دالة للبحث عن قسم المسؤولية
@@ -258,45 +220,30 @@ module.exports = {
             const sentMessage = await message.channel.send({ embeds: [respEmbed], components: [row] });
 
             const filter = (interaction) =>
-
                 interaction.customId === 'masooliyati_select_desc' &&
-
                 interaction.user.id === message.author.id;
 
-            const collector = sentMessage.createMessageComponentCollector({ filter, time: 60000 });
+            const collector = sentMessage.createMessageComponentCollector({ filter, time: 600000 }); // 10 minutes
 
             collector.on('collect', async (interaction) => {
-
                 const selectedRespName = interaction.values[0];
-
                 const selectedResp = userResponsibilities.find(r => r.name === selectedRespName);
 
                 if (selectedResp) {
-
                     const desc = selectedResp.description || 'لا يوجد وصف لهذه المسؤولية.';
-
                     await interaction.reply({
-
                         content: `**شرح مسؤولية "${selectedRespName}" :**\n${desc}`,
-
                         ephemeral: true
-
                     });
-
                 }
-
             });
 
             collector.on('end', () => {
-
+                collector.removeAllListeners();
                 const disabledRow = new ActionRowBuilder().addComponents(
-
                     StringSelectMenuBuilder.from(selectMenu).setDisabled(true)
-
                 );
-
                 sentMessage.edit({ components: [disabledRow] }).catch(() => {});
-
             });
 
         }
