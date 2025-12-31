@@ -39,11 +39,13 @@ function readJSONFile(filePath, defaultValue = {}) {
     try {
         if (fs.existsSync(filePath)) {
             const data = fs.readFileSync(filePath, 'utf8');
+            if (!data || data.trim() === '') return defaultValue;
             return JSON.parse(data);
         }
         return defaultValue;
     } catch (error) {
-        console.error(`خطأ في قراءة ${filePath}:`, error);
+        console.error(`خطأ في قراءة ${filePath}:`, error.message);
+        // If file is corrupted, return default value
         return defaultValue;
     }
 }
@@ -349,24 +351,16 @@ function scheduleSave() {
     }
 }
 
-// دالة حفظ محسنة - أسرع وأقل استهلاك
-function saveData(force = false) {
+// دالة حفظ محسنة - أسرع وأقل استهلاك مع استخدام الحفظ غير المتزامن
+async function saveData(force = false) {
     if (!isDataDirty && !force) {
         return false;
     }
 
     try {
-        // إعادة قراءة botConfig من الملف قبل الحفظ للحفاظ على أحدث التغييرات
-        // (خاصة للـ owners الذين يتم تحديثهم من أوامر أخرى)
-        const currentBotConfig = readJSONFile(DATA_FILES.botConfig, {
-            owners: [],
-            prefix: null,
-            settings: {},
-            activeTasks: {},
-            pendingReports: {}
-        });
+        // قراءة وحفظ بشكل غير متزامن لتجنب حظر المعالج
+        const currentBotConfig = readJSONFile(DATA_FILES.botConfig, {});
         
-        // دمج التغييرات المحلية مع الملف المحفوظ
         botConfig = {
             ...currentBotConfig,
             prefix: botConfig.prefix !== undefined ? botConfig.prefix : currentBotConfig.prefix,
@@ -374,24 +368,21 @@ function saveData(force = false) {
             activeTasks: botConfig.activeTasks || currentBotConfig.activeTasks
         };
 
-        // حفظ التقارير المعلقة إذا كان العميل متاحاً
         if (client && client.pendingReports) {
-            try {
-                const pendingReportsObj = {};
-                for (const [key, value] of client.pendingReports.entries()) {
-                    pendingReportsObj[key] = value;
-                }
-                botConfig.pendingReports = pendingReportsObj;
-            } catch (error) {
-                console.error('❌ خطأ في تجهيز التقارير المعلقة للحفظ:', error);
+            const pendingReportsObj = {};
+            for (const [key, value] of client.pendingReports.entries()) {
+                pendingReportsObj[key] = value;
             }
+            botConfig.pendingReports = pendingReportsObj;
         }
         
-        // حفظ مباشر
-        writeJSONFile(DATA_FILES.points, points);
-        writeJSONFile(DATA_FILES.responsibilities, responsibilities);
-        writeJSONFile(DATA_FILES.logConfig, client.logConfig || logConfig);
-        writeJSONFile(DATA_FILES.botConfig, botConfig);
+        // تنفيذ الحفظ بشكل متوازي وغير متزامن
+        await Promise.all([
+            fs.promises.writeFile(DATA_FILES.points, JSON.stringify(points, null, 2)),
+            fs.promises.writeFile(DATA_FILES.responsibilities, JSON.stringify(responsibilities, null, 2)),
+            fs.promises.writeFile(DATA_FILES.logConfig, JSON.stringify(client.logConfig || logConfig, null, 2)),
+            fs.promises.writeFile(DATA_FILES.botConfig, JSON.stringify(botConfig, null, 2))
+        ]);
 
         isDataDirty = false;
         return true;
@@ -4889,22 +4880,19 @@ async function safeReply(interaction, content, options = {}) {
 
 // معالج الإغلاق الآمن
 async function gracefulShutdown(signal) {
-console.log(`\n🔄 جاري إيقاف البوت بأمان... (${signal})`);
+    console.log(`\n🔄 جاري إيقاف البوت بأمان... (${signal})`);
 
-  try {
-    // حفظ جميع البيانات بشكل إجباري
-    saveData(true);
-    console.log('💾 تم حفظ جميع البيانات');
-
-    // إغلاق البوت
-    client.destroy();
-
-    console.log('✅ تم إيقاف البوت بنجاح');
-    process.exit(0);
-  } catch (error) {
-    console.error('❌ خطأ أثناء الإغلاق:', error);
-    process.exit(1);
-  }
+    try {
+        if (global.gc) {
+            console.log('🧹 Triggering garbage collection...');
+            global.gc();
+        }
+        saveData(true);
+        client.destroy();
+        process.exit(0);
+    } catch (error) {
+        process.exit(1);
+    }
 }
 
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
@@ -4987,4 +4975,28 @@ process.on('unhandledRejection', (reason, promise) => {
   }
 });
 
-client.login('MTE0ODg4Mjc3NTQ0MTY5MDcyNQ.Gg7zTy.9O7sHKU_h2O2mNbCMycIctk_bJLpVdQNVp0IFk');
+const { dbManager } = require('./utils/database.js');
+
+async function startBot() {
+    await dbManager.initialize();
+    
+    const respPath = path.join(__dirname, 'data', 'responsibilities.json');
+    if (fs.existsSync(respPath) && fs.statSync(respPath).size > 2) {
+        try {
+            const fileContent = fs.readFileSync(respPath, 'utf8').trim();
+            if (fileContent && fileContent !== '{}') {
+                const data = JSON.parse(fileContent);
+                for (const [name, config] of Object.entries(data)) {
+                    await dbManager.updateResponsibility(name, config);
+                }
+                console.log('✅ Migrated Responsibilities to SQLite');
+            }
+        } catch (e) { 
+            console.error('Migration failed:', e.message); 
+        }
+    }
+
+    client.login(process.env.DISCORD_TOKEN);
+}
+
+startBot();
