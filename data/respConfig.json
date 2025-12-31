@@ -1,12 +1,13 @@
 {
   "guilds": {
-    "1446177418346762374": {
-      "suggestionsChannel": "1447093212614496256",
-      "embedChannel": "1447093084231045120",
+    "1283078116188749888": {
+      "suggestionsChannel": "1454106554746802196",
+      "embedChannel": "1447153203740151961",
       "embedData": {
-        "messageId": "1447261357849444452",
-        "channelId": "1447093084231045120"
-      }
+        "messageId": "1454428092499235031",
+        "channelId": "1447153203740151961"
+      },
+      "messageFormat": "embed"
     }
   }
 }
