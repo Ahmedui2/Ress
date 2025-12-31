@@ -124,15 +124,20 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
   }
 
   // دالة مساعدة لتحديث الإيمبدات بتأخير
+  let updateTimeout = null;
   function updateRespEmbeds(client) {
-    const respCommand = client.commands.get('resp');
-    if (respCommand && respCommand.updateEmbedMessage) {
-        respCommand.updateEmbedMessage(client);
-    }
-    const setupCommand = client.commands.get('setup');
-    if (setupCommand && setupCommand.updateAllSetupMenus) {
-        setupCommand.updateAllSetupMenus(client);
-    }
+    if (updateTimeout) clearTimeout(updateTimeout);
+    updateTimeout = setTimeout(() => {
+      const respCommand = client.commands.get('resp');
+      if (respCommand && respCommand.updateEmbedMessage) {
+          respCommand.updateEmbedMessage(client);
+      }
+      const setupCommand = client.commands.get('setup');
+      if (setupCommand && setupCommand.updateAllSetupMenus) {
+          setupCommand.updateAllSetupMenus(client);
+      }
+      console.log('✅ [DEBOUNCED] تم تحديث الإيمبدات');
+    }, 3000);
   }
 
   // دالة لترتيب المسؤوليات حسب خاصية order أو أبجدياً

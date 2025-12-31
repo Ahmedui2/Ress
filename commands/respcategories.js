@@ -31,16 +31,20 @@ function writeJSONFile(filePath, data) {
     }
 }
 
+let updateTimeout = null;
 async function updateRespEmbeds(client) {
-    try {
-        const respCommand = client.commands.get('resp');
-        if (respCommand && respCommand.updateEmbedMessage) {
-            await respCommand.updateEmbedMessage(client);
-            console.log('✅ تم تحديث رسائل الإيمبد تلقائياً');
+    if (updateTimeout) clearTimeout(updateTimeout);
+    updateTimeout = setTimeout(async () => {
+        try {
+            const respCommand = client.commands.get('resp');
+            if (respCommand && respCommand.updateEmbedMessage) {
+                await respCommand.updateEmbedMessage(client);
+                console.log('✅ [DEBOUNCED] تم تحديث رسائل الإيمبد تلقائياً');
+            }
+        } catch (error) {
+            console.error('خطأ في تحديث رسائل الإيمبد:', error);
         }
-    } catch (error) {
-        console.error('خطأ في تحديث رسائل الإيمبد:', error);
-    }
+    }, 3000);
 }
 
 async function updateAllCategoriesEmbeds(client) {
