@@ -2,22 +2,14 @@ const { StringSelectMenuBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } 
 
 const ITEMS_PER_PAGE = 24;
 
+// تحسين دالة القوائم المنسدلة لتقليل استهلاك الذاكرة
 function createPaginatedResponsibilityMenu(responsibilities, currentPage = 0, customId = 'select_responsibility', placeholder = 'اختر مسؤولية...') {
     const respEntries = Object.entries(responsibilities);
-    const totalPages = Math.ceil(respEntries.length / ITEMS_PER_PAGE);
-    
-    if (totalPages === 0) {
-        return {
-            components: [],
-            totalPages: 0,
-            currentPage: 0
-        };
-    }
+    if (respEntries.length === 0) return { components: [], totalPages: 0, currentPage: 0 };
 
+    const totalPages = Math.ceil(respEntries.length / ITEMS_PER_PAGE);
     const validPage = Math.max(0, Math.min(currentPage, totalPages - 1));
-    const start = validPage * ITEMS_PER_PAGE;
-    const end = Math.min(start + ITEMS_PER_PAGE, respEntries.length);
-    const pageItems = respEntries.slice(start, end);
+    const pageItems = respEntries.slice(validPage * ITEMS_PER_PAGE, (validPage + 1) * ITEMS_PER_PAGE);
 
     const options = pageItems.map(([name, data]) => ({
         label: name.substring(0, 100),
@@ -25,40 +17,19 @@ function createPaginatedResponsibilityMenu(responsibilities, currentPage = 0, cu
         description: data.description ? data.description.substring(0, 100) : 'لا يوجد شرح'
     }));
 
-    const selectMenu = new StringSelectMenuBuilder()
-        .setCustomId(customId)
-        .setPlaceholder(placeholder)
-        .addOptions(options);
-
-    const components = [new ActionRowBuilder().addComponents(selectMenu)];
+    const components = [new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder().setCustomId(customId).setPlaceholder(placeholder).addOptions(options)
+    )];
 
     if (totalPages > 1) {
-        const navigationButtons = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId(`${customId}_prev_page`)
-                .setLabel('◀️ السابق')
-                .setStyle(ButtonStyle.Primary)
-                .setDisabled(validPage === 0),
-            new ButtonBuilder()
-                .setCustomId(`${customId}_page_info`)
-                .setLabel(`صفحة ${validPage + 1} من ${totalPages}`)
-                .setStyle(ButtonStyle.Secondary)
-                .setDisabled(true),
-            new ButtonBuilder()
-                .setCustomId(`${customId}_next_page`)
-                .setLabel('التالي ▶️')
-                .setStyle(ButtonStyle.Primary)
-                .setDisabled(validPage === totalPages - 1)
-        );
-        components.push(navigationButtons);
+        components.push(new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`${customId}_prev_page`).setLabel('◀️').setStyle(ButtonStyle.Primary).setDisabled(validPage === 0),
+            new ButtonBuilder().setCustomId(`${customId}_info`).setLabel(`${validPage + 1}/${totalPages}`).setStyle(ButtonStyle.Secondary).setDisabled(true),
+            new ButtonBuilder().setCustomId(`${customId}_next_page`).setLabel('▶️').setStyle(ButtonStyle.Primary).setDisabled(validPage === totalPages - 1)
+        ));
     }
 
-    return {
-        components,
-        totalPages,
-        currentPage: validPage,
-        hasMultiplePages: totalPages > 1
-    };
+    return { components, totalPages, currentPage: validPage, hasMultiplePages: totalPages > 1 };
 }
 
 function createPaginatedResponsibilityArray(responsibilities, currentPage = 0, customId = 'select_responsibility', placeholder = 'اختر مسؤولية...', maxValues = 1) {
