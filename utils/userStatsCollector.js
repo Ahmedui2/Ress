@@ -652,8 +652,8 @@ async function createUserStatsEmbed(userStats, colorManager, simpleView = false,
 
         const messageCount = evaluationSettings.minMessages.resetWeekly ? userStats.weeklyMessages || 0 : userStats.realMessages;
 
-        const messageLabel = evaluationSettings.minMessages.resetWeekly ? "<:emoji:1443616698996359380> Chat " : "<:emoji:1443616698996359380> Chat ";
-        const voiceLabel = evaluationSettings.minVoiceTime.resetWeekly ? "<:emoji:1443616700707635343> Voice" : "<:emoji:1443616700707635343> Voice";
+        const messageLabel = evaluationSettings.minMessages.resetWeekly ? "<:emoji_21:1429266842345672746> Chat " : "<:emoji_21:1429266842345672746> Chat ";
+        const voiceLabel = evaluationSettings.minVoiceTime.resetWeekly ? "<:emoji_25:1429267527111938118> Voice" : "<:emoji_25:1429267527111938118> Voice";
 
         const formattedVoiceTime = evaluationSettings.minVoiceTime.resetWeekly
             ? userStats.formattedWeeklyVoiceTime || 'No Data'

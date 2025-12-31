@@ -84,15 +84,65 @@ function writeJson(filePath, data) {
 }
 
 class PromoteManager {
+        // تتبع الرولات التي يضيفها البوت (استثناء من الحماية)
+
+    
     constructor() {
         this.client = null;
         this.database = null;
+        this.botPromotionTracking = new Set();
         this.ensureDataFiles();
         // قائمة تجاهل مؤقتة للرولات المُضافة تلقائياً
         this.autoPromoteIgnoreList = new Map();
         // قائمة تتبع الترقيات التي يقوم بها البوت (لمنع التداخل مع نظام الحماية)
         this.botPromotionTracking = new Set();
     }
+// ================= PROMOTION PROTECTION =================
+
+// هل العضو عليه Block ترقية نشط؟
+
+getActivePromotionBlock(guildId, userId) {
+
+    const promoteBans = readJson(promoteBansPath, {});
+
+    const key = `${userId}_${guildId}`;
+
+    const ban = promoteBans[key];
+
+    if (!ban) return null;
+
+    if (ban.endTime && ban.endTime < Date.now()) return null;
+
+    return ban;
+
+}
+
+// تتبع إضافة رول من البوت (لتجاوز الحماية)
+
+trackBotPromotion(guildId, userId, roleId) {
+
+    const key = `${guildId}_${userId}_${roleId}`;
+
+    this.botPromotionTracking.add(key);
+
+    // إزالة التتبع تلقائياً
+
+    setTimeout(() => {
+
+        this.botPromotionTracking.delete(key);
+
+    }, 15000);
+
+}
+
+// هل الرول أُضيف بواسطة البوت؟
+
+isBotPromotion(guildId, userId, roleId) {
+
+    return this.botPromotionTracking.has(`${guildId}_${userId}_${roleId}`);
+
+}
+
 
     // Initialize with Discord client and database
     init(client, database = null) {
@@ -438,6 +488,7 @@ this.startAutoMenuUpdate(client);
 
             // Add the role with error handling
             try {
+                this.trackBotPromotion(guild.id, targetUserId, roleId);
                 await targetMember.roles.add(roleId, `ترقية بواسطة ${await guild.members.fetch(byUserId).then(m => m.displayName).catch(() => 'غير معروف')}: ${reason}`);
             } catch (roleError) {
                 console.error('Error adding role:', roleError);
@@ -2262,5 +2313,16 @@ this.startAutoMenuUpdate(client);
         }
     }
 }
+// ================= PROMOTION PROTECTION =================
+
+// هل العضو عليه Block ترقية نشط؟
+// ================= PROMOTION PROTECTION =================
+
+// هل العضو عليه Block ترقية نشط؟
+
+
+
+
+    
 
 module.exports = new PromoteManager();

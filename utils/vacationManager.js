@@ -936,6 +936,13 @@ async function getApprovers(guild, settings, botOwners) {
 
 async function isUserAuthorizedApprover(userId, guild, settings, botOwners) {
     try {
+        // ✅ الأونر يتجاوز كل الشروط
+
+if (botOwners && botOwners.includes(userId)) {
+
+    return true;
+
+}
         // التحقق من أن إعدادات الإجازات محددة
         if (!settings || !settings.approverType) {
             console.log(`⚠️ إعدادات الإجازات غير مكتملة للتحقق من صلاحية المستخدم ${userId}`);

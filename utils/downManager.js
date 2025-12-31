@@ -47,6 +47,48 @@ function writeJson(filePath, data) {
         return false;
     }
 }
+function normalizeDuration(input) {
+
+    if (!input) return null;
+
+    const value = input.toString().trim().toLowerCase();
+
+    const permanentKeywords = [
+
+        'permanent',
+
+        'perm',
+
+        'perma',
+
+        'نهائي',
+
+        'نهائى',
+
+        'نهائياً',
+
+        'نهائيا',
+
+        'دايم',
+
+        'دائم',
+
+        'دائما',
+
+        'دائماً'
+
+    ];
+
+    if (permanentKeywords.includes(value)) {
+
+        return 'permanent';
+
+    }
+
+    return input;
+
+}
+
 
 class DownManager {
     constructor() {
@@ -160,15 +202,20 @@ class DownManager {
     // Down Operations
     async createDown(guild, client, targetUserId, roleId, duration, reason, byUserId) {
         try {
-            // Validate admin role
-            if (!this.isAdminRole(roleId)) {
+            duration = normalizeDuration(duration);
+            const isVerbal = duration === 'شفوي' || duration === 'verbal';
+            
+            // Validate admin role (skip for verbal downs)
+            if (!isVerbal && !this.isAdminRole(roleId)) {
                 return { success: false, error: 'الرول المحدد ليس من الرولات الإدارية' };
             }
 
-            // التحقق من صلاحيات البوت فقط (بدون فحص أمان الرولات)
-            const validation = await this.validateBotPermissionsOnly(guild, roleId);
-            if (!validation.valid) {
-                return { success: false, error: validation.error };
+            // التحقق من صلاحيات البوت فقط (بدون فحص أمان الرولات) - تخطي للشفوي
+            if (!isVerbal) {
+                const validation = await this.validateBotPermissionsOnly(guild, roleId);
+                if (!validation.valid) {
+                    return { success: false, error: validation.error };
+                }
             }
 
             // Get target member
@@ -179,26 +226,31 @@ class DownManager {
 
             // Get role
             const role = await guild.roles.fetch(roleId);
-            if (!role) {
+            if (!role && duration !== 'شفوي' && duration !== 'verbal') {
                 return { success: false, error: 'الرول غير موجود' };
             }
 
             // Check if member has the role
-            if (!targetMember.roles.cache.has(roleId)) {
+            if (duration !== 'شفوي' && duration !== 'verbal' && !targetMember.roles.cache.has(roleId)) {
                 return { success: false, error: 'العضو لا يملك هذا الرول' };
             }
 
             // Remove the role with error handling
-            try {
-                await targetMember.roles.remove(roleId, `داون بواسطة ${await guild.members.fetch(byUserId).then(m => m.displayName).catch(() => 'غير معروف')}: ${reason}`);
-            } catch (roleError) {
-                console.error('Error removing role:', roleError);
-                return { success: false, error: 'فشل في سحب الرول - تحقق من صلاحيات البوت' };
+            if (duration !== 'شفوي' && duration !== 'verbal') {
+                try {
+                    await targetMember.roles.remove(roleId, `داون بواسطة ${await guild.members.fetch(byUserId).then(m => m.displayName).catch(() => 'غير معروف')}: ${reason}`);
+                } catch (roleError) {
+                    console.error('Error removing role:', roleError);
+                    return { success: false, error: 'فشل في سحب الرول - تحقق من صلاحيات البوت' };
+                }
             }
 
             // Calculate end time
             let endTime = null;
-            if (duration && duration !== 'permanent') {
+            
+            if (isVerbal) {
+                // No end time for verbal, it's just a record
+            } else if (duration !== 'permanent') {
                 const durationMs = ms(duration);
                 if (!durationMs) {
                     return { success: false, error: 'صيغة المدة غير صحيحة' };
@@ -207,18 +259,18 @@ class DownManager {
             }
 
             // Create down record
-            const downId = `${targetUserId}_${roleId}_${Date.now()}`;
+            const downId = isVerbal ? `${targetUserId}_verbal_${Date.now()}` : `${targetUserId}_${roleId}_${Date.now()}`;
             const downRecord = {
                 id: downId,
                 userId: targetUserId,
-                roleId: roleId,
+                roleId: isVerbal ? null : roleId,
                 guildId: guild.id,
                 reason: reason,
                 byUserId: byUserId,
                 startTime: Date.now(),
                 endTime: endTime,
                 duration: duration,
-                status: 'active'
+                status: isVerbal ? 'verbal' : 'active'
             };
 
             // Save to active downs
@@ -227,9 +279,9 @@ class DownManager {
             writeJson(activeDownsPath, activeDowns);
 
             // Log the action
-            this.logAction('DOWN_APPLIED', {
+            this.logAction(isVerbal ? 'DOWN_VERBAL' : 'DOWN_APPLIED', {
                 targetUserId,
-                roleId,
+                roleId: isVerbal ? null : roleId,
                 duration,
                 reason,
                 byUserId,
@@ -237,11 +289,13 @@ class DownManager {
             });
 
             // Send log message
-            await this.sendLogMessage(guild, client, 'DOWN_APPLIED', {
+            await this.sendLogMessage(guild, client, isVerbal ? 'DOWN_VERBAL' : 'DOWN_APPLIED', {
+                targetUserId: targetUserId, // for verbal
                 targetUser: targetMember.user,
-                role: role,
+                role: isVerbal ? 'شفوي' : role,
                 duration: duration || 'نهائي',
                 reason,
+                byUserId: byUserId, // for verbal
                 byUser: await client.users.fetch(byUserId)
             });
 
@@ -385,16 +439,15 @@ class DownManager {
         return readJson(activeDownsPath, {});
     }
 
-    getUserDowns(userId) {
-        const activeDowns = this.getActiveDowns();
-        return Object.values(activeDowns).filter(down => down.userId === userId);
-    }
-
     getUserDownHistory(userId) {
         const logs = readJson(downLogsPath, []);
-        return logs.filter(log => 
-            (log.type === 'DOWN_APPLIED' || log.type === 'DOWN_ENDED') && 
-            log.data.targetUserId === userId
+        return logs.filter(log =>
+            log?.data?.targetUserId === userId &&
+            (
+                log.type === 'DOWN_APPLIED' ||
+                log.type === 'DOWN_ENDED' ||
+                log.type === 'DOWN_VERBAL'
+            )
         );
     }
 
@@ -474,6 +527,17 @@ class DownManager {
                         { name: 'تاريخ الإنهاء', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
                     ]);
                 break;
+            case 'DOWN_VERBAL':
+                embed.setTitle('داون شفوي')
+                    .setDescription(`**تنبيه شفوي للعضو :** <@${data.targetUserId}>`)
+                    .addFields([
+                        { name: 'النوع', value: 'شفوي', inline: true },
+                        { name: 'السبب', value: data.reason, inline: false },
+                        { name: 'بواسطة', value: `<@${data.byUserId}>`, inline: true },
+                        { name: 'التاريخ', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
+                    ]);
+                break;
+
 
             case 'DOWN_MODIFIED':
                 embed.setTitle('تم تعديل مدة الداون')
