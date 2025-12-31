@@ -64,13 +64,12 @@ function createResponsibilitiesEmbed(responsibilities) {
                 for (const respName of categoryResps) {
                     const respData = responsibilities[respName];
                     if (respData) {
-                        description += `**المسؤوليه : ${respName}**\n`;
+                        description += `** المسؤوليه : ال${respName}**\n`;
                         if (respData.responsibles && respData.responsibles.length > 0) {
-                            const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' ، ');
-                            description += `**- المسؤولين : ${responsiblesList}\n\n**`;
+                            const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' , ');
+                            description += `- **المسؤولين : ${responsiblesList}**\n\n`;
                         } else {
-                            description += `**- المسؤولين : N/A \n\n**`;
-                        }
+description += `- ** المسؤولين : N/A **\n\n`;                        }
                     }
                 }
             }
@@ -87,23 +86,23 @@ function createResponsibilitiesEmbed(responsibilities) {
             
             for (const respName of uncategorizedResps) {
                 const respData = responsibilities[respName];
-                description += `**المسؤوليه : ${respName}**\n`;
+                description += `**المسؤوليه : ال${respName}**\n`;
                 if (respData.responsibles && respData.responsibles.length > 0) {
-                    const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' ، ');
-                    description += `**- المسؤولين : ${responsiblesList}\n\n**`;
+                    const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' , ');
+                    description += `- **المسؤولين : ${responsiblesList}**\n\n`;
                 } else {
-                    description += `**- المسؤولين : N/A \n\n**`;
+                    description += `- ** المسؤولين : N/A **\n\n`;
                 }
             }
         }
     } else {
         for (const [respName, respData] of Object.entries(responsibilities)) {
-            description += `**المسؤولية :** ${respName}\n`;
+            description += `**المسؤوليه : ال${respName}**\n`;
             if (respData.responsibles && respData.responsibles.length > 0) {
-                const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' ، ');
-                description += `- **المسؤولين :** ${responsiblesList}\n\n`;
+                const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' , ');
+                description += `- **المسؤولين : ${responsiblesList}**\n\n`;
             } else {
-                description += `**- المسؤولين : N/A\n\n**`;
+                description += `- ** المسؤولين : N/A **\n\n`;
             }
         }
     }
@@ -118,8 +117,8 @@ function createResponsibilitiesText(responsibilities) {
     
     if (Object.keys(responsibilities).length === 0 && Object.keys(categories).length === 0) {
         return '**Responsibilities**\n\nلا توجد مسؤوليات محددة حالياً';
-    }
-    
+ 
+}
     let text = '**Responsibilities**\n';
     
     if (Object.keys(categories).length > 0) {
@@ -135,12 +134,12 @@ function createResponsibilitiesText(responsibilities) {
                 for (const respName of categoryResps) {
                     const respData = responsibilities[respName];
                     if (respData) {
-                        text += `**المسؤوليه : ${respName}**\n`;
+                        text += `**المسؤوليه : ال${respName}**\n`;
                         if (respData.responsibles && respData.responsibles.length > 0) {
-                            const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' ، ');
-                            text += `المسؤولين : ${responsiblesList}\n\n`;
+                            const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' , ');
+                            text += `- **المسؤولين : ${responsiblesList}**\n\n`;
                         } else {
-                            text += `المسؤولين : 0\n\n`;
+                            text += `- ** المسؤولين : N/A **\n\n`;
                         }
                     }
                 }
@@ -158,10 +157,10 @@ function createResponsibilitiesText(responsibilities) {
             
             for (const respName of uncategorizedResps) {
                 const respData = responsibilities[respName];
-                text += `**المسؤوليه : ${respName}**\n`;
+                text += `**المسؤوليه : ال${respName}**\n`;
                 if (respData.responsibles && respData.responsibles.length > 0) {
-                    const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' ، ');
-                    text += `- **المسؤولين  : ${responsiblesList}\n\n**`;
+                    const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' , ');
+                    text += `- **المسؤولين  : ${responsiblesList}**\n\n`;
                 } else {
                     text += `- **المسؤولين : N/A **\n\n`;
                 }
@@ -169,10 +168,10 @@ function createResponsibilitiesText(responsibilities) {
         }
     } else {
         for (const [respName, respData] of Object.entries(responsibilities)) {
-            text += `**المسؤولية :** ${respName}\n`;
+            text += `**المسؤوليه : ال${respName}**\n`;
             if (respData.responsibles && respData.responsibles.length > 0) {
-                const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' ، ');
-                text += `- **المسؤولين :** ${responsiblesList}\n\n`;
+                const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join('  ,  ');
+                text += `- **المسؤولين : ${responsiblesList}**\n\n`;
             } else {
                 text += `- ** المسؤولين : N/A **\n\n`;
             }
@@ -180,6 +179,31 @@ function createResponsibilitiesText(responsibilities) {
     }
     
     return text;
+}
+function splitText(text, maxLength = 2000) {
+
+    const parts = [];
+
+    let current = '';
+
+    for (const line of text.split('\n')) {
+
+        if ((current + line + '\n').length > maxLength) {
+
+            parts.push(current);
+
+            current = '';
+
+        }
+
+        current += line + '\n';
+
+    }
+
+    if (current.trim()) parts.push(current);
+
+    return parts;
+
 }
 
 // دالة لإنشاء الأزرار والمنيو
@@ -196,8 +220,7 @@ function createSuggestionComponents() {
         
         const options = sortedResps.map(([name, data]) => ({
             label: name.length > 100 ? name.slice(0, 97) + '...' : name,
-            value: name.length > 100 ? name.slice(0, 100) : name,
-            description: data.description ? (data.description.length > 100 ? data.description.slice(0, 97) + '...' : data.description) : undefined
+            value: name.length > 100 ? name.slice(0, 100) : name
         }));
         
         const selectMenu = new StringSelectMenuBuilder()
@@ -362,13 +385,15 @@ async function handleSuggestionModal(interaction, client) {
 // دالة للتعامل مع اختيار مسؤولية من المنيو
 async function handleResponsibilitySelect(interaction, client) {
     try {
+        // Defer immediately to prevent "Unknown Interaction" error
+        await interaction.deferReply({ ephemeral: true });
+        
         const selectedResp = interaction.values[0];
         const responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
         
         if (!responsibilities[selectedResp]) {
-            await interaction.reply({
-                content: '**المسؤولية غير موجودة!**',
-                ephemeral: true
+            await interaction.editReply({
+                content: '**المسؤولية غير موجودة!**'
             });
             return;
         }
@@ -404,18 +429,61 @@ async function handleResponsibilitySelect(interaction, client) {
             });
         }
         
-        // حقل الشرح
+        // حقل الشرح - مع دعم الأوصاف الطويلة
         if (respData.description && respData.description.trim()) {
-            fields.push({
-                name: 'شرح المسؤوليه',
-                value: respData.description,
-                inline: false
-            });
+            const desc = respData.description;
+            const maxFieldLength = 1024;
+            
+            if (desc.length > maxFieldLength) {
+                // تقسيم الشرح الطويل إلى عدة حقول
+                let descriptionParts = [];
+                let currentPart = '';
+                const words = desc.split(' ');
+                
+                for (const word of words) {
+                    if ((currentPart + ' ' + word).length > maxFieldLength) {
+                        if (currentPart) descriptionParts.push(currentPart);
+                        currentPart = word;
+                    } else {
+                        currentPart += (currentPart ? ' ' : '') + word;
+                    }
+                }
+                if (currentPart) descriptionParts.push(currentPart);
+                
+                // إضافة كل جزء كـ field منفصل
+                descriptionParts.forEach((part, index) => {
+                    fields.push({
+                        name: index === 0 ? 'شرح المسؤوليه' : `شرح المسؤوليه (${index + 1})`,
+                        value: part,
+                        inline: false
+                    });
+                });
+            } else {
+                fields.push({
+                    name: 'شرح المسؤوليه',
+                    value: desc,
+                    inline: false
+                });
+            }
         }
         
-        // حقل المسؤولين
+        // حقل المسؤولين - مع تحسين التعامل مع الأعداد الكبيرة
         if (respData.responsibles && respData.responsibles.length > 0) {
-            const responsiblesList = respData.responsibles.map((id, index) => `${index + 1}. <@${id}>`).join('\n');
+            // عرض أول 10 مسؤولين فقط إذا كان العدد كبير
+            const maxResponsibles = 10;
+            const responsibleSlice = respData.responsibles.slice(0, maxResponsibles);
+            let responsiblesList = responsibleSlice.map((id, index) => `${index + 1}. <@${id}>`).join('\n');
+            
+            // إذا كان هناك أكثر من 10، أضف ملاحظة
+            if (respData.responsibles.length > maxResponsibles) {
+                responsiblesList += `\n\n**+${respData.responsibles.length - maxResponsibles} آخرين**`;
+            }
+            
+            // تأكد من أن الـ value لا يتجاوز 1024 حرف
+            if (responsiblesList.length > 1024) {
+                responsiblesList = responsiblesList.slice(0, 1000) + '\n**...(انظر المزيد)**';
+            }
+            
             fields.push({
                 name: ` المسؤولين : (${respData.responsibles.length})`,
                 value: responsiblesList,
@@ -434,18 +502,25 @@ async function handleResponsibilitySelect(interaction, client) {
             embed.addFields(fields);
         }
         
-        await interaction.reply({
-            embeds: [embed],
-            ephemeral: true
+        await interaction.editReply({
+            embeds: [embed]
         });
         
     } catch (error) {
         console.error('خطأ في عرض معلومات المسؤولية:', error);
-        if (!interaction.replied && !interaction.deferred) {
-            await interaction.reply({
-                content: 'حدث خطأ في عرض معلومات المسؤولية',
-                ephemeral: true
-            });
+        try {
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({
+                    content: 'حدث خطأ في عرض معلومات المسؤولية',
+                    ephemeral: true
+                });
+            } else {
+                await interaction.editReply({
+                    content: 'حدث خطأ في عرض معلومات المسؤولية'
+                });
+            }
+        } catch (replyError) {
+            console.error('فشل في الرد على الـ interaction:', replyError);
         }
     }
 }
@@ -727,13 +802,54 @@ async function sendResponsibilitiesMessage(channel, client, format = 'embed') {
         const components = createSuggestionComponents();
         let message;
         
-        if (format === 'text') {
-            const textContent = createResponsibilitiesText(responsibilities);
-            message = await channel.send({
-                content: textContent,
-                components: components
+if (format === 'text') {
+
+    const textContent = createResponsibilitiesText(responsibilities);
+
+    const parts = splitText(textContent);
+
+    for (let i = 0; i < parts.length; i++) {
+
+        const sentMessage = await channel.send({
+
+            content: parts[i],
+
+            components: i === parts.length - 1 ? components : []
+
+        });
+
+        // حفظ آخر رسالة فقط (عشان التحديث لاحقًا)
+
+        if (i === parts.length - 1) {
+
+            const guildId = channel.guild.id;
+
+            embedMessages.set(guildId, {
+
+                messageId: sentMessage.id,
+
+                channelId: channel.id,
+
+                message: sentMessage,
+
+                format: 'text'
+
             });
-        } else {
+
+            updateStoredEmbedData();
+
+        }
+
+    }
+
+    console.log('تم إرسال رسالة المسؤوليات بنجاح (text - multi messages)');
+
+    return;
+
+}
+
+
+            else {
             const embed = createResponsibilitiesEmbed(responsibilities);
             message = await channel.send({
                 embeds: [embed],

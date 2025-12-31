@@ -674,73 +674,38 @@ async function restoreBackup(backupFileName, guild, restoredBy, options, progres
         if (options.includes('memberroles')) totalSteps++;
 
         // ═══════════════════════════════════════════════════════════════
-        // 🚀 الخطوة 1: حذف العناصر المحددة فقط بالتسلسل الصحيح
+        // 🚀 الخطوة 1: حذف كل شيء مختار دفعة واحدة بالتوازي الكامل
         // ═══════════════════════════════════════════════════════════════
         if (progressMessage) {
-            await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, '🗑️ Deleting Selected Items...', true);
+            await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, '🗑️ Deleting Everything...');
         }
 
-        // حذف القنوات والكاتوقريات فقط إذا تم اختيارها
-        if (options.includes('channels') || options.includes('categories')) {
-            await guild.channels.fetch();
-            const allChannels = Array.from(guild.channels.cache.values());
-            
-            // حذف القنوات فقط إذا تم اختيارها
-            if (options.includes('channels')) {
-                const channels = allChannels.filter(ch => ch.type !== ChannelType.GuildCategory);
-                console.log(`🗑️ جاري حذف ${channels.length} قناة...`);
-                
-                const channelResults = await Promise.allSettled(
-                    channels.map(ch => ch.delete('Backup restore').catch(() => {}))
-                );
-                stats.channelsDeleted = channelResults.filter(r => r.status === 'fulfilled').length;
-                console.log(`✅ تم حذف ${stats.channelsDeleted}/${channels.length} قناة`);
-            }
-            
-            // حذف الكاتوقريات فقط إذا تم اختيارها
-            if (options.includes('categories')) {
-                const categories = allChannels.filter(ch => ch.type === ChannelType.GuildCategory);
-                console.log(`🗑️ جاري حذف ${categories.length} كاتوقري...`);
-                
-                const categoryResults = await Promise.allSettled(
-                    categories.map(cat => cat.delete('Backup restore').catch(() => {}))
-                );
-                stats.categoriesDeleted = categoryResults.filter(r => r.status === 'fulfilled').length;
-                console.log(`✅ تم حذف ${stats.categoriesDeleted}/${categories.length} كاتوقري`);
-            }
-        }
+        const deletePromises = [];
 
-        // حذف الرولات فقط إذا تم اختيارها
+        // جمع كل عمليات الحذف في مصفوفة واحدة
         if (options.includes('roles')) {
-            await guild.roles.fetch();
-            const roles = Array.from(guild.roles.cache.filter(r => !r.managed && r.id !== guild.id).values())
-                .sort((a, b) => a.position - b.position); // حذف من الأسفل للأعلى
-            
-            console.log(`🗑️ جاري حذف ${roles.length} رول...`);
-            
-            const roleResults = await Promise.allSettled(
-                roles.map(role => role.delete('Backup restore').catch(err => {
-                    if (err.code !== 50013) console.log(`❌ فشل حذف ${role.name}: ${err.message}`);
-                }))
-            );
-            
-            stats.rolesDeleted = roleResults.filter(r => r.status === 'fulfilled').length;
-            console.log(`✅ تم حذف ${stats.rolesDeleted}/${roles.length} رول`);
+            const roles = Array.from(guild.roles.cache.filter(r => !r.managed && r.id !== guild.id).values());
+            stats.rolesDeleted = roles.length;
+            deletePromises.push(...roles.map(r => r.delete().catch(() => {})));
         }
 
-        // حذف الإيموجيات فقط إذا تم اختيارها
+        if (options.includes('channels') || options.includes('categories')) {
+            const channels = Array.from(guild.channels.cache.values());
+            stats.channelsDeleted = channels.length;
+            stats.categoriesDeleted = channels.filter(ch => ch.type === ChannelType.GuildCategory).length;
+            deletePromises.push(...channels.map(c => c.delete().catch(() => {})));
+        }
+
         if (options.includes('emojis')) {
             const emojis = Array.from(guild.emojis.cache.values());
-            console.log(`🗑️ جاري حذف ${emojis.length} إيموجي...`);
-            
-            const emojiResults = await Promise.allSettled(
-                emojis.map(emoji => emoji.delete('Backup restore').catch(() => {}))
-            );
-            console.log(`✅ تم حذف ${emojiResults.filter(r => r.status === 'fulfilled').length}/${emojis.length} إيموجي`);
+            deletePromises.push(...emojis.map(e => e.delete().catch(() => {})));
         }
 
+        // تنفيذ جميع عمليات الحذف دفعة واحدة
+        await Promise.allSettled(deletePromises);
+
         // ═══════════════════════════════════════════════════════════════
-        // 🚀 الخطوة 2: إنشاء الكاتوقريات والقنوات أولاً ثم الرولات - كله بالتوازي
+        // 🚀 الخطوة 2: إنشاء كل شيء مختار بالتوازي الكامل
         // ═══════════════════════════════════════════════════════════════
         if (progressMessage) {
             await updateProgress(progressMessage, 'Backup Loading', ++currentStep, totalSteps, '✨ Creating Everything...');
@@ -767,59 +732,54 @@ async function restoreBackup(backupFileName, guild, restoredBy, options, progres
             }
         }
 
+        // إنشاء الرولات بالتوازي الكامل
+        if (options.includes('roles')) {
+            const roleResults = await Promise.allSettled(
+                backupData.data.roles.map(async (roleData) => {
+                    try {
+                        const newRole = await guild.roles.create({
+                            name: roleData.name,
+                            color: roleData.color,
+                            permissions: BigInt(roleData.permissions),
+                            hoist: roleData.hoist,
+                            mentionable: roleData.mentionable
+                        });
+                        roleMap.set(roleData.id, newRole.id);
+                        return newRole;
+                    } catch (err) { return null; }
+                })
+            );
+            stats.rolesCreated = roleResults.filter(r => r.status === 'fulfilled' && r.value).length;
+
+            // ترتيب الرولات بالتوازي
+            await Promise.allSettled(
+                backupData.data.roles.map(async (roleData) => {
+                    const newRoleId = roleMap.get(roleData.id);
+                    if (newRoleId) {
+                        const role = guild.roles.cache.get(newRoleId);
+                        if (role) await role.setPosition(roleData.position).catch(() => {});
+                    }
+                })
+            );
+        }
+
         // دالة لتحويل الصلاحيات
         const convertPermissions = (overwrites) => {
-            if (!overwrites || !Array.isArray(overwrites)) return [];
-            
             return overwrites.map(ow => {
-                try {
-                    // إذا كان @everyone أو نفس السيرفر
-                    if (ow.id === backupData.guildId) {
-                        return { 
-                            id: guild.id, 
-                            allow: BigInt(ow.allow || 0), 
-                            deny: BigInt(ow.deny || 0),
-                            type: 0 // Role type
-                        };
-                    }
-                    
-                    // إذا كان مستخدم (type === 1)
-                    if (ow.type === 1) {
-                        return { 
-                            id: ow.id, 
-                            allow: BigInt(ow.allow || 0), 
-                            deny: BigInt(ow.deny || 0),
-                            type: 1 // Member type
-                        };
-                    }
-                    
-                    // إذا كان رول (type === 0)
-                    const newRoleId = roleMap.get(ow.id);
-                    if (!newRoleId) {
-                        console.log(`⚠️ لم يتم العثور على رول مطابق لـ ${ow.id}`);
-                        return null;
-                    }
-                    
-                    return { 
-                        id: newRoleId, 
-                        allow: BigInt(ow.allow || 0), 
-                        deny: BigInt(ow.deny || 0),
-                        type: 0 // Role type
-                    };
-                } catch (err) {
-                    console.error(`❌ خطأ في تحويل الصلاحية:`, err.message);
-                    return null;
+                if (ow.id === backupData.guildId || ow.type === 1) {
+                    return { id: ow.type === 1 ? ow.id : guild.id, allow: BigInt(ow.allow), deny: BigInt(ow.deny) };
                 }
+                const newRoleId = roleMap.get(ow.id);
+                if (!newRoleId) return null;
+                return { id: newRoleId, allow: BigInt(ow.allow), deny: BigInt(ow.deny) };
             }).filter(ow => ow !== null);
         };
 
-        // إنشاء الكاتوقريات والقنوات أولاً بالتوازي الكامل
+        // إنشاء الكاتوقريات والقنوات بالتوازي
         if (options.includes('channels') || options.includes('categories')) {
-            console.log(`✨ جاري إنشاء ${backupData.data.categories?.length || 0} كاتوقري بالتوازي...`);
-            
             // إنشاء جميع الكاتوقريات بالتوازي
             const categoryResults = await Promise.allSettled(
-                (backupData.data.categories || []).map(async (catData) => {
+                backupData.data.categories.map(async (catData) => {
                     try {
                         const newCat = await guild.channels.create({
                             name: catData.name,
@@ -829,48 +789,33 @@ async function restoreBackup(backupFileName, guild, restoredBy, options, progres
                         });
                         categoryMap.set(catData.id, newCat.id);
                         channelMap.set(catData.id, newCat.id);
-                        return { success: true, catData };
-                    } catch (err) {
-                        console.log(`❌ فشل إنشاء كاتوقري ${catData.name}: ${err.message}`);
-                        return { success: false };
-                    }
+                        return { catData, newCat };
+                    } catch (err) { return null; }
                 })
             );
-            
-            stats.categoriesCreated = categoryResults.filter(r => r.status === 'fulfilled' && r.value?.success).length;
-            console.log(`✅ تم إنشاء ${stats.categoriesCreated} كاتوقري`);
+            stats.categoriesCreated = categoryResults.filter(r => r.status === 'fulfilled' && r.value).length;
 
-            // إنشاء جميع القنوات داخل الكاتوقريات بالتوازي
+            // إنشاء جميع القنوات داخل الكاتوقريات بالتوازي الكامل
             const allChannelsInCategories = [];
-            for (const catData of backupData.data.categories || []) {
+            for (const catData of backupData.data.categories) {
                 const parentId = categoryMap.get(catData.id);
                 if (parentId) {
-                    for (const chData of catData.channels || []) {
+                    for (const chData of catData.channels) {
                         allChannelsInCategories.push({ ...chData, parentId });
                     }
                 }
             }
-            
-            console.log(`✨ جاري إنشاء ${allChannelsInCategories.length} قناة داخل الكاتوقريات بالتوازي...`);
 
-            const channelsInCatResults = await Promise.allSettled(
+            const channelResults = await Promise.allSettled(
                 allChannelsInCategories.map(async (chData) => {
                     try {
-                        // تحويل الصلاحيات بعد إنشاء جميع الرولات
-                        const permissions = convertPermissions(chData.permissionOverwrites);
-                        
                         const opts = {
                             name: chData.name,
                             type: chData.type,
                             parent: chData.parentId,
-                            position: chData.position
+                            position: chData.position,
+                            permissionOverwrites: convertPermissions(chData.permissionOverwrites)
                         };
-                        
-                        // إضافة الصلاحيات - ستعمل الآن لأن الرولات تم إنشاؤها
-                        if (permissions && permissions.length > 0) {
-                            opts.permissionOverwrites = permissions;
-                        }
-                        
                         if (chData.topic) opts.topic = chData.topic;
                         if (chData.nsfw !== undefined) opts.nsfw = chData.nsfw;
                         if (chData.rateLimitPerUser) opts.rateLimitPerUser = chData.rateLimitPerUser;
@@ -879,31 +824,21 @@ async function restoreBackup(backupFileName, guild, restoredBy, options, progres
 
                         const newCh = await guild.channels.create(opts);
                         channelMap.set(chData.id, newCh.id);
-                        return { success: true };
-                    } catch (err) {
-                        console.log(`❌ فشل إنشاء قناة ${chData.name}: ${err.message}`);
-                        return { success: false };
-                    }
+                        return newCh;
+                    } catch (err) { return null; }
                 })
             );
 
-            const channelsOutsideResults = await Promise.allSettled(
-                (backupData.data.channels || []).map(async (chData) => {
+            // إنشاء القنوات خارج الكاتوقريات بالتوازي
+            const standaloneResults = await Promise.allSettled(
+                backupData.data.channels.map(async (chData) => {
                     try {
-                        // تحويل الصلاحيات بعد إنشاء جميع الرولات
-                        const permissions = convertPermissions(chData.permissionOverwrites);
-                        
                         const opts = {
                             name: chData.name,
                             type: chData.type,
-                            position: chData.position
+                            position: chData.position,
+                            permissionOverwrites: convertPermissions(chData.permissionOverwrites)
                         };
-                        
-                        // إضافة الصلاحيات - ستعمل الآن لأن الرولات تم إنشاؤها
-                        if (permissions && permissions.length > 0) {
-                            opts.permissionOverwrites = permissions;
-                        }
-                        
                         if (chData.topic) opts.topic = chData.topic;
                         if (chData.nsfw !== undefined) opts.nsfw = chData.nsfw;
                         if (chData.rateLimitPerUser) opts.rateLimitPerUser = chData.rateLimitPerUser;
@@ -912,258 +847,44 @@ async function restoreBackup(backupFileName, guild, restoredBy, options, progres
 
                         const newCh = await guild.channels.create(opts);
                         channelMap.set(chData.id, newCh.id);
-                        return { success: true };
-                    } catch (err) {
-                        console.log(`❌ فشل إنشاء قناة ${chData.name}: ${err.message}`);
-                        return { success: false };
-                    }
+                        return newCh;
+                    } catch (err) { return null; }
                 })
             );
-            
-            stats.channelsCreated = channelsInCatResults.filter(r => r.status === 'fulfilled' && r.value?.success).length +
-                                   channelsOutsideResults.filter(r => r.status === 'fulfilled' && r.value?.success).length;
-            console.log(`✅ تم إنشاء ${stats.channelsCreated} قناة إجمالي`);
 
-            // ترتيب الكاتوقريات والقنوات بالتوازي
-            await Promise.allSettled([
-                ...backupData.data.categories.map(async (catData) => {
+            stats.channelsCreated = channelResults.filter(r => r.status === 'fulfilled' && r.value).length +
+                                    standaloneResults.filter(r => r.status === 'fulfilled' && r.value).length;
+
+            // 🎯 ترتيب الكاتوقريات بالتوازي
+            await Promise.allSettled(
+                backupData.data.categories.map(async (catData) => {
                     const newCatId = categoryMap.get(catData.id);
                     if (newCatId) {
                         const cat = guild.channels.cache.get(newCatId);
                         if (cat) await cat.setPosition(catData.position).catch(() => {});
                     }
-                }),
-                ...allChannelsInCategories.map(async (chData) => {
-                    const newChId = channelMap.get(chData.id);
-                    if (newChId) {
-                        const ch = guild.channels.cache.get(newChId);
-                        if (ch) await ch.setPosition(chData.position).catch(() => {});
-                    }
-                }),
-                ...(backupData.data.channels || []).map(async (chData) => {
+                })
+            );
+
+            // 🎯 ترتيب القنوات داخل الكاتوقريات بالتوازي
+            const allChannelsForOrdering = [];
+            for (const catData of backupData.data.categories) {
+                for (const chData of catData.channels) {
+                    allChannelsForOrdering.push(chData);
+                }
+            }
+            // إضافة القنوات خارج الكاتوقريات
+            allChannelsForOrdering.push(...backupData.data.channels);
+
+            await Promise.allSettled(
+                allChannelsForOrdering.map(async (chData) => {
                     const newChId = channelMap.get(chData.id);
                     if (newChId) {
                         const ch = guild.channels.cache.get(newChId);
                         if (ch) await ch.setPosition(chData.position).catch(() => {});
                     }
                 })
-            ]);
-        }
-
-        // إنشاء الرولات بنظام دفعات محسّن - ضمان الإنشاء الكامل
-        if (options.includes('roles')) {
-            const totalRoles = backupData.data.roles?.length || 0;
-            console.log(`✨ [ROLES] بدء إنشاء ${totalRoles} رول...`);
-            
-            // تحديث مؤشر التقدم الأولي
-            if (progressMessage) {
-                await updateProgress(
-                    progressMessage, 
-                    'Backup Loading', 
-                    currentStep, 
-                    totalSteps, 
-                    `Creating Roles: 0/${totalRoles}`,
-                    true
-                );
-            }
-            
-            // دالة إنشاء رول مع إعادة محاولة قوية
-            const createRoleWithRetry = async (roleData, index, maxRetries = 15) => {
-                for (let attempt = 1; attempt <= maxRetries; attempt++) {
-                    try {
-                        const roleOptions = {
-                            name: roleData.name,
-                            permissions: BigInt(roleData.permissions || 0),
-                            hoist: roleData.hoist || false,
-                            mentionable: roleData.mentionable || false
-                        };
-                        
-                        if (roleData.color !== undefined && roleData.color !== null) {
-                            roleOptions.color = roleData.color;
-                        }
-                        
-                        if (roleData.icon) {
-                            roleOptions.icon = roleData.icon;
-                        }
-                        
-                        if (roleData.unicodeEmoji) {
-                            roleOptions.unicodeEmoji = roleData.unicodeEmoji;
-                        }
-                        
-                        const newRole = await guild.roles.create(roleOptions);
-                        roleMap.set(roleData.id, newRole.id);
-                        return { success: true, name: roleData.name, newId: newRole.id, index };
-                    } catch (err) {
-                        // تعامل ذكي مع Rate Limit
-                        if (err.code === 429 || err.message?.includes('rate limit')) {
-                            const waitTime = Math.min((err.retry_after || 2) * 1000, 5000);
-                            console.log(`⏳ [${index + 1}] Rate limit - انتظار ${waitTime}ms`);
-                            await new Promise(r => setTimeout(r, waitTime));
-                            continue;
-                        }
-                        
-                        // إعادة المحاولة مع Exponential Backoff
-                        if (attempt < maxRetries) {
-                            const backoffTime = Math.min(200 * Math.pow(1.5, attempt - 1), 3000);
-                            await new Promise(r => setTimeout(r, backoffTime));
-                            continue;
-                        }
-                        
-                        console.log(`❌ [${index + 1}/${totalRoles}] فشل: ${roleData.name} - ${err.message}`);
-                        return { success: false, name: roleData.name, error: err.message, index };
-                    }
-                }
-                return { success: false, name: roleData.name, error: 'Max retries', index };
-            };
-            
-            // معالجة بالدفعات الذكية
-            const batchSize = 10; // دفعات من 10 رولات
-            let successCount = 0;
-            let failCount = 0;
-            const allRoleResults = [];
-            
-            console.log(`📦 [ROLES] معالجة بدفعات من ${batchSize} رول...`);
-            
-            for (let i = 0; i < totalRoles; i += batchSize) {
-                const batch = backupData.data.roles.slice(i, Math.min(i + batchSize, totalRoles));
-                
-                // معالجة الدفعة بالتوازي
-                const batchResults = await Promise.allSettled(
-                    batch.map((roleData, batchIndex) => 
-                        createRoleWithRetry(roleData, i + batchIndex)
-                    )
-                );
-                
-                // جمع النتائج
-                for (const result of batchResults) {
-                    if (result.status === 'fulfilled') {
-                        allRoleResults.push(result.value);
-                        if (result.value.success) {
-                            successCount++;
-                            console.log(`✅ [${result.value.index + 1}/${totalRoles}] ${result.value.name}`);
-                        } else {
-                            failCount++;
-                        }
-                    } else {
-                        failCount++;
-                        allRoleResults.push({ success: false, error: result.reason });
-                    }
-                }
-                
-                // تحديث التقدم بعد كل دفعة
-                console.log(`📊 [ROLES] تقدم: ${Math.min(i + batchSize, totalRoles)}/${totalRoles} (✅${successCount} ❌${failCount})`);
-                
-                if (progressMessage) {
-                    await updateProgress(
-                        progressMessage, 
-                        'Backup Loading', 
-                        currentStep, 
-                        totalSteps, 
-                        `Creating Roles: ${Math.min(i + batchSize, totalRoles)}/${totalRoles} (✅${successCount} ❌${failCount})`,
-                        true
-                    );
-                }
-                
-                // تأخير صغير بين الدفعات (فقط إذا كانت هناك دفعة تالية)
-                if (i + batchSize < totalRoles) {
-                    await new Promise(r => setTimeout(r, 100));
-                }
-            }
-            
-            stats.rolesCreated = successCount;
-            console.log(`✅ [ROLES] اكتمل! نجح: ${successCount}/${totalRoles}, فشل: ${failCount}`);
-            
-            // ترتيب الرولات بالتوازي
-            console.log(`🔧 جاري ترتيب الرولات...`);
-            const positionUpdates = backupData.data.roles.map(async (roleData) => {
-                const newRoleId = roleMap.get(roleData.id);
-                if (newRoleId) {
-                    const role = guild.roles.cache.get(newRoleId);
-                    if (role) {
-                        try {
-                            await role.setPosition(roleData.position).catch(() => {});
-                        } catch (e) {}
-                    }
-                }
-            });
-            await Promise.allSettled(positionUpdates);
-            
-            // تحديث صلاحيات الرومات والكاتوقريات بالتوازي الكامل (بدون قنوات جديدة)
-            if (!options.includes('channels') && !options.includes('categories')) {
-                console.log(`🔧 جاري تحديث صلاحيات جميع الرومات والكاتوقريات بالتوازي الفائق...`);
-                
-                // جلب جميع القنوات مرة واحدة
-                await guild.channels.fetch().catch(() => {});
-                
-                const permissionUpdates = [];
-                let permUpdated = 0;
-                
-                // دالة تحديث صلاحيات مع إعادة محاولة
-                const updatePermissionsWithRetry = async (channel, permissions, maxRetries = 3) => {
-                    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-                        try {
-                            if (permissions && permissions.length > 0) {
-                                await channel.permissionOverwrites.set(permissions);
-                                return true;
-                            }
-                            return false;
-                        } catch (err) {
-                            if (attempt < maxRetries) {
-                                await new Promise(r => setTimeout(r, 50 * attempt));
-                                continue;
-                            }
-                            return false;
-                        }
-                    }
-                };
-                
-                // تحديث صلاحيات الكاتوقريات
-                for (const catData of backupData.data.categories || []) {
-                    const currentCat = guild.channels.cache.find(ch => 
-                        ch.name === catData.name && ch.type === ChannelType.GuildCategory
-                    );
-                    if (currentCat) {
-                        permissionUpdates.push((async () => {
-                            const permissions = convertPermissions(catData.permissionOverwrites);
-                            const success = await updatePermissionsWithRetry(currentCat, permissions);
-                            if (success) permUpdated++;
-                        })());
-                    }
-                    
-                    // تحديث صلاحيات القنوات داخل هذا الكاتوقري
-                    for (const chData of catData.channels || []) {
-                        const currentCh = guild.channels.cache.find(ch => ch.name === chData.name);
-                        if (currentCh) {
-                            permissionUpdates.push((async () => {
-                                const permissions = convertPermissions(chData.permissionOverwrites);
-                                const success = await updatePermissionsWithRetry(currentCh, permissions);
-                                if (success) permUpdated++;
-                            })());
-                        }
-                    }
-                }
-                
-                // تحديث صلاحيات القنوات خارج الكاتوقريات
-                for (const chData of backupData.data.channels || []) {
-                    const currentCh = guild.channels.cache.find(ch => ch.name === chData.name);
-                    if (currentCh) {
-                        permissionUpdates.push((async () => {
-                            const permissions = convertPermissions(chData.permissionOverwrites);
-                            const success = await updatePermissionsWithRetry(currentCh, permissions);
-                            if (success) permUpdated++;
-                        })());
-                    }
-                }
-                
-                // تنفيذ جميع التحديثات بالتوازي الكامل بدفعات
-                const permBatchSize = 30;
-                for (let i = 0; i < permissionUpdates.length; i += permBatchSize) {
-                    const batch = permissionUpdates.slice(i, i + permBatchSize);
-                    await Promise.allSettled(batch);
-                }
-                
-                console.log(`✅ تم تحديث صلاحيات ${permUpdated} روم/كاتوقري`);
-            }
+            );
         }
 
         // إنشاء الإيموجيز بالتوازي الكامل
@@ -1340,163 +1061,58 @@ async function restoreBackup(backupFileName, guild, restoredBy, options, progres
                 })());
             }
 
-            // 🔹 عملية 3: استعادة رولات الأعضاء - نظام محسّن مع عداد ومعالجة أخطاء
+            // 🔹 عملية 3: استعادة رولات الأعضاء
             if (hasMemberRoles) {
                 parallelOperations.push((async () => {
-                    const totalMembers = backupData.data.members.length;
-                    console.log(`✨ [MEMBER ROLES] بدء استعادة رولات ${totalMembers} عضو...`);
-                    
-                    // جلب جميع الأعضاء دفعة واحدة مع إعادة محاولة
-                    try {
-                        await guild.members.fetch({ force: true });
-                        console.log(`✅ تم جلب جميع الأعضاء بنجاح`);
-                    } catch (err) {
-                        console.log('⚠️ فشل جلب الأعضاء بالكامل - سيتم المحاولة فردياً');
-                    }
+                    await guild.members.fetch({ limit: 1000 });
 
-                    // إنشاء خريطة مطابقة بالاسم إذا لم يتم اختيار إنشاء رولات
-                    const roleNameMap = new Map();
-                    if (!options.includes('roles')) {
-                        console.log('📋 [MEMBER ROLES] لم يتم اختيار إنشاء رولات - سيتم المطابقة بالأسماء');
-                        
-                        // مطابقة رولات النسخة بالرولات الموجودة بالأسماء
-                        for (const backupRole of backupData.data.roles || []) {
-                            const currentRole = guild.roles.cache.find(r => r.name === backupRole.name);
-                            if (currentRole) {
-                                roleNameMap.set(backupRole.id, currentRole.id);
-                            }
-                        }
-                        
-                        console.log(`✅ [MEMBER ROLES] تم مطابقة ${roleNameMap.size} رول بالأسماء`);
-                    }
+                    const batchSize = 30; // زيادة إلى 30 عضو بالتوازي لتسريع أكبر
+                    for (let i = 0; i < backupData.data.members.length; i += batchSize) {
+                        const batch = backupData.data.members.slice(i, i + batchSize);
 
-                    // استخدام الخريطة المناسبة
-                    const activeMap = options.includes('roles') ? roleMap : roleNameMap;
+                        const results = await Promise.allSettled(
+                            batch.map(async (memberData) => {
+                                try {
+                                    const member = guild.members.cache.get(memberData.userId);
+                                    if (!member) return { success: false };
 
-                    // دالة استعادة رولات عضو مع إعادة محاولة
-                    const restoreMemberRolesWithRetry = async (memberData, index, maxRetries = 3) => {
-                        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-                            try {
-                                // جلب العضو من الكاش أولاً، ثم من API
-                                let member = guild.members.cache.get(memberData.userId);
-                                if (!member) {
-                                    member = await guild.members.fetch(memberData.userId).catch(() => null);
+                                    const rolesToAdd = memberData.roles
+                                        .map(oldRoleId => roleMap.get(oldRoleId))
+                                        .filter(newRoleId => newRoleId && guild.roles.cache.has(newRoleId));
+
+                                    if (rolesToAdd.length > 0) {
+                                        await retryOperation(
+                                            async () => await member.roles.add(rolesToAdd),
+                                            2,
+                                            200,
+                                            `Add roles to ${memberData.username}`
+                                        );
+                                    }
+
+                                    if (memberData.nickname) {
+                                        await member.setNickname(memberData.nickname).catch(() => {});
+                                    }
+
+                                    return { success: true };
+                                } catch (err) {
+                                    return { success: false, error: err.message, username: memberData.username };
                                 }
-                                
-                                if (!member) {
-                                    return { 
-                                        success: false, 
-                                        userId: memberData.userId, 
-                                        reason: 'Member not found',
-                                        index 
-                                    };
-                                }
-
-                                // تحويل الرولات القديمة إلى الجديدة
-                                const rolesToAdd = memberData.roles
-                                    .map(oldRoleId => activeMap.get(oldRoleId))
-                                    .filter(newRoleId => newRoleId && guild.roles.cache.has(newRoleId));
-
-                                if (rolesToAdd.length > 0) {
-                                    await member.roles.add(rolesToAdd);
-                                }
-
-                                // إضافة النكنيم إذا وُجد
-                                if (memberData.nickname) {
-                                    await member.setNickname(memberData.nickname).catch(() => {});
-                                }
-
-                                return { 
-                                    success: true, 
-                                    userId: memberData.userId, 
-                                    rolesCount: rolesToAdd.length,
-                                    index 
-                                };
-
-                            } catch (err) {
-                                // تعامل ذكي مع Rate Limit
-                                if (err.code === 429 || err.message?.includes('rate limit')) {
-                                    const waitTime = Math.min((err.retry_after || 1) * 1000, 3000);
-                                    await new Promise(r => setTimeout(r, waitTime));
-                                    continue;
-                                }
-                                
-                                // إعادة المحاولة مع Exponential Backoff
-                                if (attempt < maxRetries) {
-                                    const backoffTime = Math.min(100 * Math.pow(1.5, attempt - 1), 2000);
-                                    await new Promise(r => setTimeout(r, backoffTime));
-                                    continue;
-                                }
-                                
-                                return { 
-                                    success: false, 
-                                    userId: memberData.userId, 
-                                    reason: err.message,
-                                    index 
-                                };
-                            }
-                        }
-                        
-                        return { 
-                            success: false, 
-                            userId: memberData.userId, 
-                            reason: 'Max retries exceeded',
-                            index 
-                        };
-                    };
-
-                    // معالجة بالدفعات المحسّنة
-                    const batchSize = 25; // دفعات من 25 عضو
-                    let successCount = 0;
-                    let failCount = 0;
-                    let totalRolesRestored = 0;
-
-                    console.log(`📦 [MEMBER ROLES] معالجة بدفعات من ${batchSize} عضو...`);
-
-                    for (let i = 0; i < totalMembers; i += batchSize) {
-                        const batch = backupData.data.members.slice(i, Math.min(i + batchSize, totalMembers));
-                        
-                        // معالجة الدفعة بالتوازي
-                        const batchResults = await Promise.allSettled(
-                            batch.map((memberData, batchIndex) => 
-                                restoreMemberRolesWithRetry(memberData, i + batchIndex)
-                            )
+                            })
                         );
-                        
-                        // جمع النتائج
-                        for (const result of batchResults) {
+
+                        for (const result of results) {
                             if (result.status === 'fulfilled' && result.value.success) {
-                                successCount++;
-                                totalRolesRestored += result.value.rolesCount || 0;
-                            } else {
-                                failCount++;
+                                stats.memberRolesRestored++;
+                            } else if (result.status === 'fulfilled' && result.value.error) {
+                                stats.errors.push(`فشل استعادة رولات ${result.value.username}: ${result.value.error}`);
                             }
                         }
-                        
-                        // تحديث التقدم كل دفعة
-                        const currentProgress = Math.min(i + batchSize, totalMembers);
-                        console.log(`📊 [MEMBER ROLES] ${currentProgress}/${totalMembers} (✅${successCount} ❌${failCount})`);
-                        
-                        if (progressMessage) {
-                            await updateProgress(
-                                progressMessage, 
-                                'Backup Loading', 
-                                currentStep, 
-                                totalSteps, 
-                                `Member Roles: ${currentProgress}/${totalMembers} (✅${successCount})`,
-                                true
-                            );
-                        }
-                        
-                        // تأخير صغير بين الدفعات (فقط إذا كانت هناك دفعة تالية)
-                        if (i + batchSize < totalMembers) {
-                            await new Promise(r => setTimeout(r, 150));
+
+                        // تقليل التأخير إلى 200ms
+                        if (i + batchSize < backupData.data.members.length) {
+                            await new Promise(resolve => setTimeout(resolve, 200));
                         }
                     }
-                    
-                    stats.memberRolesRestored = successCount;
-                    console.log(`✅ [MEMBER ROLES] اكتمل! نجح: ${successCount}/${totalMembers}, فشل: ${failCount}`);
-                    console.log(`📋 [MEMBER ROLES] إجمالي الرولات المستعادة: ${totalRolesRestored}`);
                 })());
             }
 

@@ -146,7 +146,7 @@ async function deleteRoom(channelId, client) {
             saveActiveRooms();
             return;
         }
-        await channel.delete('انتهت مدة الروم (12 ساعة)');
+        await channel.delete('انتهت مدة الروم (24 ساعة)');
         console.log(`🗑️ تم حذف الروم: ${channel.name}`);
 
         activeRooms.delete(channelId);
@@ -158,8 +158,7 @@ async function deleteRoom(channelId, client) {
 }
 // جدولة حذف روم بعد 12 ساعة
 function scheduleRoomDeletion(channelId, client) {
-    const deletionTime = new Date(Date.now() + 12 * 60 * 60 * 1000); // 12 ساعة
-
+    const deletionTime = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 ساعة
     const job = schedule.scheduleJob(deletionTime, async () => {
         console.log(`⏰ حان موعد حذف الروم: ${channelId}`);
         await deleteRoom(channelId, client);
@@ -220,7 +219,7 @@ async function resendSetupEmbed(guildId, client) {
 async function checkAndDeleteOldRooms(client) {
     const now = Date.now();
     const roomsToDelete = [];
-    const TWELVE_HOURS = 12 * 60 * 60 * 1000; // 12 ساعة بالميلي ثانية
+const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000; // 24 ساعة
 
     for (const [channelId, roomData] of activeRooms.entries()) {
         const roomAge = now - roomData.createdAt;
@@ -228,12 +227,12 @@ async function checkAndDeleteOldRooms(client) {
 
         console.log(`🔍 فحص الروم ${channelId}: عمر الروم ${hoursSinceCreation.toFixed(2)} ساعة`);
 
-        if (hoursSinceCreation >= 12) {
+        if (hoursSinceCreation >= 24) {
             console.log(`⚠️ الروم ${channelId} تجاوز 12 ساعة - سيتم حذفه فوراً`);
             roomsToDelete.push(channelId);
         } else {
-            const remainingTime = TWELVE_HOURS - roomAge;
-            const deletionTime = new Date(roomData.createdAt + TWELVE_HOURS);
+            const remainingTime = TWENTY_FOUR_HOURS - roomAge;
+            const deletionTime = new Date(roomData.createdAt + TWENTY_FOUR_HOURS);
 
             const job = schedule.scheduleJob(deletionTime, async () => {
                 console.log(`⏰ حان موعد حذف الروم: ${channelId}`);

@@ -166,6 +166,22 @@ async function handleInteraction(interaction, context) {
 
         // التحقق من وجود طلب إنهاء معلق مسبقاً
         const vacations = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
+        
+        // التحقق من الكولداون (12 ساعة)
+        if (vacations.cooldowns?.[userId]) {
+            const cooldownTime = vacations.cooldowns[userId];
+            if (Date.now() < cooldownTime) {
+                const timeLeft = cooldownTime - Date.now();
+                const hours = Math.floor(timeLeft / (1000 * 60 * 60));
+                const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
+                
+                return interaction.reply({
+                    content: `❌ **عليك كولداون حالياً.**\nالمتبقي: ${hours} ساعة و ${minutes} دقيقة.`,
+                    ephemeral: true
+                });
+            }
+        }
+
         if (vacations.pendingTermination?.[userId]) {
             return interaction.reply({
                 content: '❌ **لديك طلب إنهاء إجازة معلق بالفعل! لا يمكنك تقديم طلب آخر.**',
@@ -500,12 +516,6 @@ async function handleInteraction(interaction, context) {
             return interaction.editReply({ content: '❌ **لم يتمكن البوت من العثور على المستخدم المطلوب.**', components: [] });
         }
 
-        const originalMessageId = terminationRequest.originalMessageId;
-        const originalMessageChannelId = terminationRequest.originalMessageChannelId;
-        const originalMessage = await client.channels.fetch(originalMessageChannelId)
-            .then(channel => channel.messages.fetch(originalMessageId))
-            .catch(() => null);
-
         if (action === 'approve') {
             try {
                 // إزالة الطلب من قائمة الانتظار
@@ -522,8 +532,13 @@ async function handleInteraction(interaction, context) {
 
                 // إرسال رسالة تأكيد للمستخدم
                 const successEmbed = new EmbedBuilder()
+                    .setTitle('✅ Accepted')
                     .setColor('#2ECC71')
-                    .setDescription(`✅ **تمت الموافقة على طلب إنهاء إجازتك مبكراً.**`)
+                    .setDescription(`**تمت الموافقة على طلب إنهاء إجازتك مبكراً.**`)
+                    .addFields([
+                        { name: 'المسؤول', value: `<@${interaction.user.id}>`, inline: true },
+                        { name: 'العضو', value: `<@${userId}>`, inline: true }
+                    ])
                     .setTimestamp();
 
                 try {
@@ -532,22 +547,9 @@ async function handleInteraction(interaction, context) {
                     console.error(`فشل في إرسال رسالة تأكيد إنهاء الإجازة لـ ${requestedUser.tag}:`, dmError.message);
                 }
 
-                // تحديث الرسالة الأصلية للإشارة إلى الموافقة
-                if (originalMessage) {
-                    const approvedButton = new ButtonBuilder()
-                        .setCustomId(`vac_end_approved_${userId}`)
-                        .setLabel("✅ تمت الموافقة على الإنهاء")
-                        .setStyle(ButtonStyle.Success)
-                        .setDisabled(true);
-
-                    const row = new ActionRowBuilder().addComponents(approvedButton);
-                    const embed = originalMessage.embeds[0];
-                    await originalMessage.edit({ embeds: [embed], components: [row] });
-                }
-
-                // إرسال رد للمعتمد (تأكيد على أنه تم معالجة الطلب)
+                // تحديث الرسالة الحالية فوراً لمنع unknown interaction
                 await interaction.editReply({
-                    content: `✅ **تمت الموافقة على طلب إنهاء إجازة ${requestedUser.tag}.**`,
+                    embeds: [successEmbed],
                     components: []
                 });
 
@@ -560,14 +562,23 @@ async function handleInteraction(interaction, context) {
             }
         } else if (action === 'reject') {
             try {
+                // إضافة كولداون 12 ساعة
+                if (!vacations.cooldowns) vacations.cooldowns = {};
+                vacations.cooldowns[userId] = Date.now() + (12 * 60 * 60 * 1000);
+
                 // إزالة الطلب من قائمة الانتظار
                 delete vacations.pendingTermination[userId];
                 vacationManager.saveVacations(vacations);
 
                 // إرسال رسالة رفض للمستخدم
                 const rejectEmbed = new EmbedBuilder()
+                    .setTitle('❌ Rejected')
                     .setColor('#E74C3C')
-                    .setDescription(`❌ **تم رفض طلب إنهاء إجازتك مبكراً.**`)
+                    .setDescription(`**تم رفض طلب إنهاء إجازتك مبكراً.**`)
+                    .addFields([
+                        { name: 'العضو', value: `<@${userId}>`, inline: true },
+                        { name: 'الكولداون', value: '12 ساعة', inline: true }
+                    ])
                     .setTimestamp();
 
                 try {
@@ -576,22 +587,9 @@ async function handleInteraction(interaction, context) {
                     console.error(`فشل في إرسال رسالة رفض إنهاء الإجازة لـ ${requestedUser.tag}:`, dmError.message);
                 }
 
-                // تحديث الرسالة الأصلية للإشارة إلى الرفض
-                if (originalMessage) {
-                    const rejectedButton = new ButtonBuilder()
-                        .setCustomId(`vac_end_rejected_${userId}`)
-                        .setLabel("❌ تم رفض الإنهاء")
-                        .setStyle(ButtonStyle.Danger)
-                        .setDisabled(true);
-
-                    const row = new ActionRowBuilder().addComponents(rejectedButton);
-                    const embed = originalMessage.embeds[0];
-                    await originalMessage.edit({ embeds: [embed], components: [row] });
-                }
-
-                // إرسال رد للمعتمد (تأكيد على أنه تم معالجة الطلب)
+                // تحديث الرسالة الحالية فوراً لمنع unknown interaction
                 await interaction.editReply({
-                    content: `❌ **تم رفض طلب إنهاء إجازة ${requestedUser.tag}.**`,
+                    embeds: [rejectEmbed],
                     components: []
                 });
 

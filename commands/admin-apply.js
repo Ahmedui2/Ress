@@ -128,9 +128,9 @@ function formatTimeLeft(milliseconds) {
     const minutes = Math.floor((milliseconds % (1000 * 60 * 60)) / (1000 * 60));
 
     if (hours > 0) {
-        return `**${hours}h and ${minutes}m**`;
+        return `${hours}h and ${minutes}m`;
     } else {
-        return `**${minutes}m**`;
+        return `${minutes}m`;
     }
 }
 
@@ -287,7 +287,7 @@ module.exports = {
                 .setStyle(ButtonStyle.Secondary);
 
             const rejectButton = new ButtonBuilder()
-                .setCustomId(`admin_reject_${applicationId}`)
+                .setCustomId(`admin_reject_modal_trigger_${applicationId}`)
                 .setLabel('Reject')
                 .setEmoji('<:emoji_1:1436850215154880553>')
                 .setStyle(ButtonStyle.Secondary);
@@ -479,6 +479,96 @@ async function handleAdminApplicationInteraction(interaction) {
 
         console.log('✅ معالجة تفاعل التقديم الإداري:', customId);
 
+        // معالج فتح مودال الرفض
+        if (customId.startsWith('admin_reject_modal_trigger_')) {
+            const applicationId = customId.replace('admin_reject_modal_trigger_', '');
+            const settings = loadAdminApplicationSettings();
+            if (!canApproveApplication(interaction.member, settings)) {
+                await interaction.reply({ content: '❌ **مب مسؤول؟ والله ماوريك.**', ephemeral: true });
+                return true;
+            }
+
+            const modal = new ModalBuilder()
+                .setCustomId(`admin_reject_modal_submit_${applicationId}`)
+                .setTitle('سبب الرفض');
+
+            const reasonInput = new TextInputBuilder()
+                .setCustomId('reject_reason')
+                .setLabel('اذكر سبب الرفض')
+                .setStyle(TextInputStyle.Paragraph)
+                .setRequired(true)
+                .setPlaceholder('اكتب سبب الرفض هنا ليتم إرساله للشخص...')
+                .setMaxLength(500);
+
+            modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
+            await interaction.showModal(modal);
+            return true;
+        }
+
+        // معالج إرسال مودال الرفض
+        if (interaction.isModalSubmit() && customId.startsWith('admin_reject_modal_submit_')) {
+            const applicationId = customId.replace('admin_reject_modal_submit_', '');
+            const reason = interaction.fields.getTextInputValue('reject_reason');
+            
+            const settings = loadAdminApplicationSettings();
+            const application = settings.pendingApplications[applicationId];
+
+            if (!application) {
+                await interaction.reply({ content: '**❌ لم يتم العثور على الطلب.**', ephemeral: true });
+                return true;
+            }
+
+            // تنفيذ الرفض
+            const candidateId = application.candidateId;
+            
+            // تحديث الكولداون
+            settings.rejectedCooldowns[candidateId] = {
+                rejectedAt: new Date().toISOString(),
+                rejectedBy: interaction.user.id,
+                rejectorName: interaction.member.displayName,
+                reason: reason
+            };
+
+            // حذف الطلب من الطلبات المعلقة
+            delete settings.pendingApplications[applicationId];
+            
+            // حفظ التغييرات في ملف adminApplications.json
+            const saveResult = saveAdminApplicationSettings(settings);
+            console.log(`🗑️ تم حذف الطلب ${applicationId} من المعلقة. نتيجة الحفظ: ${saveResult}`);
+
+            // تحديث الرسالة
+            const cooldownEnd = new Date(Date.now() + (settings.settings.rejectCooldownHours * 60 * 60 * 1000));
+            const embed = EmbedBuilder.from(interaction.message.embeds[0])
+                .setColor('#ff0000')
+                .setTitle('❌ Rejected')
+                .setFields([]) // مسح الحقول القديمة
+                .addFields([
+                    { name: '**المسؤول**', value: `<@${interaction.user.id}>`, inline: true },
+                    { name: '**المرفوض**', value: `<@${candidateId}>`, inline: true },
+                    { name: '**سبب الرفض**', value: reason, inline: false },
+                    { name: '**الكولداون**', value: `${settings.settings.rejectCooldownHours} ساعة`, inline: true },
+                    { name: '**ينتهي في**', value: `<t:${Math.floor(cooldownEnd.getTime() / 1000)}:R>`, inline: true }
+                ]);
+
+            await interaction.update({ embeds: [embed], components: [] });
+
+            // إرسال رسالة خاصة للمرشح
+            try {
+                const guild = interaction.guild;
+                const member = await guild.members.fetch(candidateId);
+                const rejectNotificationEmbed = colorManager.createEmbed()
+                    .setTitle('تم رفض تقديمك للإدارة')
+                    .setDescription(`**المسؤول :** <@${interaction.user.id}>\n**السبب :** ${reason}\n\n**عليك كولداون تقديم إدارة لمدة :** ${settings.settings.rejectCooldownHours} ساعة`)
+                    .setTimestamp();
+
+                await member.send({ embeds: [rejectNotificationEmbed] });
+            } catch (err) {
+                console.log('فشل إرسال رسالة الرفض للعضو');
+            }
+
+            return true;
+        }
+
         // معالجة منيو التفاصيل الإضافية
         if (customId.startsWith('admin_details_')) {
             const applicationId = customId.replace('admin_details_', '');
@@ -555,7 +645,7 @@ async function handleAdminApplicationInteraction(interaction) {
                         .setThumbnail(userStats.avatar)
                         .addFields([
                             { name: ` **${messageLabel}**`, value: `**${messageCount.toLocaleString()}**`, inline: true },
-                            { name: ` **${voiceLabel}**`, value: `${evaluationSettings.minVoiceTime.resetWeekly ? userStats.formattedWeeklyVoiceTime || 'No Data' : userStats.formattedVoiceTime || 'No Data'}`, inline: true },
+                            { name: ` **${voiceLabel}**`, value: `**${evaluationSettings.minVoiceTime.resetWeekly ? userStats.formattedWeeklyVoiceTime || 'No Data' : userStats.formattedVoiceTime || 'No Data'}**`, inline: true },
                             { name: ` **${reactionLabel}**`, value: `**${reactionCount.toLocaleString()}**`, inline: true },
                             { name: ' **Active**', value: userStats.activeDays >= evaluationSettings.activeDaysPerWeek.minimum ? '🟢 **نشط**' : '🔴 **غير نشط**', inline: true },
                             { name: '  **الخبرة حسب المدة**', value: timeInServerDays >= evaluationSettings.timeInServerDays.excellent ? '🟢 **خبرة ممتازة**' : timeInServerDays >= evaluationSettings.timeInServerDays.minimum ? '🟡 **خبرة جيدة**' : '🔴 **جديد**', inline: true }
@@ -609,7 +699,7 @@ async function handleAdminApplicationInteraction(interaction) {
                 .setStyle(ButtonStyle.Secondary);
 
             const rejectButton = new ButtonBuilder()
-                .setCustomId(`admin_reject_${applicationId}`)
+                .setCustomId(`admin_reject_modal_trigger_${applicationId}`)
                 .setLabel('Reject')
 .setEmoji('<:emoji_1:1436850215154880553>')
                 .setStyle(ButtonStyle.Secondary);
@@ -668,8 +758,8 @@ async function handleAdminApplicationInteraction(interaction) {
         let applicationId;
         if (customId.startsWith('admin_approve_')) {
             applicationId = customId.replace('admin_approve_', '');
-        } else if (customId.startsWith('admin_reject_')) {
-            applicationId = customId.replace('admin_reject_', '');
+        } else if (customId.startsWith('admin_reject_modal_trigger_')) {
+            applicationId = customId.replace('admin_reject_modal_trigger_', '');
         } else if (customId.startsWith('admin_select_roles_')) {
             applicationId = customId.replace('admin_select_roles_', '');
         }
@@ -771,7 +861,6 @@ async function handleAdminApplicationInteraction(interaction) {
             const approvedEmbed = colorManager.createEmbed()
                 .setTitle('✅ Accepted')
                 .setDescription(`**By : <@${interaction.user.id}>\nNew Admin : <@${application.candidateId}> **`)
-.setThumbnail('https://cdn.discordapp.com/attachments/1438625863686947047/1444408639963267265/approved.png?ex=692c99df&is=692b485f&hm=bfba43d2e50051a44fca622483a3d952474c0e56beeb2900c6732debd241a5d4&')
                 .addFields([
                     { 
                         name: '**Added role**', 
@@ -803,7 +892,6 @@ async function handleAdminApplicationInteraction(interaction) {
                     const notificationEmbed = colorManager.createEmbed()
                         .setTitle('تم قبول طلبك للإدارة')
                         .setDescription(`**قبلك مسؤول الإدارة :** <@${interaction.user.id}>\n\n**رولك الذي عُطي :** ${addedRoles.map(r => r.name).join(', ')}\n\n**تاريخ الموافقة :** ${moment().tz('Asia/Riyadh').format('YYYY-MM-DD HH:mm')}`)
-.setThumbnail('https://cdn.discordapp.com/attachments/1438625863686947047/1444408639963267265/approved.png?ex=692c99df&is=692b485f&hm=bfba43d2e50051a44fca622483a3d952474c0e56beeb2900c6732debd241a5d4&')
                         .setTimestamp();
 
                     notificationEmbed.addFields([
@@ -835,72 +923,8 @@ async function handleAdminApplicationInteraction(interaction) {
             return true;
 
         } else {
-            // معالجة الرفض
-            // إضافة المرشح لقائمة الكولداون مع حفظ فوري
-            settings.rejectedCooldowns[application.candidateId] = {
-                rejectedAt: new Date().toISOString(),
-                rejectedBy: interaction.user.id,
-                rejectorName: interaction.member.displayName
-            };
-
-            // حذف الطلب من الطلبات المعلقة بعد الرفض
-            delete settings.pendingApplications[applicationId];
-
-            // حفظ البيانات أولاً قبل تحديث الرسالة
-            const saveResult = saveAdminApplicationSettings(settings);
-
-            // تحديث الرسالة
-            const rejectionDate = new Date().toLocaleDateString('en-US', {
-                timeZone: 'Asia/Riyadh',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-                weekday: 'long',
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: true
-            });
-
-            const cooldownEnd = new Date(Date.now() + (settings.settings.rejectCooldownHours * 60 * 60 * 1000));
-            const rejectedEmbed = colorManager.createEmbed()
-                .setTitle('❌ Rejected')
-                .setDescription(`**المسؤول :** <@${interaction.user.id}>\n**المرفوض :** <@${application.candidateId}>`)
-.setThumbnail('https://cdn.discordapp.com/attachments/1438625863686947047/1444408644006314035/rejected.png?ex=692c99e0&is=692b4860&hm=575d50c46f5b1d513caadd15ce52312638a201f293b7190bba843641f8ccf84e&')
-                .addFields([
-                    { 
-                        name: '**الكولداون**', 
-                        value: `${settings.settings.rejectCooldownHours} ساعة`, 
-                        inline: true 
-                    },
-                    { 
-                        name: '**ينتهي في**', 
-                        value: `<t:${Math.floor(cooldownEnd.getTime() / 1000)}:R>`, 
-                        inline: true 
-                    }
-                ])
-                .setTimestamp();
-
-            await interaction.update({
-                embeds: [rejectedEmbed],
-                components: []
-            });
-
-            // إرسال إشعار للمرشح مع تفاصيل الكولداون
-            try {
-                const cooldownEnd = new Date(Date.now() + (settings.settings.rejectCooldownHours * 60 * 60 * 1000));
-                const rejectNotificationEmbed = colorManager.createEmbed()
-                    .setTitle(' تم رفض تقديمك للإدارة')
-                    .setDescription(`**المسؤول :** <@${interaction.user.id}>\n\n**عليك كولداون تقديم إدارة لمدة :** ${settings.settings.rejectCooldownHours} ساعة`)
-.setThumbnail('https://cdn.discordapp.com/attachments/1438625863686947047/1444408644006314035/rejected.png?ex=692c99e0&is=692b4860&hm=575d50c46f5b1d513caadd15ce52312638a201f293b7190bba843641f8ccf84e&')
-                    .setTimestamp();
-
-                await candidate.user.send({ embeds: [rejectNotificationEmbed] });
-                console.log(`📧 تم إرسال إشعار الرفض للمرشح ${candidate.displayName}`);
-            } catch (dmError) {
-                console.log(`⚠️ تعذر إرسال إشعار الرفض للمرشح ${candidate.displayName}:`, dmError.message);
-            }
-
-            console.log(`❌ تم رفض طلب إداري: ${application.candidateId} (${candidate.displayName}) بواسطة ${interaction.user.id} - كولداون: ${settings.settings.rejectCooldownHours} ساعة - حفظ: ${saveResult ? 'نجح' : 'فشل'}`);
+            // معالجة الرفض القديمة - تم تعطيلها لصالح نظام المودال الجديد
+            return true;
         }
 
         return true;

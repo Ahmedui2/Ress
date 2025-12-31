@@ -82,6 +82,11 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
             stats = await dbManager.getMonthlyStats(user.id);
             periodLabel = 'Monthly Active';
             activeDays = stats.activeDays;
+            // إضافة تعويض للبيانات الشهرية
+            stats.voiceTime = stats.voiceTime || 0;
+            stats.messages = stats.messages || 0;
+            stats.reactions = stats.reactions || 0;
+            stats.voiceJoins = stats.voiceJoins || 0;
         }
 
         // جلب أكثر قناة صوتية مع قيمة افتراضية
@@ -211,6 +216,10 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
                     stats = await dbManager.getMonthlyStats(user.id);
                     periodLabel = 'Monthly Active';
                     activeDays = stats.activeDays;
+                    stats.voiceTime = stats.voiceTime || 0;
+                    stats.messages = stats.messages || 0;
+                    stats.reactions = stats.reactions || 0;
+                    stats.voiceJoins = stats.voiceJoins || 0;
                 }
 
                 const topVoiceChannel = await dbManager.getMostActiveVoiceChannel(user.id, newPeriod) || { channel_id: null, channel_name: 'No Active Or Leave Channel', total_time: 0, session_count: 0 };

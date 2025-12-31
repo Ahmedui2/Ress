@@ -61,6 +61,24 @@ async function execute(message, args, { BOT_OWNERS }) {
     }
 
     const vacations = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
+    
+    // التحقق من الكولداون (12 ساعة)
+    if (vacations.cooldowns?.[member.id]) {
+        const cooldownTime = vacations.cooldowns[member.id];
+        if (Date.now() < cooldownTime) {
+            const timeLeft = cooldownTime - Date.now();
+            const hours = Math.floor(timeLeft / (1000 * 60 * 60));
+            const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
+            
+            replyEmbed.setDescription(`❌ **عليك كولداون حالياً.**\nالمتبقي: ${hours} ساعة و ${minutes} دقيقة.`);
+            return message.reply({ embeds: [replyEmbed], ephemeral: true });
+        } else {
+            // تنظيف الكولداون المنتهي
+            delete vacations.cooldowns[member.id];
+            vacationManager.saveVacations(vacations);
+        }
+    }
+
     if (vacations.pending?.[member.id]) {
         replyEmbed.setDescription("You already have a pending vacation request.");
         return message.reply({ embeds: [replyEmbed], ephemeral: true });
@@ -321,7 +339,7 @@ async function handleInteraction(interaction, context) {
 
             const successEmbed = new EmbedBuilder()
                 .setColor(colorManager.getColor('approved') || '#2ECC71')
-                .setTitle('✅ تم الموافقة على الإجازة')
+                .setTitle('✅ Accepted')
                 .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
                 .addFields(
                     { name: "___المعتمد___", value: `${approverMember}`, inline: true },
@@ -333,6 +351,10 @@ async function handleInteraction(interaction, context) {
             await interaction.editReply({ embeds: [successEmbed], components: [] });
 
         } else if (action === 'reject') {
+            // إضافة كولداون 12 ساعة
+            if (!vacationsData.cooldowns) vacationsData.cooldowns = {};
+            vacationsData.cooldowns[userId] = Date.now() + (12 * 60 * 60 * 1000);
+
             if (!vacationsData.rejected) vacationsData.rejected = {};
             vacationsData.rejected[userId] = {
                 reason: pendingRequest.reason,
@@ -346,16 +368,28 @@ async function handleInteraction(interaction, context) {
 
             const rejectEmbed = new EmbedBuilder()
                 .setColor(colorManager.getColor('rejected') || '#E74C3C')
-                .setTitle('❌ تم رفض الإجازة')
+                .setTitle('❌ Rejected')
                 .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
                 .addFields(
-                    { name: "___المرفوض___", value: `${approverMember}`, inline: true },
-                    { name: "___التاريخ___", value: `<t:${Math.floor(new Date(pendingRequest.startDate).getTime() / 1000)}:R>`, inline: true },
-                    { name: "___السبب___", value: pendingRequest.reason, inline: false }
+                    { name: "___العضو___", value: `${member}`, inline: true },
+                    { name: "___الكولداون___", value: '12 ساعة', inline: true },
+                    { name: "___السبب الأصلي___", value: pendingRequest.reason, inline: false }
                 )
                 .setTimestamp();
 
             await interaction.editReply({ embeds: [rejectEmbed], components: [] });
+
+            // إشعار خاص للعضو
+            try {
+                const dmEmbed = new EmbedBuilder()
+                    .setTitle('تم رفض طلب إجازتك')
+                    .setColor('#E74C3C')
+                    .setDescription(`**تم رفض طلب إجازتك من قبل الإدارة.**\n**عليك كولداون 12 ساعة لتقديم طلب جديد.**`)
+                    .setTimestamp();
+                await member.user.send({ embeds: [dmEmbed] });
+            } catch (dmErr) {
+                console.log('تعذر إرسال DM للرفض');
+            }
         }
     }
 }

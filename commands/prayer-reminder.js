@@ -223,11 +223,13 @@ function checkPrayerTimes(client) {
             lastReminderSent[prayerKey] = true;
 
             // إرسال التذكير لجميع الخوادم المفعلة
-            for (const [guildId, guildConfig] of Object.entries(config.guilds)) {
-                if (guildConfig.enabled && guildConfig.channelId) {
-                    sendPrayerReminder(client, guildConfig.channelId, prayerName);
-                }
-            }
+        const guild = client.guilds.cache.get(guildId);
+        if (!guild) continue;
+        const channel = guild.channels.cache.get(guildConfig.channelId);
+        if (!channel) {
+            console.log(`⚠️ Channel ${guildConfig.channelId} not found in guild ${guildId}, skipping.`);
+            continue;
+        }
 
             // تنظيف المفاتيح القديمة كل ساعة لتوفير الذاكرة
             setTimeout(() => {
@@ -244,8 +246,11 @@ function checkPrayerTimes(client) {
 // إرسال آية أو دعاء
 async function sendVerseOrAdhkar(client, channelId) {
     try {
-        const channel = await client.channels.fetch(channelId);
-        if (!channel) return;
+        const channel = client.channels.cache.get(channelId);
+        if (!channel) {
+            console.log(`⚠️ Channel ${channelId} not found in cache, skipping verse/adhkar.`);
+            return;
+        }
 
         // اختيار عشوائي بين آية أو دعاء
         const isVerse = Math.random() > 0.5;

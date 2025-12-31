@@ -315,36 +315,47 @@ async function handleInteraction(interaction, context) {
         const customId = interaction.customId;
         console.log(`معالجة تفاعل down: ${customId}`);
 
-        // Handle setup interactions
-        if (customId.startsWith('down_setup_')) {
-            await handleSetupStep(interaction, context);
-            return;
-        }
-
         // Handle quick admin actions
         if (customId === 'down_quick_actions') {
+            await interaction.deferReply({ ephemeral: true }).catch(() => {});
             await handleQuickActions(interaction, context);
             return;
         }
 
-        // Check permissions for main functionality
-        const hasPermission = await downManager.hasPermission(interaction, BOT_OWNERS);
-        if (!hasPermission) {
-            return interaction.reply({
-                content: ' **لا تسوي خوي!**',
-                ephemeral: true
-            });
-        }
-
         // Handle main menu interactions
         if (customId === 'down_main_menu') {
+            await interaction.deferReply({ ephemeral: true }).catch(() => {});
+            const hasPermission = await downManager.hasPermission(interaction, BOT_OWNERS);
+            if (!hasPermission) {
+                return await interaction.editReply({
+                    content: ' **لا تسوي خوي!**'
+                });
+            }
             await handleMainMenu(interaction, context);
             return;
         }
 
         // Handle settings button
         if (customId === 'down_settings_button') {
+            const hasPermission = await downManager.hasPermission(interaction, BOT_OWNERS);
+            if (!hasPermission) {
+                return interaction.reply({
+                    content: ' **لا تسوي خوي!**',
+                    ephemeral: true
+                });
+            }
             await handleSettingsButton(interaction, context);
+            return;
+        }
+
+        // Defer immediately for other interactions if not a modal
+        if (!interaction.isModalSubmit()) {
+            await interaction.deferReply({ ephemeral: true }).catch(() => {});
+        }
+
+        // Handle setup interactions
+        if (customId.startsWith('down_setup_')) {
+            await handleSetupStep(interaction, context);
             return;
         }
 
@@ -354,11 +365,19 @@ async function handleInteraction(interaction, context) {
     } catch (error) {
         console.error('خطأ في معالجة تفاعل down:', error);
 
-        if (!interaction.replied && !interaction.deferred) {
-            await interaction.reply({
-                content: ' **حدث خطأ أثناء المعالجة! يرجى المحاولة مرة أخرى.**',
-                ephemeral: true
-            }).catch(console.error);
+        try {
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({
+                    content: ' **حدث خطأ أثناء المعالجة! يرجى المحاولة مرة أخرى.**',
+                    ephemeral: true
+                }).catch(() => {});
+            } else if (interaction.deferred) {
+                await interaction.editReply({
+                    content: ' **حدث خطأ أثناء المعالجة! يرجى المحاولة مرة أخرى.**'
+                }).catch(() => {});
+            }
+        } catch (replyError) {
+            console.error('فشل في الرد على الخطأ:', replyError);
         }
     }
 }
@@ -1142,73 +1161,90 @@ async function handleDownInteractions(interaction, context) {
         const reason = interaction.fields.getTextInputValue('down_reason');
 
         try {
-            const member = await interaction.guild.members.fetch(userId);
-            const role = await interaction.guild.roles.fetch(roleId);
+            const isVerbal = duration === 'شفوي' || duration === 'verbal';
+            let result;
 
-            if (!member || !role) {
-                await interaction.reply({
-                    content: ' **لم يتم العثور على العضو أو الرول!**',
-                    ephemeral: true
-                });
-                return;
+            if (isVerbal) {
+                // For verbal down, use createDown directly via downManager
+                result = await downManager.createDown(interaction.guild, client, userId, null, duration, reason, interaction.user.id);
+            } else {
+                const member = await interaction.guild.members.fetch(userId);
+                const role = await interaction.guild.roles.fetch(roleId);
+
+                if (!member || !role) {
+                    await interaction.reply({
+                        content: ' **لم يتم العثور على العضو أو الرول!**',
+                        ephemeral: true
+                    });
+                    return;
+                }
+                // Process the normal down
+                result = await downManager.createDown(interaction.guild, client, userId, roleId, duration, reason, interaction.user.id);
             }
-
-            // Process the down
-            const result = await downManager.applyDown(member, role, duration, reason, interaction.user);
 
             if (result.success) {
                 const successEmbed = colorManager.createEmbed()
-                    .setTitle('Down Applied Successfully')
-                    .setDescription(`تم سحب الرول من العضو كما هو مطلوب`)
+                    .setTitle(isVerbal ? '✅ تم تسجيل تنبيه شفوي' : '✅ تم تطبيق الداون بنجاح')
+                    .setDescription(isVerbal ? `تم تسجيل تنبيه شفوي للعضو كما هو مطلوب` : `تم سحب الرول من العضو كما هو مطلوب`)
                     .addFields([
                         { name: ' العضو', value: `<@${userId}>`, inline: true },
-                        { name: 'الرول', value: `<@&${roleId}>`, inline: true },
-                        { name: ' المدة', value: result.duration || 'نهائي', inline: true },
+                        { name: 'الرول', value: isVerbal ? 'شفوي' : `<@&${roleId}>`, inline: true },
+                        { name: ' المدة', value: result.duration || (isVerbal ? 'شفوي' : 'نهائي'), inline: true },
                         { name: ' السبب', value: reason, inline: false },
                         { name: ' بواسطة', value: `<@${interaction.user.id}>`, inline: true },
-                        { name: ' ينتهي في', value: result.endTime || 'نهائي', inline: true }
+                        { name: ' ينتهي في', value: result.endTime ? `<t:${Math.floor(result.endTime / 1000)}:F>` : (isVerbal ? 'شفوي' : 'نهائي'), inline: true }
                     ])
                     .setTimestamp();
 
                 await interaction.reply({ embeds: [successEmbed], ephemeral: true });
 
-                // Send notification to the affected member
-                try {
-                    const dmEmbed = colorManager.createEmbed()
-                        .setTitle('Role Removed')
-                        .setDescription(`تم سحب رول **${role.name}** منك من قبل الإدارة.`)
-                        .addFields([
-                            { name: ' الرول المسحوب', value: `${role.name}`, inline: true },
-                            { name: ' سحب الرول', value: `${interaction.user.username}`, inline: true },
-                            { name: ' المدة', value: result.duration || 'نهائي', inline: true },
-                            { name: ' السبب', value: reason, inline: false },
-                            { name: ' ينتهي في', value: result.endTime || 'نهائي', inline: false }
-                        ])
-                        .setTimestamp();
+                if (isVerbal) {
+                    // Send notification to the affected member for verbal down
+                    try {
+                        const member = await interaction.guild.members.fetch(userId);
+                        const dmEmbed = colorManager.createEmbed()
+                            .setTitle('تنبيه شفوي')
+                            .setDescription(`لقد تلقيت تنبيهاً شفوياً من قبل الإدارة.`)
+                            .addFields([
+                                { name: 'النوع', value: 'شفوي', inline: true },
+                                { name: 'السبب', value: reason, inline: false },
+                                { name: 'بواسطة', value: `${interaction.user.username}`, inline: true },
+                                { name: 'التاريخ', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: false }
+                            ])
+                            .setTimestamp();
 
-                    await member.send({ embeds: [dmEmbed] });
-                } catch (dmError) {
-                    console.log(`لا يمكن إرسال رسالة خاصة إلى ${member.displayName} - قد تكون الرسائل الخاصة مغلقة`);
+                        await member.send({ embeds: [dmEmbed] });
+                    } catch (dmError) {
+                        console.log(`لا يمكن إرسال رسالة خاصة إلى العضو - قد تكون الرسائل الخاصة مغلقة`);
+                    }
+                } else {
+                    // Send notification to the affected member for normal down
+                    try {
+                        const member = await interaction.guild.members.fetch(userId);
+                        const role = await interaction.guild.roles.fetch(roleId);
+                        const dmEmbed = colorManager.createEmbed()
+                            .setTitle('Role Removed')
+                            .setDescription(`تم سحب رول **${role.name}** منك من قبل الإدارة.`)
+                            .addFields([
+                                { name: ' الرول المسحوب', value: `${role.name}`, inline: true },
+                                { name: ' سحب الرول', value: `${interaction.user.username}`, inline: true },
+                                { name: ' المدة', value: result.duration || 'نهائي', inline: true },
+                                { name: ' السبب', value: reason, inline: false },
+                                { name: ' ينتهي في', value: result.endTime ? `<t:${Math.floor(result.endTime / 1000)}:F>` : 'نهائي', inline: false }
+                            ])
+                            .setTimestamp();
+
+                        await member.send({ embeds: [dmEmbed] });
+                    } catch (dmError) {
+                        console.log(`لا يمكن إرسال رسالة خاصة إلى العضو - قد تكون الرسائل الخاصة مغلقة`);
+                    }
                 }
-
-                // Log the action
-                await downManager.logDownAction(interaction.guild, {
-                    type: 'ROLE_REMOVED',
-                    user: member.user,
-                    role: role,
-                    moderator: interaction.user,
-                    duration: duration,
-                    reason: reason,
-                    endTime: result.endTime
-                });
-
             } else {
                 const errorEmbed = colorManager.createEmbed()
-                    .setDescription(` **فشل في تطبيق الداون:** ${result.error}`);
+                    .setDescription(` **فشل في تطبيق الإجراء:** ${result.error}`);
 
                 await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
             }
-
         } catch (error) {
             console.error('خطأ في معالجة الداون:', error);
             await interaction.reply({

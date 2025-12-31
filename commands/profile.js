@@ -9,7 +9,7 @@ const { isChannelBlocked } = require('./chatblock.js');
 const colorManager = require('../utils/colorManager.js');
 
 const name = 'profile';
-const aliases = ['id', 'p'];
+const aliases = ['id'];
 const { getUserLevel, updateUserLevel, updateLastNotified } = require('../utils/database.js');
 
 // دالة لإرسال إشعار الترقية

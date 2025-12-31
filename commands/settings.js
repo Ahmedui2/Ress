@@ -61,81 +61,49 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
 
   // === معالجة الأمر الفرعي settings chat ===
   if (args[0] && args[0].toLowerCase() === 'chat') {
-    const botConfigPath = path.join(__dirname, '..', 'data', 'botConfig.json');
-    let botConfig = {};
-    try {
-      botConfig = JSON.parse(fs.readFileSync(botConfigPath, 'utf8'));
-    } catch (e) {
-      botConfig = { owners: [], prefix: null, settings: {} };
-    }
-    if (!botConfig.settings) botConfig.settings = {};
-
-    // إذا تم ذكر قناة
-    const channelMention = message.mentions.channels.first();
-    const channelId = channelMention ? channelMention.id : args[1];
-
-    if (channelId) {
-      // التحقق من صحة القناة
-      try {
-        const channel = await message.guild.channels.fetch(channelId);
-        if (!channel || !channel.isTextBased()) {
-          const errorEmbed = colorManager.createEmbed()
-            .setDescription('**❌ القناة غير موجودة أو ليست قناة نصية!**');
-          await message.channel.send({ embeds: [errorEmbed] });
-          return;
-        }
-
-        // حفظ القناة
-        botConfig.settings.callChannel = channelId;
-        fs.writeFileSync(botConfigPath, JSON.stringify(botConfig, null, 2));
-
-        const successEmbed = colorManager.createEmbed()
-          .setTitle('**✅ تم تحديد قناة الاستدعاء**')
-          .setDescription(`**القناة:** <#${channelId}>\n\n**الآن جميع استدعاءات المسؤوليات ستُرسل إلى هذه القناة**\n**وزر الاستلام سيعمل فقط للمسؤولين المعينين**`);
-        await message.channel.send({ embeds: [successEmbed] });
-        return;
-      } catch (error) {
-        const errorEmbed = colorManager.createEmbed()
-          .setDescription('**❌ حدث خطأ في التحقق من القناة!**');
-        await message.channel.send({ embeds: [errorEmbed] });
-        return;
-      }
-    } else {
-      // عرض القناة الحالية أو طلب تحديدها
-      const currentChannel = botConfig.settings.callChannel;
-      if (currentChannel) {
-        const infoEmbed = colorManager.createEmbed()
-          .setTitle('**قناة الاستدعاء الحالية**')
-          .setDescription(`**القناة:** <#${currentChannel}>\n\n**لتغييرها:** \`settings chat #القناة\`\n**لإزالتها:** \`settings chat remove\``);
-        await message.channel.send({ embeds: [infoEmbed] });
-      } else {
-        const infoEmbed = colorManager.createEmbed()
-          .setTitle('**قناة الاستدعاء**')
-          .setDescription('**لم يتم تحديد قناة استدعاء بعد**\n\n**للتحديد:** `settings chat #القناة`');
-        await message.channel.send({ embeds: [infoEmbed] });
-      }
-      return;
-    }
+    const errorEmbed = colorManager.createEmbed()
+      .setDescription('**❌ هذا النظام ملغي، يتم الاستدعاء عبر الخاص حالياً.**');
+    await message.channel.send({ embeds: [errorEmbed] });
+    return;
   }
 
   // === معالجة إزالة قناة الاستدعاء ===
   if (args[0] && args[0].toLowerCase() === 'chat' && args[1] && args[1].toLowerCase() === 'remove') {
-    const botConfigPath = path.join(__dirname, '..', 'data', 'botConfig.json');
-    let botConfig = {};
-    try {
-      botConfig = JSON.parse(fs.readFileSync(botConfigPath, 'utf8'));
-    } catch (e) {
-      botConfig = { owners: [], prefix: null, settings: {} };
-    }
-    if (!botConfig.settings) botConfig.settings = {};
-
-    delete botConfig.settings.callChannel;
-    fs.writeFileSync(botConfigPath, JSON.stringify(botConfig, null, 2));
-
-    const successEmbed = colorManager.createEmbed()
-      .setDescription('**✅ تم إزالة قناة الاستدعاء**\n**الآن الاستدعاءات ستُرسل في نفس القناة**');
-    await message.channel.send({ embeds: [successEmbed] });
+    const errorEmbed = colorManager.createEmbed()
+      .setDescription('**❌ هذا النظام ملغي.**');
+    await message.channel.send({ embeds: [errorEmbed] });
     return;
+  }
+
+  // دالة لمزامنة الرولات لجميع المسؤولين
+  async function syncResponsibilityRoles(responsibilityName, guild) {
+    try {
+      const responsibility = responsibilities[responsibilityName];
+      if (!responsibility || !responsibility.roles || responsibility.roles.length === 0) return;
+
+      const roles = responsibility.roles;
+      const responsibleIds = responsibility.responsibles || [];
+
+      // جلب جميع أعضاء السيرفر لضمان دقة الفحص
+      await guild.members.fetch();
+
+      for (const userId of responsibleIds) {
+        try {
+          const member = await guild.members.fetch(userId).catch(() => null);
+          if (!member) continue;
+
+          for (const roleId of roles) {
+            if (!member.roles.cache.has(roleId)) {
+              await member.roles.add(roleId, `مزامنة رولات المسؤولية: ${responsibilityName}`).catch(() => {});
+            }
+          }
+        } catch (err) {
+          console.error(`خطأ في إضافة رول لمستخدم ${userId}:`, err);
+        }
+      }
+    } catch (error) {
+      console.error('خطأ في مزامنة الرولات:', error);
+    }
   }
 
   // حفظ البيانات في الملف مباشرة
@@ -295,7 +263,7 @@ try {
 
   // Collector with a 5-minute timeout
   const filter = i => i.user.id === message.author.id;
-  const collector = message.channel.createMessageComponentCollector({ filter, time: 300000 });
+  const collector = message.channel.createMessageComponentCollector({ filter, time: 3600000 }); // ساعة واحدة بدلاً من 5 دقائق
 
   activeCommandCollectors.set(message.author.id, collector);
 
@@ -508,7 +476,7 @@ const deleteButton = new ButtonBuilder()
       const messageFilter = m => m.author.id === interaction.user.id && m.channel.id === message.channel.id;
       const messageCollector = message.channel.createMessageCollector({
         filter: messageFilter,
-        time: 300000 // 5 minutes
+        time: 3600000 // ساعة واحدة
       });
 
       activeCollectors.set(responsibilityName, messageCollector);
@@ -517,7 +485,7 @@ const deleteButton = new ButtonBuilder()
       const buttonFilter = i => i.user.id === interaction.user.id && i.customId.startsWith('search_');
       const buttonCollector = message.channel.createMessageComponentCollector({ 
         filter: buttonFilter,
-        time: 300000 
+        time: 3600000 // ساعة واحدة
       });
 
       buttonCollector.on('collect', async (buttonInt) => {
@@ -557,7 +525,7 @@ const deleteButton = new ButtonBuilder()
 
           if (lowerContent === 'تم' || lowerContent === 'done') {
             messageCollector.stop('user_done');
-            await updateMainMenu();
+            await updateResponsibilityView(responsibilityName);
             return;
           }
 
@@ -577,6 +545,20 @@ const deleteButton = new ButtonBuilder()
 
               responsibility.responsibles.splice(index, 1);
               await saveResponsibilities();
+
+              // مزامنة الرولات
+              await syncResponsibilityRoles(responsibilityName, message.guild);
+
+              // تحديث إيمبد Resp
+              try {
+                const respCommand = client.commands.get('resp');
+                if (respCommand && respCommand.updateEmbedMessage) {
+                  await respCommand.updateEmbedMessage(client);
+                  console.log('✅ [SETTINGS] تم تحديث إيمبد Resp بعد حذف مسؤول');
+                }
+              } catch (error) {
+                console.error('خطأ في تحديث إيمبد Resp:', error);
+              }
 
               // إزالة جميع رولات المسؤولية من المسؤول المحذوف
               if (removedMember && responsibility.roles && responsibility.roles.length > 0) {
@@ -713,6 +695,20 @@ const deleteButton = new ButtonBuilder()
               // حفظ التغييرات مرة واحدة بعد إضافة الجميع
               if (addedCount > 0) {
                 await saveResponsibilities();
+
+                // مزامنة الرولات
+                await syncResponsibilityRoles(responsibilityName, message.guild);
+
+                // تحديث إيمبد Resp
+                try {
+                  const respCommand = client.commands.get('resp');
+                  if (respCommand && respCommand.updateEmbedMessage) {
+                    await respCommand.updateEmbedMessage(client);
+                    console.log('✅ [SETTINGS] تم تحديث إيمبد Resp بعد إضافة مسؤولين');
+                  }
+                } catch (error) {
+                  console.error('خطأ في تحديث إيمبد Resp:', error);
+                }
               }
 
               // إنشاء رسالة النتيجة
@@ -811,7 +807,7 @@ const deleteButton = new ButtonBuilder()
       const messageFilter = m => m.author.id === interaction.user.id && m.channel.id === message.channel.id;
       const messageCollector = message.channel.createMessageCollector({
         filter: messageFilter,
-        time: 300000
+        time: 3600000 // ساعة واحدة
       });
 
       activeCollectors.set(`role_${responsibilityName}`, messageCollector);
@@ -825,7 +821,7 @@ const deleteButton = new ButtonBuilder()
 
           if (lowerContent === 'تم' || lowerContent === 'done') {
             messageCollector.stop('user_done');
-            await updateMainMenu();
+            await updateResponsibilityView(responsibilityName);
             return;
           }
 
@@ -1203,11 +1199,91 @@ const deleteButton = new ButtonBuilder()
           await interaction.update({ embeds: [embedEdit], components });
         }
       } else if (interaction.customId === 'back_to_menu' || interaction.customId.startsWith('back_to_main_')) {
-        // إيقاف جميع الـ collectors النشطة عند العودة للقائمة الرئيسية
-        for (const [respName, collector] of activeCollectors.entries()) {
-          collector.stop('returning_to_main');
+        // إيقاف الـ collector النشط لهذه المسؤولية عند العودة
+        const potentialRespName = interaction.customId.replace('back_to_main_', '');
+        if (potentialRespName !== 'back_to_menu') {
+            const collectorsToStop = [
+                activeCollectors.get(potentialRespName),
+                activeCollectors.get(`role_${potentialRespName}`)
+            ];
+            collectorsToStop.forEach(col => { if(col) col.stop('user_back'); });
+            activeCollectors.delete(potentialRespName);
+            activeCollectors.delete(`role_${potentialRespName}`);
         }
-        activeCollectors.clear();
+        
+        // إذا كان الضغط من داخل مسؤولية معينة، رجع لنفس المسؤولية بدلاً من القائمة الأولى
+        if (interaction.customId.startsWith('back_to_main_')) {
+          const responsibilityName = interaction.customId.replace('back_to_main_', '');
+          if (responsibilities[responsibilityName]) {
+            // أعد عرض نفس المسؤولية
+            const responsibility = responsibilities[responsibilityName];
+            
+            // بناء الأزرار
+            const editButton = new ButtonBuilder()
+              .setCustomId(`edit_${responsibilityName}`)
+              .setLabel('الشرح')
+              .setEmoji('<:emoji_16:1448570798380945539>')
+              .setStyle(ButtonStyle.Secondary);
+
+            const renameButton = new ButtonBuilder()
+              .setCustomId(`rename_${responsibilityName}`)
+              .setLabel('الأسم')
+              .setEmoji('<:emoji_14:1448570732652003398>')
+              .setStyle(ButtonStyle.Secondary);
+
+            const deleteButton = new ButtonBuilder()
+              .setCustomId(`delete_${responsibilityName}`)
+              .setLabel('حذف')
+              .setEmoji('<:emoji_13:1448570702176452660>')
+              .setStyle(ButtonStyle.Danger);
+
+            const manageButton = new ButtonBuilder()
+              .setCustomId(`manage_${responsibilityName}`)
+              .setLabel('المسؤولين')
+              .setEmoji('<:emoji_17:1448570976097931406>')
+              .setStyle(ButtonStyle.Secondary);
+
+            const roleButton = new ButtonBuilder()
+              .setCustomId(`role_${responsibilityName}`)
+              .setLabel('رول المسؤولية')
+              .setEmoji('<:emoji_14:1448570758849757285>')
+              .setStyle(ButtonStyle.Secondary);
+
+            const mentButton = new ButtonBuilder()
+              .setCustomId(`ment_${responsibilityName}`)
+              .setLabel('اختصار')
+              .setEmoji('<:emoji_18:1448572201610776730>')
+              .setStyle(ButtonStyle.Secondary);
+
+            const backButton = new ButtonBuilder()
+              .setCustomId('back_to_menu')
+              .setLabel('main menu')
+              .setStyle(ButtonStyle.Secondary);
+
+            const respList = responsibility.responsibles && responsibility.responsibles.length > 0
+              ? responsibility.responsibles.map(r => `<@${r}>`).join(', ')
+              : '**لا يوجد مسؤولين معينين**';
+
+            const desc = responsibility.description && responsibility.description.toLowerCase() !== 'لا'
+              ? responsibility.description
+              : '**لا يوجد شرح**';
+
+            const embed = colorManager.createEmbed()
+              .setTitle(`📋 المسؤولية : ${responsibilityName}`)
+              .setDescription(`**👥 المسؤولون :** ${respList}\n**📝 الشرح :** ${desc}`);
+
+            const components = [
+              new ActionRowBuilder().addComponents(editButton, renameButton, deleteButton, manageButton, roleButton),
+              new ActionRowBuilder().addComponents(mentButton),
+              new ActionRowBuilder().addComponents(backButton)
+            ];
+
+            await interaction.update({ embeds: [embed], components });
+            return;
+          }
+        }
+        
+        // وإلا، عد للقائمة الرئيسية
         await updateMainMenu();
       } else if (interaction.isButton()) {
         const [action, responsibilityName] = interaction.customId.split('_');
@@ -1692,6 +1768,11 @@ const deleteButton = new ButtonBuilder()
       if (!interaction.isModalSubmit()) return;
       if (interaction.user.id !== message.author.id) return;
 
+      // تحديث وقت المجمع الرئيسي لمنع الانتهاء أثناء استخدام المودال
+      if (collector && !collector.ended) {
+        collector.resetTimer({ time: 3600000 });
+      }
+
       // معالج إضافة مسؤولية جديدة
       if (interaction.customId === 'add_responsibility_modal') {
         const name = interaction.fields.getTextInputValue('responsibility_name').trim();
@@ -1801,6 +1882,17 @@ const deleteButton = new ButtonBuilder()
           return await safeReply(interaction, '**فشل في تعديل المسؤولية!**');
         }
 
+        // تحديث إيمبد Resp
+        try {
+          const respCommand = client.commands.get('resp');
+          if (respCommand && respCommand.updateEmbedMessage) {
+            await respCommand.updateEmbedMessage(client);
+            console.log('✅ [SETTINGS] تم تحديث إيمبد Resp بعد تعديل الشرح');
+          }
+        } catch (error) {
+          console.error('خطأ في تحديث إيمبد Resp:', error);
+        }
+
         logEvent(client, message.guild, {
           type: 'RESPONSIBILITY_MANAGEMENT',
           title: 'Responsibility Description Updated',
@@ -1873,6 +1965,17 @@ const deleteButton = new ButtonBuilder()
           return await safeReply(interaction, '**فشل في تغيير اسم المسؤولية!**');
         }
 
+        // تحديث إيمبد Resp
+        try {
+          const respCommand = client.commands.get('resp');
+          if (respCommand && respCommand.updateEmbedMessage) {
+            await respCommand.updateEmbedMessage(client);
+            console.log('✅ [SETTINGS] تم تحديث إيمبد Resp بعد تغيير الاسم');
+          }
+        } catch (error) {
+          console.error('خطأ في تحديث إيمبد Resp:', error);
+        }
+
         logEvent(client, message.guild, {
           type: 'RESPONSIBILITY_MANAGEMENT',
           title: 'Responsibility Renamed',
@@ -1917,6 +2020,17 @@ const deleteButton = new ButtonBuilder()
         const saved = await saveResponsibilities();
         if (!saved) {
           return await safeReply(interaction, '**فشل في حفظ إعدادات المنشن!**');
+        }
+
+        // تحديث إيمبد Resp
+        try {
+          const respCommand = client.commands.get('resp');
+          if (respCommand && respCommand.updateEmbedMessage) {
+            await respCommand.updateEmbedMessage(client);
+            console.log('✅ [SETTINGS] تم تحديث إيمبد Resp بعد تعديل الاختصار');
+          }
+        } catch (error) {
+          console.error('خطأ في تحديث إيمبد Resp:', error);
         }
 
         logEvent(client, message.guild, {
@@ -1986,6 +2100,66 @@ const deleteButton = new ButtonBuilder()
           .setDescription(`**تم العثور على ${matchedMembers.size} عضو يطابق البحث "${searchQuery}"**\n\n**اختر الأعضاء الذين تريد إضافتهم للمسؤولية: ${responsibilityName}**`);
 
         await safeReply(interaction, '', { embeds: [embed], components: [row] });
+
+        // إضافة collector لـ select menu الخاص بالبحث
+        const searchSelectFilter = i => i.user.id === interaction.user.id && i.customId === `add_searched_members_${responsibilityName}`;
+        const searchSelectCollector = interaction.channel.createMessageComponentCollector({
+          filter: searchSelectFilter,
+          time: 60000,
+          max: 1
+        });
+
+        searchSelectCollector.on('collect', async (selectInt) => {
+          try {
+            const selectedUserIds = selectInt.values;
+            let addedCount = 0;
+            let addedNames = [];
+
+            for (const userId of selectedUserIds) {
+              if (!responsibilities[responsibilityName].responsibles.includes(userId)) {
+                responsibilities[responsibilityName].responsibles.push(userId);
+                addedCount++;
+                const member = await message.guild.members.fetch(userId).catch(() => null);
+                if (member) {
+                  addedNames.push(member.displayName || member.user.username);
+                  
+                  // إعطاء الرولات
+                  if (responsibility.roles && responsibility.roles.length > 0) {
+                    for (const roleId of responsibility.roles) {
+                      await member.roles.add(roleId).catch(() => {});
+                    }
+                  }
+                }
+              }
+            }
+
+            if (addedCount > 0) {
+              await saveResponsibilities();
+              
+              // مزامنة الرولات
+              await syncResponsibilityRoles(responsibilityName, message.guild);
+              
+              // تحديث الإيمبد
+              const respCommand = client.commands.get('resp');
+              if (respCommand && respCommand.updateEmbedMessage) {
+                await respCommand.updateEmbedMessage(client);
+              }
+            }
+
+            await selectInt.update({ 
+              content: `**✅ تم إضافة ${addedCount} مسؤول بنجاح: ${addedNames.join(', ')}**`,
+              embeds: [],
+              components: [] 
+            });
+
+            // تحديث واجهة الإدارة
+            const newContent = await generateManagementContent(responsibilityName);
+            await interaction.editReply(newContent);
+
+          } catch (error) {
+            console.error('خطأ في إضافة الأعضاء المبحوث عنهم:', error);
+          }
+        });
       }
     } catch (error) {
       console.error('خطأ في معالج المودال:', error);

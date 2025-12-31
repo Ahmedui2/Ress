@@ -468,26 +468,32 @@ async function handleLockedRoomMessage(message, client, botOwners) {
     
     console.log(`✅ الرسالة في روم اللوكيت - فحص المحتوى...`);
 
-    const hasImage = message.attachments.some(att => {
-        // إعطاء الأولوية لـ contentType
-        if (att.contentType && att.contentType.startsWith('image/')) {
-            return true;
-        }
-        // التحقق من الامتداد كخيار احتياطي فقط
-        if (att.contentType) {
-            return false; // إذا كان contentType موجود وليس صورة، ارفض
-        }
+    const hasAllowedMedia = message.attachments.some(att => {
         const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'];
-        return imageExtensions.some(ext => att.name.toLowerCase().endsWith(ext));
+        const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.wmv', '.flv'];
+        const audioExtensions = ['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac'];
+        
+        if (att.contentType) {
+            if (att.contentType.startsWith('image/')) return true;
+            if (att.contentType.startsWith('video/')) return true;
+            if (att.contentType.startsWith('audio/')) return true;
+        }
+        
+        const fileName = att.name.toLowerCase();
+        if (imageExtensions.some(ext => fileName.endsWith(ext))) return true;
+        if (videoExtensions.some(ext => fileName.endsWith(ext))) return true;
+        if (audioExtensions.some(ext => fileName.endsWith(ext))) return true;
+        
+        return false;
     });
 
     const isAdmin = await hasPermission(message.author.id, guildId, message.guild, botOwners);
     
-    // إذا كانت الرسالة تحتوي على صورة - مسموح من الجميع (مع أو بدون نص)
-    if (hasImage) {
-        console.log(`✅ الرسالة تحتوي على صورة من ${message.author.username} - مسموح`);
+    // إذا كانت الرسالة تحتوي على صورة أو فيديو أو صوت - مسموح من الجميع
+    if (hasAllowedMedia) {
+        console.log(`✅ الرسالة تحتوي على ميديا من ${message.author.username} - مسموح`);
     }
-    // إذا كانت نص فقط (بدون صورة)
+    // إذا كانت نص فقط (بدون ميديا)
     else {
         // إذا لم يكن من المسؤولين - حذف الرسالة
         if (!isAdmin) {
@@ -506,8 +512,8 @@ async function handleLockedRoomMessage(message, client, botOwners) {
         }
     }
 
-    if (hasImage) {
-        console.log(`✅ تم اكتشاف صورة في رسالة ${message.author.username}`);
+    if (hasAllowedMedia) {
+        console.log(`✅ تم اكتشاف ميديا في رسالة ${message.author.username}`);
         
         const today = moment().tz('Asia/Riyadh').format('YYYY-MM-DD');
         const userStreak = await getUserStreak(guildId, message.author.id);
@@ -534,9 +540,10 @@ async function handleLockedRoomMessage(message, client, botOwners) {
         console.log(`➕ إنشاء خط فاصل جديد للصورة من ${message.author.username}`);
         await createDivider(message.channel, message.author, settings, guildId, [message.id]);
 
-        // إذا نشر اليوم بالفعل، نتوقف هنا (بعد إنشاء الخط الفاصل)
+        // فحص هل تم النشر اليوم
         if (userStreak && userStreak.last_post_date === today) {
-            console.log(`⏭️ المستخدم ${message.author.username} نشر اليوم بالفعل - لكن تم إضافة الخط الفاصل`);
+            console.log(`ℹ️ المستخدم ${message.author.username} نشر بالفعل اليوم - تحديث إحصائيات فقط`);
+            await updateUserStreak(guildId, message.author.id, userStreak.current_streak, (userStreak.total_posts || 0) + 1);
             return;
         }
 
@@ -560,23 +567,32 @@ async function handleLockedRoomMessage(message, client, botOwners) {
         await updateUserStreak(guildId, message.author.id, newStreakCount, (userStreak?.total_posts || 0) + 1);
         await recordStreakHistory(guildId, message.author.id, message.id, newStreakCount);
 
+        // إلغاء طلبات الاستعادة المعلقة إذا بدأ المستخدم ستريك جديداً
+        if (newStreakCount > 0) {
+            await runQuery(
+                'UPDATE streak_restore_requests SET status = "cancelled", resolved_at = strftime("%s", "now") WHERE guild_id = ? AND user_id = ? AND status = "pending"',
+                [guildId, message.author.id]
+            );
+        }
+
+        console.log(`🔥 تحديث الستريك لـ ${message.author.username}: ${newStreakCount}`);
+
         try {
             let dmEmbed = colorManager.createEmbed()
                 .setTitle('** Streak Update**')
-                .setDescription(`الـ Streak الخاص بك : **${newStreakCount}** ${newStreakCount === 1 ? '<:emoji_64:1442587807150243932>' : '<:emoji_64:1442587807150243932>'}\n\n**حافظ على السلسلة بإرسال صورة يومياً قبل منتصف الليل**`)
+                .setDescription(`الـ Streak الخاص بك : **${newStreakCount}** <:emoji_64:1442587807150243932>\n\n**حافظ على السلسلة بإرسال صورة يومياً قبل منتصف الليل**`)
                 .addFields([
                     { name: 'Your Streak ', value: `**${newStreakCount}**<:emoji_61:1442587727387427009>`, inline: true },
                     { name: 'Until New day', value: getTimeUntilMidnight(), inline: true }
                 ])
-                
                 .setFooter({ text: 'Streak System' });
 
             if (shouldResetStreak && userStreak) {
                 dmEmbed.setColor('#FFFFFF')
-                    .setDescription(`تم إعادة تعيين الـ Streak\n\n**السبب :** لم تنشر في اليوم السابق\n**الستريك السابق :** ${userStreak.current_streak} <:emoji_63:1442587778964525077>\n**`);
+                    .setDescription(`تم إعادة تعيين الـ Streak\n\n**السبب :** لم تنشر في اليوم السابق\n**الستريك السابق :** ${userStreak.current_streak} <:emoji_63:1442587778964525077>`);
             }
 
-            await message.author.send({ embeds: [dmEmbed] });
+            await message.author.send({ embeds: [dmEmbed] }).catch(() => {});
         } catch (dmErr) {
             console.log(`لا يمكن إرسال DM للمستخدم ${message.author.id}`);
         }
@@ -707,6 +723,11 @@ async function handleDeleteReasonModal(interaction, client) {
 
     await runQuery('DELETE FROM streak_dividers WHERE message_id = ?', [dividerMessageId]);
 
+    // تأجيل الرد إذا كان هناك تأخير في الحذف لضمان بقاء التفاعل صالحاً
+    if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferReply({ ephemeral: true });
+    }
+
     const user = await client.users.fetch(userId).catch(() => null);
     if (user) {
         try {
@@ -722,7 +743,11 @@ async function handleDeleteReasonModal(interaction, client) {
         }
     }
 
-    await interaction.reply({ content: '**تم حذف الصورة وإرسال السبب للعضو**', flags: 64 });
+    if (interaction.deferred) {
+        await interaction.editReply({ content: '**تم حذف الصورة وإرسال السبب للعضو**' });
+    } else {
+        await interaction.reply({ content: '**تم حذف الصورة وإرسال السبب للعضو**', flags: 64 });
+    }
 }
 
 async function handleRestoreRequest(interaction, client, botOwners) {
@@ -819,11 +844,21 @@ async function handleApproveRestore(interaction, client) {
     const [, , , guildId, userId] = interaction.customId.split('_');
 
     const request = await getQuery(
-        'SELECT * FROM streak_restore_requests WHERE guild_id = ? AND user_id = ? AND status = ?',
-        [guildId, userId, 'pending']
+        'SELECT * FROM streak_restore_requests WHERE guild_id = ? AND user_id = ? AND status = "pending" ORDER BY created_at DESC LIMIT 1',
+        [guildId, userId]
     );
 
     if (!request) {
+        // التحقق مما إذا كان الطلب قد تم إلغاؤه تلقائياً
+        const cancelledRequest = await getQuery(
+            'SELECT * FROM streak_restore_requests WHERE guild_id = ? AND user_id = ? AND status = "cancelled" ORDER BY resolved_at DESC LIMIT 1',
+            [guildId, userId]
+        );
+        
+        if (cancelledRequest) {
+            return interaction.reply({ content: '**تم إلغاء هذا الطلب تلقائياً لأن العضو بدأ سلسلة ستريك جديدة بالفعل**', flags: 64 });
+        }
+        
         return interaction.reply({ content: '**لا يوجد طلب استعادة قيد الانتظار لهذا المستخدم**', flags: 64 });
     }
 
@@ -861,11 +896,21 @@ async function handleRejectRestore(interaction, client) {
     const [, , , guildId, userId] = interaction.customId.split('_');
 
     const request = await getQuery(
-        'SELECT * FROM streak_restore_requests WHERE guild_id = ? AND user_id = ? AND status = ?',
-        [guildId, userId, 'pending']
+        'SELECT * FROM streak_restore_requests WHERE guild_id = ? AND user_id = ? AND status = "pending" ORDER BY created_at DESC LIMIT 1',
+        [guildId, userId]
     );
 
     if (!request) {
+        // التحقق مما إذا كان الطلب قد تم إلغاؤه تلقائياً
+        const cancelledRequest = await getQuery(
+            'SELECT * FROM streak_restore_requests WHERE guild_id = ? AND user_id = ? AND status = "cancelled" ORDER BY resolved_at DESC LIMIT 1',
+            [guildId, userId]
+        );
+        
+        if (cancelledRequest) {
+            return interaction.reply({ content: '**تم إلغاء هذا الطلب تلقائياً لأن العضو بدأ سلسلة ستريك جديدة بالفعل**', flags: 64 });
+        }
+        
         return interaction.reply({ content: '**لا يوجد طلب استعادة قيد الانتظار لهذا المستخدم**', flags: 64 });
     }
 
@@ -974,8 +1019,25 @@ module.exports = {
 
         const guildId = message.guild.id;
 
-        if (!BOT_OWNERS.includes(message.author.id)) {
-            return message.react('❌');
+        // إذا كان المستخدم يطلب الستريك الخاص به أو ستريك شخص آخر
+        if (args.length > 0 || !BOT_OWNERS.includes(message.author.id)) {
+            const targetUser = message.mentions.users.first() || message.author;
+            const userStreak = await getUserStreak(guildId, targetUser.id);
+            
+            if (!userStreak) {
+                return message.reply(`**${targetUser.username} ليس لديه سلسلة ستريك حالياً**`);
+            }
+
+            const embed = colorManager.createEmbed()
+                .setTitle(`**Streak: ${targetUser.username}**`)
+                .addFields(
+                    { name: '**الستريك الحالي**', value: `${userStreak.current_streak} <:emoji_61:1442587727387427009>`, inline: true },
+                    { name: '**أطول ستريك**', value: `${userStreak.longest_streak} <:emoji_60:1442587701474754760>`, inline: true },
+                    { name: '**إجمالي الصور**', value: `${userStreak.total_posts || 0} 🖼️`, inline: true }
+                )
+                .setFooter({ text: 'Streak System' });
+
+            return message.reply({ embeds: [embed] });
         }
 
         const settings = await getSettings(guildId);
@@ -1000,14 +1062,14 @@ module.exports = {
             // محاولة استخراج guildId من آخر جزء من customId
             const potentialGuildId = parts[parts.length - 1];
             // التحقق من أن الجزء الأخير يبدو كـ guild ID (رقم طويل)
-            if (potentialGuildId && /^\d{17,19}$/.test(potentialGuildId)) {
+            if (potentialGuildId && /^\d{17,20}$/.test(potentialGuildId)) {
                 guildId = potentialGuildId;
                 console.log(`✅ تم استخراج guildId من customId: ${guildId}`);
             }
         }
         
         // التحقق من وجود guildId للتفاعلات التي تحتاج إليه
-        const needsGuildId = !customId.startsWith('streak_request_restore_') || customId.includes('approve') || customId.includes('reject');
+        const needsGuildId = !customId.startsWith('streak_request_restore_');
         if (!guildId && needsGuildId) {
             console.log(`❌ لا يوجد guildId في التفاعل: ${customId}`);
             if (!interaction.replied && !interaction.deferred) {
