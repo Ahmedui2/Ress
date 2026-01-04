@@ -10,68 +10,18 @@ const roomConfigPath = path.join(__dirname, '..', 'data', 'roomConfig.json');
 const roomOwnersPath = path.join(__dirname, '..', 'data', 'roomOwners.json');
 const rejectedRequestsPath = path.join(__dirname, '..', 'data', 'rejectedRequests.json');
 
-// دالة لتحميل إعدادات الرومات
-function loadRoomConfig() {
-    try {
-        if (fs.existsSync(roomConfigPath)) return JSON.parse(fs.readFileSync(roomConfigPath, 'utf8'));
-        return {};
-    } catch (error) { return {}; }
-}
-
-// دالة لحفظ إعدادات الرومات
-function saveRoomConfig(config) {
-    try {
-        fs.writeFileSync(roomConfigPath, JSON.stringify(config, null, 2), 'utf8');
-        return true;
-    } catch (error) { return false; }
-}
-
-// دالة لتحميل الملاك
-function loadRoomOwners() {
-    try {
-        if (fs.existsSync(roomOwnersPath)) return JSON.parse(fs.readFileSync(roomOwnersPath, 'utf8'));
-        return {};
-    } catch (error) { return {}; }
-}
-
-// دالة لحفظ الملاك
-function saveRoomOwners(owners) {
-    try {
-        fs.writeFileSync(roomOwnersPath, JSON.stringify(owners, null, 2), 'utf8');
-        return true;
-    } catch (error) { return false; }
-}
-
-// دالة لتحميل الطلبات المرفوضة
-function loadRejectedRequests() {
-    try {
-        if (fs.existsSync(rejectedRequestsPath)) return JSON.parse(fs.readFileSync(rejectedRequestsPath, 'utf8'));
-        return {};
-    } catch (error) { return {}; }
-}
-
-// دالة لحفظ الطلبات المرفوضة
-function saveRejectedRequests(rejected) {
-    try {
-        fs.writeFileSync(rejectedRequestsPath, JSON.stringify(rejected, null, 2), 'utf8');
-        return true;
-    } catch (error) { return false; }
-}
+function loadRoomConfig() { try { if (fs.existsSync(roomConfigPath)) return JSON.parse(fs.readFileSync(roomConfigPath, 'utf8')); return {}; } catch (e) { return {}; } }
+function saveRoomConfig(config) { try { fs.writeFileSync(roomConfigPath, JSON.stringify(config, null, 2), 'utf8'); return true; } catch (e) { return false; } }
+function loadRoomOwners() { try { if (fs.existsSync(roomOwnersPath)) return JSON.parse(fs.readFileSync(roomOwnersPath, 'utf8')); return {}; } catch (e) { return {}; } }
+function saveRoomOwners(owners) { try { fs.writeFileSync(roomOwnersPath, JSON.stringify(owners, null, 2), 'utf8'); return true; } catch (e) { return false; } }
+function loadRejectedRequests() { try { if (fs.existsSync(rejectedRequestsPath)) return JSON.parse(fs.readFileSync(rejectedRequestsPath, 'utf8')); return {}; } catch (e) { return {}; } }
+function saveRejectedRequests(rejected) { try { fs.writeFileSync(rejectedRequestsPath, JSON.stringify(rejected, null, 2), 'utf8'); return true; } catch (e) { return false; } }
 
 function formatTimeSince(timestamp) {
     if (!timestamp) return 'No Data';
-    const now = Date.now();
-    const diff = now - new Date(timestamp).getTime();
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-    const parts = [];
-    if (days > 0) parts.push(`${days}d`);
-    if (hours > 0) parts.push(`${hours}h`);
-    if (minutes > 0 && days === 0) parts.push(`${minutes}m`);
-    if (seconds > 0 && days === 0 && hours === 0) parts.push(`${seconds}s`);
-    return parts.length > 0 ? parts.join(' ') + ' ago' : 'Now';
+    const diff = Date.now() - new Date(timestamp).getTime();
+    const days = Math.floor(diff / 86400000), hours = Math.floor((diff % 86400000) / 3600000), minutes = Math.floor((diff % 3600000) / 60000);
+    return days > 0 ? `${days}d ago` : hours > 0 ? `${hours}h ago` : `${minutes}m ago`;
 }
 
 async function getUserActivity(userId) {
@@ -79,470 +29,261 @@ async function getUserActivity(userId) {
         const { getDatabase } = require('../utils/database');
         const dbManager = getDatabase();
         const stats = await dbManager.getUserStats(userId);
-        const weeklyStats = await dbManager.getWeeklyStats(userId);
-        const lastVoiceSession = await dbManager.get(`SELECT end_time, channel_name FROM voice_sessions WHERE user_id = ? ORDER BY end_time DESC LIMIT 1`, [userId]);
-        const lastMessage = await dbManager.get(`SELECT last_message, channel_name FROM message_channels WHERE user_id = ? ORDER BY last_message DESC LIMIT 1`, [userId]);
-        return {
-            totalMessages: stats.totalMessages || 0,
-            totalVoiceTime: stats.totalVoiceTime || 0,
-            weeklyMessages: weeklyStats.weeklyMessages || 0,
-            weeklyVoiceTime: weeklyStats.weeklyTime || 0,
-            lastVoiceTime: lastVoiceSession ? lastVoiceSession.end_time : null,
-            lastVoiceChannel: lastVoiceSession ? lastVoiceSession.channel_name : null,
-            lastMessageTime: lastMessage ? lastMessage.last_message : null,
-            lastMessageChannel: lastMessage ? lastMessage.channel_name : null
-        };
-    } catch (error) {
-        return { totalMessages: 0, totalVoiceTime: 0, weeklyMessages: 0, weeklyVoiceTime: 0, lastVoiceTime: null, lastVoiceChannel: null, lastMessageTime: null, lastMessageChannel: null };
-    }
+        const lastVoice = await dbManager.get(`SELECT end_time, channel_name FROM voice_sessions WHERE user_id = ? ORDER BY end_time DESC LIMIT 1`, [userId]);
+        const lastMsg = await dbManager.get(`SELECT last_message, channel_name FROM message_channels WHERE user_id = ? ORDER BY last_message DESC LIMIT 1`, [userId]);
+        return { totalMessages: stats.totalMessages || 0, totalVoiceTime: stats.totalVoiceTime || 0, lastVoiceTime: lastVoice?.end_time, lastVoiceChannel: lastVoice?.channel_name, lastMessageTime: lastMsg?.last_message, lastMessageChannel: lastMsg?.channel_name };
+    } catch (e) { return { totalMessages: 0, totalVoiceTime: 0 }; }
 }
 
-// دالة لتوليد إيمبد قائمة الرومات
 function generateRoomsListEmbed(guild, displayType) {
     const config = loadRoomConfig();
-    const guildConfig = config[guild.id];
-    const categoryId = guildConfig?.roomsCategoryId;
-    if (!categoryId) return null;
+    const categoryId = config[guild.id]?.roomsCategoryId;
     const category = guild.channels.cache.get(categoryId);
     if (!category) return null;
-
     const rooms = category.children.cache.filter(c => c.type === ChannelType.GuildVoice);
-    const owners = loadRoomOwners();
-    const guildOwners = owners[guild.id] || {};
-    
+    const owners = loadRoomOwners()[guild.id] || {};
     let description = `**قائمة الرومات في كاتوقري: ${category.name}**\n\n`;
-    let index = 1;
     const availableRooms = [];
-
-    rooms.forEach(room => {
-        const ownerId = guildOwners[room.id];
+    rooms.forEach((room, index) => {
+        const ownerId = owners[room.id];
         const ownerMention = ownerId ? `<@${ownerId}>` : '`لا يوجد مالك`';
         if (!ownerId) availableRooms.push({ label: room.name, value: room.id });
-        
-        if (displayType === 'names') {
-            description += `**${index}- ${room.name}** | المالك: ${ownerMention}\n`;
-        } else {
-            description += `**${index}- <#${room.id}>** | المالك: ${ownerMention}\n`;
-        }
-        index++;
+        description += `**${index + 1}- ${displayType === 'names' ? room.name : `<#${room.id}>`}** | المالك: ${ownerMention}\n`;
     });
-
-    const embed = colorManager.createEmbed()
-        .setTitle('**قائمة الرومات وأصحابها**')
-        .setDescription(description)
-        .setFooter({ text: `By Ahmed.`, iconURL: guild.iconURL({ dynamic: true }) });
-
-    return { embed, availableRooms };
+    return { embed: colorManager.createEmbed().setTitle('**قائمة الرومات وأصحابها**').setDescription(description).setFooter({ text: `By Ahmed.`, iconURL: guild.iconURL({ dynamic: true }) }), availableRooms };
 }
 
 async function execute(message, args, { client, BOT_OWNERS, ADMIN_ROLES }) {
-    if (isUserBlocked(message.author.id)) {
-        const blockedEmbed = colorManager.createEmbed()
-            .setDescription('**🚫 أنت محظور من استخدام أوامر البوت**\n**للاستفسار، تواصل مع إدارة السيرفر**')
-            .setThumbnail(client.user.displayAvatarURL({ format: 'png', size: 128 }));
-        await message.channel.send({ embeds: [blockedEmbed] });
-        return;
-    }
+    if (isUserBlocked(message.author.id)) return;
+    const sub = args[0]?.toLowerCase();
 
-    const subCommand = args[0]?.toLowerCase();
-
-    if (subCommand === 'sub' && args[1]?.toLowerCase() === 'ctg') {
+    if (sub === 'sub' && args[1]?.toLowerCase() === 'ctg') {
         if (!BOT_OWNERS.includes(message.author.id) && !message.member.permissions.has(PermissionFlagsBits.Administrator)) return message.react('❌');
-        const categoryId = args[2]?.replace(/[<#>]/g, '');
-        if (!categoryId) return message.reply('**الرجاء تحديد ID الكاتوقري أو منشن الكاتوقري**');
-        const category = message.guild.channels.cache.get(categoryId);
-        if (!category || category.type !== ChannelType.GuildCategory) return message.reply('**الرجاء التأكد من أن الـ ID يخص كاتوقري صحيح**');
+        const id = args[2]?.replace(/[<#>]/g, '');
+        const cat = message.guild.channels.cache.get(id);
+        if (!cat || cat.type !== ChannelType.GuildCategory) return message.reply('**ID كاتوقري غير صحيح**');
         const config = loadRoomConfig();
         if (!config[message.guild.id]) config[message.guild.id] = {};
-        config[message.guild.id].roomsCategoryId = categoryId;
+        config[message.guild.id].roomsCategoryId = id;
         saveRoomConfig(config);
-        return message.reply(`**✅ تم تحديد كاتوقري الرومات الخاصة بنجاح: \`${category.name}\`**`);
+        return message.reply(`**✅ تم تحديد كاتوقري الرومات: \`${cat.name}\`**`);
     }
 
-    if (subCommand === 'sub' && args[1]?.toLowerCase() === 'req') {
+    if (sub === 'sub' && args[1]?.toLowerCase() === 'req') {
         if (!BOT_OWNERS.includes(message.author.id) && !message.member.permissions.has(PermissionFlagsBits.Administrator)) return message.react('❌');
-        const channelId = args[2]?.replace(/[<#>]/g, '');
-        if (!channelId) return message.reply('**الرجاء منشن القناة أو وضع الـ ID**');
-        const channel = message.guild.channels.cache.get(channelId);
-        if (!channel) return message.reply('**القناة غير موجودة**');
+        const id = args[2]?.replace(/[<#>]/g, '');
+        if (!message.guild.channels.cache.has(id)) return message.reply('**قناة غير موجودة**');
         const config = loadRoomConfig();
         if (!config[message.guild.id]) config[message.guild.id] = {};
-        config[message.guild.id].requestChannelId = channelId;
+        config[message.guild.id].requestChannelId = id;
         saveRoomConfig(config);
-        return message.reply(`**✅ تم تحديد قناة طلبات الرومات بنجاح: <#${channelId}>**`);
+        return message.reply(`**✅ تم تحديد قناة الطلبات: <#${id}>**`);
     }
 
-    if (subCommand === 'list') {
-        const result = generateRoomsListEmbed(message.guild, 'names');
-        if (!result) return message.reply('**الرجاء ضبط الكاتوقري أولاً.**');
-
-        const embed = colorManager.createEmbed()
-            .setTitle('**نظام الرومات الخاصة**')
-            .setDescription('**اختر طريقة عرض الرومات:**')
-            .setFooter({ text: `By Ahmed.`, iconURL: message.guild.iconURL({ dynamic: true }) });
-
+    if (sub === 'list') {
+        const res = generateRoomsListEmbed(message.guild, 'names');
+        if (!res) return message.reply('**الرجاء ضبط الكاتوقري أولاً.**');
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId('rooms_list_names').setLabel('عرض بالأسماء').setStyle(ButtonStyle.Primary),
             new ButtonBuilder().setCustomId('rooms_list_numbers').setLabel('عرض بالأرقام').setStyle(ButtonStyle.Secondary)
         );
-
-        const sentMessage = await message.channel.send({ embeds: [embed], components: [row] });
-        const collector = sentMessage.createMessageComponentCollector({ filter: i => i.user.id === message.author.id, time: 60000 });
-
-        collector.on('collect', async i => {
-            const displayType = i.customId === 'rooms_list_names' ? 'names' : 'numbers';
-            const listResult = generateRoomsListEmbed(message.guild, displayType);
-            
-            const controlRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId(`request_room_btn_${displayType}`).setLabel('طلب روم متاح').setStyle(ButtonStyle.Success)
-            );
-
-            await i.update({ embeds: [listResult.embed], components: [controlRow] });
+        const msg = await message.channel.send({ embeds: [colorManager.createEmbed().setTitle('**نظام الرومات الخاصة**').setDescription('**اختر طريقة العرض:**')], components: [row] });
+        const coll = msg.createMessageComponentCollector({ filter: i => i.user.id === message.author.id, time: 60000 });
+        coll.on('collect', async i => {
+            const type = i.customId === 'rooms_list_names' ? 'names' : 'numbers';
+            const list = generateRoomsListEmbed(message.guild, type);
+            const btnRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`request_room_btn_${type}`).setLabel('طلب روم متاح').setStyle(ButtonStyle.Success));
+            await i.update({ embeds: [list.embed], components: [btnRow] });
         });
         return;
     }
 
-    if (subCommand === 'control') {
-        const owners = loadRoomOwners();
-        const guildOwners = owners[message.guild.id] || {};
-        let userRoomId = null;
-        for (const [roomId, ownerId] of Object.entries(guildOwners)) {
-            if (ownerId === message.author.id) { userRoomId = roomId; break; }
-        }
-        if (!userRoomId) return message.reply('**❌ أنت لا تملك أي روم خاص حالياً**');
-        const room = message.guild.channels.cache.get(userRoomId);
-        if (!room) return message.reply('**❌ الروم الخاص بك غير موجود**');
+    if (sub === 'control') {
+        const owners = loadRoomOwners()[message.guild.id] || {};
+        const roomId = Object.keys(owners).find(id => owners[id] === message.author.id);
+        if (!roomId) return message.reply('**❌ لا تملك روماً خاصاً**');
+        const room = message.guild.channels.cache.get(roomId);
+        if (!room) return message.reply('**❌ الروم غير موجود**');
 
-        const controlEmbed = colorManager.createEmbed()
+        const embed = colorManager.createEmbed()
             .setTitle('**🎮 لوحة تحكم الروم الخاص**')
-            .setDescription(`**أهلاً بك في لوحة التحكم الخاصة برومك: <#${room.id}>**`)
+            .setDescription(`**الروم:** <#${room.id}>\n**المالك:** <@${message.author.id}>\n\nاستخدم الأزرار أدناه للتحكم الكامل في رومك:`)
             .addFields(
-                { name: '🔒 القفل', value: 'لقفل أو فتح الروم', inline: true },
-                { name: '👁️ الرؤية', value: 'إظهار أو إخفاء الروم', inline: true },
-                { name: '👥 العدد', value: 'تحديد عدد الأشخاص', inline: true },
-                { name: '📝 الاسم', value: 'تغيير اسم الروم', inline: true },
-                { name: '🚫 المنع', value: 'منع عضو من الدخول', inline: true },
-                { name: '👑 الملكية', value: 'نقل ملكية الروم', inline: true }
+                { name: '🔒 الخصوصية', value: '`قفل/فتح` | `إظهار/إخفاء`', inline: true },
+                { name: '⚙️ الإعدادات', value: '`تغيير الاسم` | `تحديد العدد`', inline: true },
+                { name: '🚫 الإدارة', value: '`منع` | `طرد` | `سحب`', inline: true },
+                { name: '👑 الملكية', value: '`نقل الملكية`', inline: true }
             );
 
-        const row1 = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`room_lock_${room.id}`).setLabel('قفل/فتح').setStyle(ButtonStyle.Secondary).setEmoji('🔒'),
-            new ButtonBuilder().setCustomId(`room_visibility_${room.id}`).setLabel('إظهار/إخفاء').setStyle(ButtonStyle.Secondary).setEmoji('👁️'),
-            new ButtonBuilder().setCustomId(`room_limit_${room.id}`).setLabel('تحديد العدد').setStyle(ButtonStyle.Secondary).setEmoji('👥')
+        const r1 = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`rc_lock_${room.id}`).setLabel('قفل/فتح').setStyle(ButtonStyle.Secondary).setEmoji('🔒'),
+            new ButtonBuilder().setCustomId(`rc_vis_${room.id}`).setLabel('إظهار/إخفاء').setStyle(ButtonStyle.Secondary).setEmoji('👁️'),
+            new ButtonBuilder().setCustomId(`rc_name_${room.id}`).setLabel('تغيير الاسم').setStyle(ButtonStyle.Primary).setEmoji('📝'),
+            new ButtonBuilder().setCustomId(`rc_limit_${room.id}`).setLabel('العدد').setStyle(ButtonStyle.Primary).setEmoji('👥')
+        );
+        const r2 = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`rc_ban_${room.id}`).setLabel('منع').setStyle(ButtonStyle.Danger).setEmoji('🚫'),
+            new ButtonBuilder().setCustomId(`rc_kick_${room.id}`).setLabel('طرد').setStyle(ButtonStyle.Danger).setEmoji('👢'),
+            new ButtonBuilder().setCustomId(`rc_pull_${room.id}`).setLabel('سحب').setStyle(ButtonStyle.Success).setEmoji('🎣'),
+            new ButtonBuilder().setCustomId(`rc_own_${room.id}`).setLabel('نقل ملكية').setStyle(ButtonStyle.Success).setEmoji('👑')
         );
 
-        const row2 = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`room_rename_${room.id}`).setLabel('تغيير الاسم').setStyle(ButtonStyle.Primary).setEmoji('📝'),
-            new ButtonBuilder().setCustomId(`room_kick_${room.id}`).setLabel('سحب/طرد').setStyle(ButtonStyle.Danger).setEmoji('👢'),
-            new ButtonBuilder().setCustomId(`room_transfer_${room.id}`).setLabel('نقل الملكية').setStyle(ButtonStyle.Success).setEmoji('👑')
-        );
-
-        return message.channel.send({ embeds: [controlEmbed], components: [row1, row2] });
+        return message.channel.send({ embeds: [embed], components: [r1, r2] });
     }
 
+    // الوظائف الأصلية
     const member = await message.guild.members.fetch(message.author.id);
     if (!member.permissions.has(PermissionFlagsBits.Administrator)) return message.react('❌');
-    if (args[0] && args[0].toLowerCase() === 'admin') return await showAdminRolesActivity(message, client, ADMIN_ROLES);
-
-    let targetRole = message.mentions.roles.first();
-    let targetUser = message.mentions.users.first();
+    if (args[0]?.toLowerCase() === 'admin') return await showAdminRolesActivity(message, client, ADMIN_ROLES);
+    let targetRole = message.mentions.roles.first(), targetUser = message.mentions.users.first();
     if (!targetRole && !targetUser && args[0]) {
-        const id = args[0];
-        try { targetRole = await message.guild.roles.fetch(id); } catch (error) {}
-        if (!targetRole) { try { const fetchedMember = await message.guild.members.fetch(id); targetUser = fetchedMember.user; } catch (error) {} }
+        try { targetRole = await message.guild.roles.fetch(args[0]); } catch (e) {}
+        if (!targetRole) { try { targetUser = (await message.guild.members.fetch(args[0])).user; } catch (e) {} }
     }
-
-    if (!targetRole && !targetUser) {
-        const embed = colorManager.createEmbed()
-            .setTitle('**Rooms System**')
-            .setDescription('**أوامر الرومات الخاصة:**\n`rooms sub ctg <ID>` - ضبط الكاتوقري\n`rooms sub req <#channel>` - ضبط قناة الطلبات\n`rooms list` - عرض قائمة الرومات\n`rooms control` - لوحة تحكم رومك')
-            .setFooter({ text: `By Ahmed.` });
-        await message.channel.send({ embeds: [embed] });
-        return;
-    }
-
-    if (targetUser) await showUserActivity(message, targetUser, client);
-    else await showRoleActivity(message, targetRole, client);
+    if (!targetRole && !targetUser) return message.reply('**أوامر الرومات:** `sub ctg`, `sub req`, `list`, `control`');
+    if (targetUser) await showUserActivity(message, targetUser, client); else await showRoleActivity(message, targetRole, client);
 }
 
 async function handleInteractions(interaction, { BOT_OWNERS }) {
     if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
+    const owners = loadRoomOwners(), guildOwners = owners[interaction.guild.id] || {};
+    const rejected = loadRejectedRequests(), guildRejected = rejected[interaction.guild.id] || {};
 
-    const owners = loadRoomOwners();
-    const guildOwners = owners[interaction.guild.id] || {};
-    const rejected = loadRejectedRequests();
-    const guildRejected = rejected[interaction.guild.id] || {};
-
-    // معالجة زر طلب روم
     if (interaction.isButton() && interaction.customId.startsWith('request_room_btn_')) {
-        const displayType = interaction.customId.split('_')[3];
-        const result = generateRoomsListEmbed(interaction.guild, displayType);
-        if (result.availableRooms.length === 0) return interaction.reply({ content: '**❌ لا توجد رومات متاحة حالياً**', ephemeral: true });
-        
-        const selectMenu = new StringSelectMenuBuilder()
-            .setCustomId(`select_room_to_request_${displayType}_${interaction.message.id}`)
-            .setPlaceholder('اختر الروم الذي تريد طلبه')
-            .addOptions(result.availableRooms.slice(0, 25));
-
-        const menuRow = new ActionRowBuilder().addComponents(selectMenu);
-        await interaction.reply({ content: '**اختر الروم من القائمة أدناه:**', components: [menuRow], ephemeral: true });
-        return;
+        const type = interaction.customId.split('_')[3], res = generateRoomsListEmbed(interaction.guild, type);
+        if (res.availableRooms.length === 0) return interaction.reply({ content: '**❌ لا توجد رومات متاحة**', ephemeral: true });
+        const menu = new StringSelectMenuBuilder().setCustomId(`sel_req_${type}_${interaction.message.id}`).setPlaceholder('اختر الروم').addOptions(res.availableRooms.slice(0, 25));
+        await interaction.reply({ content: '**اختر الروم:**', components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
     }
 
-    // معالجة اختيار الروم من المنيو
-    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('select_room_to_request_')) {
-        const parts = interaction.customId.split('_');
-        const displayType = parts[4];
-        const listMessageId = parts[5];
-        const roomId = interaction.values[0];
-
-        // التحقق من الرفض السابق
-        if (guildRejected[interaction.user.id] && guildRejected[interaction.user.id].includes(roomId)) {
-            return interaction.update({ content: '**❌ لقد تم رفض طلبك لهذا الروم مسبقاً، لا يمكنك التقديم عليه مرة أخرى.**', components: [], ephemeral: true });
-        }
-
-        const config = loadRoomConfig();
-        const reqChannelId = config[interaction.guild.id]?.requestChannelId;
-        if (!reqChannelId) return interaction.update({ content: '**❌ لم يتم تحديد قناة الطلبات بعد**', components: [], ephemeral: true });
-        const reqChannel = interaction.guild.channels.cache.get(reqChannelId);
-        if (!reqChannel) return interaction.update({ content: '**❌ قناة الطلبات غير موجودة**', components: [], ephemeral: true });
-
-        const requestEmbed = colorManager.createEmbed()
-            .setTitle('**🆕 طلب روم جديد**')
-            .setDescription(`**المستخدم:** <@${interaction.user.id}>\n**الروم المطلوب:** <#${roomId}>\n\n**اضغط على الأزرار أدناه للقبول أو الرفض**`)
-            .setFooter({ text: `Room ID: ${roomId} | User ID: ${interaction.user.id} | Msg: ${listMessageId} | Type: ${displayType}` });
-
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('sel_req_')) {
+        const parts = interaction.customId.split('_'), type = parts[2], msgId = parts[3], roomId = interaction.values[0];
+        if (guildRejected[interaction.user.id]?.includes(roomId)) return interaction.update({ content: '**❌ تم رفض طلبك لهذا الروم مسبقاً**', components: [], ephemeral: true });
+        const reqId = loadRoomConfig()[interaction.guild.id]?.requestChannelId, reqChan = interaction.guild.channels.cache.get(reqId);
+        if (!reqChan) return interaction.update({ content: '**❌ قناة الطلبات غير مضبوطة**', components: [], ephemeral: true });
+        const emb = colorManager.createEmbed().setTitle('**🆕 طلب روم**').setDescription(`**المستخدم:** <@${interaction.user.id}>\n**الروم:** <#${roomId}>`).setFooter({ text: `ID: ${roomId}|U:${interaction.user.id}|M:${msgId}|T:${type}` });
         const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`approve_room_${interaction.user.id}_${roomId}_${listMessageId}_${displayType}`).setLabel('قبول').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId(`reject_room_${interaction.user.id}_${roomId}`).setLabel('رفض').setStyle(ButtonStyle.Danger)
+            new ButtonBuilder().setCustomId(`app_r_${interaction.user.id}_${roomId}_${msgId}_${type}`).setLabel('قبول').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId(`rej_r_${interaction.user.id}_${roomId}`).setLabel('رفض').setStyle(ButtonStyle.Danger)
         );
-
-        await reqChannel.send({ embeds: [requestEmbed], components: [row] });
-        return interaction.update({ content: '**✅ تم إرسال طلبك للإدارة بنجاح**', components: [], ephemeral: true });
+        await reqChan.send({ embeds: [emb], components: [row] });
+        await interaction.update({ content: '**✅ تم إرسال طلبك**', components: [], ephemeral: true });
     }
 
-    // معالجة قبول/رفض الطلب
-    if (interaction.isButton() && (interaction.customId.startsWith('approve_room_') || interaction.customId.startsWith('reject_room_'))) {
-        if (!BOT_OWNERS.includes(interaction.user.id) && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-            return interaction.reply({ content: '**❌ هذا الزر مخصص للإدارة فقط**', ephemeral: true });
-        }
-
-        const parts = interaction.customId.split('_');
-        const action = parts[0];
-        const userId = parts[2];
-        const roomId = parts[3];
-
-        if (action === 'approve') {
-            const listMessageId = parts[4];
-            const displayType = parts[5];
-            
-            guildOwners[roomId] = userId;
-            owners[interaction.guild.id] = guildOwners;
-            saveRoomOwners(owners);
-
-            const room = interaction.guild.channels.cache.get(roomId);
-            if (room) {
-                await room.permissionOverwrites.edit(userId, { ManageChannels: true, Connect: true, Speak: true, MuteMembers: true, DeafenMembers: true, MoveMembers: true });
+    if (interaction.isButton() && (interaction.customId.startsWith('app_r_') || interaction.customId.startsWith('rej_r_'))) {
+        if (!BOT_OWNERS.includes(interaction.user.id) && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) return interaction.reply({ content: '**للإدارة فقط**', ephemeral: true });
+        const p = interaction.customId.split('_'), act = p[0], uId = p[2], rId = p[3];
+        if (act === 'app') {
+            guildOwners[rId] = uId; owners[interaction.guild.id] = guildOwners; saveRoomOwners(owners);
+            const room = interaction.guild.channels.cache.get(rId);
+            if (room) await room.permissionOverwrites.edit(uId, { ManageChannels: true, Connect: true, Speak: true, MuteMembers: true, DeafenMembers: true, MoveMembers: true });
+            await interaction.update({ content: `**✅ تم القبول لـ <@${uId}>**`, embeds: [], components: [] });
+            const listMsg = await interaction.channel.messages.fetch(p[4]).catch(() => null);
+            if (listMsg) {
+                const up = generateRoomsListEmbed(interaction.guild, p[5]);
+                await listMsg.edit({ embeds: [up.embed], components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`request_room_btn_${p[5]}`).setLabel('طلب روم متاح').setStyle(ButtonStyle.Success))] });
             }
-
-            await interaction.update({ content: `**✅ تم قبول طلب <@${userId}> للروم <#${roomId}>**`, embeds: [], components: [] });
-            
-            // تحديث رسالة القائمة تلقائياً
-            try {
-                const listChannel = interaction.channel; // نفترض أنها في نفس القناة أو نحتاج لتخزين الـ ID
-                const listMsg = await listChannel.messages.fetch(listMessageId).catch(() => null);
-                if (listMsg) {
-                    const updatedResult = generateRoomsListEmbed(interaction.guild, displayType);
-                    const updatedRow = new ActionRowBuilder().addComponents(
-                        new ButtonBuilder().setCustomId(`request_room_btn_${displayType}`).setLabel('طلب روم متاح').setStyle(ButtonStyle.Success)
-                    );
-                    await listMsg.edit({ embeds: [updatedResult.embed], components: [updatedRow] });
-                }
-            } catch (e) {}
-
-            try {
-                const user = await interaction.client.users.fetch(userId);
-                await user.send(`**🎉 مبروك! تم قبول طلبك للروم <#${roomId}>.**`);
-            } catch (e) {}
         } else {
-            // تسجيل الرفض
-            if (!guildRejected[userId]) guildRejected[userId] = [];
-            if (!guildRejected[userId].includes(roomId)) guildRejected[userId].push(roomId);
-            rejected[interaction.guild.id] = guildRejected;
-            saveRejectedRequests(rejected);
-
-            await interaction.update({ content: `**❌ تم رفض طلب <@${userId}> للروم <#${roomId}> ولن يتمكن من التقديم عليه مجدداً.**`, embeds: [], components: [] });
+            if (!guildRejected[uId]) guildRejected[uId] = []; guildRejected[uId].push(rId);
+            rejected[interaction.guild.id] = guildRejected; saveRejectedRequests(rejected);
+            await interaction.update({ content: `**❌ تم الرفض لـ <@${uId}>**`, embeds: [], components: [] });
         }
-        return;
     }
 
-    // معالجة أزرار لوحة التحكم
-    if (interaction.isButton() && interaction.customId.startsWith('room_')) {
-        const parts = interaction.customId.split('_');
-        const action = parts[1];
-        const roomId = parts[2];
-        if (guildOwners[roomId] !== interaction.user.id) return interaction.reply({ content: '**❌ أنت لست صاحب هذا الروم**', ephemeral: true });
-        const room = interaction.guild.channels.cache.get(roomId);
-        if (!room) return interaction.reply({ content: '**❌ الروم غير موجود**', ephemeral: true });
+    if (interaction.isButton() && interaction.customId.startsWith('rc_')) {
+        const p = interaction.customId.split('_'), act = p[1], rId = p[2];
+        if (guildOwners[rId] !== interaction.user.id) return interaction.reply({ content: '**لست صاحب الروم**', ephemeral: true });
+        const room = interaction.guild.channels.cache.get(rId);
+        if (!room) return interaction.reply({ content: '**الروم غير موجود**', ephemeral: true });
 
-        switch (action) {
+        switch (act) {
             case 'lock':
-                const isLocked = room.permissionOverwrites.cache.get(interaction.guild.roles.everyone.id)?.deny.has(PermissionFlagsBits.Connect);
-                await room.permissionOverwrites.edit(interaction.guild.roles.everyone, { Connect: isLocked ? null : false });
-                await interaction.reply({ content: `**✅ تم ${isLocked ? 'فتح' : 'قفل'} الروم بنجاح**`, ephemeral: true });
+                const lock = room.permissionOverwrites.cache.get(interaction.guild.roles.everyone.id)?.deny.has(PermissionFlagsBits.Connect);
+                await room.permissionOverwrites.edit(interaction.guild.roles.everyone, { Connect: lock ? null : false });
+                await interaction.reply({ content: `**✅ تم ${lock ? 'فتح' : 'قفل'} الروم**`, ephemeral: true });
                 break;
-            case 'visibility':
-                const isHidden = room.permissionOverwrites.cache.get(interaction.guild.roles.everyone.id)?.deny.has(PermissionFlagsBits.ViewChannel);
-                await room.permissionOverwrites.edit(interaction.guild.roles.everyone, { ViewChannel: isHidden ? null : false });
-                await interaction.reply({ content: `**✅ تم ${isHidden ? 'إظهار' : 'إخفاء'} الروم بنجاح**`, ephemeral: true });
+            case 'vis':
+                const vis = room.permissionOverwrites.cache.get(interaction.guild.roles.everyone.id)?.deny.has(PermissionFlagsBits.ViewChannel);
+                await room.permissionOverwrites.edit(interaction.guild.roles.everyone, { ViewChannel: vis ? null : false });
+                await interaction.reply({ content: `**✅ تم ${vis ? 'إظهار' : 'إخفاء'} الروم**`, ephemeral: true });
+                break;
+            case 'name':
+                await interaction.reply({ content: '**أرسل الاسم الجديد الآن:**', ephemeral: true });
+                const nColl = interaction.channel.createMessageCollector({ filter: m => m.author.id === interaction.user.id, time: 15000, max: 1 });
+                nColl.on('collect', async m => { await room.setName(m.content); await m.reply('**✅ تم تغيير الاسم**'); await m.delete().catch(() => {}); });
                 break;
             case 'limit':
-                await interaction.reply({ content: '**يرجى كتابة العدد المطلوب (0-99) في الشات الآن:**', ephemeral: true });
-                const filter = m => m.author.id === interaction.user.id && !isNaN(m.content) && m.content >= 0 && m.content <= 99;
-                const collector = interaction.channel.createMessageCollector({ filter, time: 15000, max: 1 });
-                collector.on('collect', async m => {
-                    await room.setUserLimit(parseInt(m.content));
-                    await m.reply(`**✅ تم تحديد عدد الأشخاص بـ ${m.content}**`);
-                    await m.delete().catch(() => {});
+                await interaction.reply({ content: '**أرسل العدد (0-99):**', ephemeral: true });
+                const lColl = interaction.channel.createMessageCollector({ filter: m => m.author.id === interaction.user.id && !isNaN(m.content), time: 15000, max: 1 });
+                lColl.on('collect', async m => { await room.setUserLimit(parseInt(m.content)); await m.reply('**✅ تم تحديد العدد**'); await m.delete().catch(() => {}); });
+                break;
+            case 'ban':
+                await interaction.reply({ content: '**منشن العضو لمنعه:**', ephemeral: true });
+                const bColl = interaction.channel.createMessageCollector({ filter: m => m.author.id === interaction.user.id && m.mentions.users.first(), time: 15000, max: 1 });
+                bColl.on('collect', async m => {
+                    const target = m.mentions.users.first();
+                    await room.permissionOverwrites.edit(target, { Connect: false });
+                    if (room.members.has(target.id)) await interaction.guild.members.cache.get(target.id).voice.disconnect();
+                    await m.reply(`**✅ تم منع <@${target.id}>**`); await m.delete().catch(() => {});
+                });
+                break;
+            case 'kick':
+                if (room.members.size === 0) return interaction.reply({ content: '**الروم فارغ**', ephemeral: true });
+                const menu = new StringSelectMenuBuilder().setCustomId(`kick_sel_${rId}`).setPlaceholder('اختر العضو لطرده').addOptions(room.members.map(m => ({ label: m.displayName, value: m.id })));
+                await interaction.reply({ content: '**اختر العضو:**', components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
+                break;
+            case 'pull':
+                await interaction.reply({ content: '**منشن العضو لسحبه:**', ephemeral: true });
+                const pColl = interaction.channel.createMessageCollector({ filter: m => m.author.id === interaction.user.id && m.mentions.users.first(), time: 15000, max: 1 });
+                pColl.on('collect', async m => {
+                    const target = m.mentions.members.first();
+                    if (!target.voice.channel) return m.reply('**العضو ليس في روم صوتي**');
+                    await target.voice.setChannel(room); await m.reply(`**✅ تم سحب <@${target.id}>**`); await m.delete().catch(() => {});
+                });
+                break;
+            case 'own':
+                await interaction.reply({ content: '**منشن المالك الجديد:**', ephemeral: true });
+                const oColl = interaction.channel.createMessageCollector({ filter: m => m.author.id === interaction.user.id && m.mentions.users.first(), time: 15000, max: 1 });
+                oColl.on('collect', async m => {
+                    const target = m.mentions.users.first();
+                    guildOwners[rId] = target.id; owners[interaction.guild.id] = guildOwners; saveRoomOwners(owners);
+                    await room.permissionOverwrites.edit(target, { ManageChannels: true, Connect: true, Speak: true });
+                    await room.permissionOverwrites.delete(interaction.user.id);
+                    await m.reply(`**✅ تم نقل الملكية لـ <@${target.id}>**`); await m.delete().catch(() => {});
                 });
                 break;
         }
     }
+
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('kick_sel_')) {
+        const rId = interaction.customId.split('_')[2], targetId = interaction.values[0], room = interaction.guild.channels.cache.get(rId);
+        if (room && room.members.has(targetId)) {
+            await interaction.guild.members.cache.get(targetId).voice.disconnect();
+            await interaction.update({ content: `**✅ تم طرد العضو من الروم**`, components: [], ephemeral: true });
+        }
+    }
 }
 
-async function showUserActivity(message, user, client) {
-    try {
-        const activity = await getUserActivity(user.id);
-        let lastVoiceInfo = '**No Data**';
-        if (activity.lastVoiceChannel) {
-            const voiceChannel = message.guild.channels.cache.find(ch => ch.name === activity.lastVoiceChannel);
-            lastVoiceInfo = `${voiceChannel ? `<#${voiceChannel.id}>` : `**${activity.lastVoiceChannel}**`} - \`${formatTimeSince(activity.lastVoiceTime)}\``;
-        }
-        let lastMessageInfo = '**No Data**';
-        if (activity.lastMessageChannel) {
-            const textChannel = message.guild.channels.cache.find(ch => ch.name === activity.lastMessageChannel);
-            lastMessageInfo = `${textChannel ? `<#${textChannel.id}>` : `**${activity.lastMessageChannel}**`} - \`${formatTimeSince(activity.lastMessageTime)}\``;
-        }
-        const embed = colorManager.createEmbed().setTitle(`**User Activity**`).setThumbnail(user.displayAvatarURL({ dynamic: true })).setDescription(`** User :** ${user}`).addFields([{ name: '**<:emoji_7:1429246526949036212> Last voice room **', value: lastVoiceInfo, inline: false }, { name: '**<:emoji_8:1429246555726020699> Last Text Room**', value: lastMessageInfo, inline: false }]).setFooter({ text: `By Ahmed.`, iconURL: message.guild.iconURL({ dynamic: true }) }).setTimestamp();
-        await message.channel.send({ embeds: [embed] });
-    } catch (error) { await message.channel.send({ content: '**حدث خطأ أثناء جلب البيانات**' }); }
+async function showUserActivity(m, u, c) {
+    const a = await getUserActivity(u.id);
+    const emb = colorManager.createEmbed().setTitle('**User Activity**').setThumbnail(u.displayAvatarURL({ dynamic: true })).setDescription(`**User:** ${u}`).addFields([{ name: 'Last Voice', value: a.lastVoiceChannel ? `${a.lastVoiceChannel} - ${formatTimeSince(a.lastVoiceTime)}` : 'No Data' }, { name: 'Last Text', value: a.lastMessageChannel ? `${a.lastMessageChannel} - ${formatTimeSince(a.lastMessageTime)}` : 'No Data' }]);
+    await m.channel.send({ embeds: [emb] });
 }
 
-async function showAdminRolesActivity(message, client, ADMIN_ROLES) {
-    try {
-        const allAdminMembers = new Map();
-        for (const roleId of ADMIN_ROLES) {
-            try {
-                const role = await message.guild.roles.fetch(roleId);
-                if (role && role.members) { for (const [memberId, member] of role.members) { if (!member.user.bot) allAdminMembers.set(memberId, member); } }
-            } catch (error) {}
-        }
-        if (allAdminMembers.size === 0) {
-            const embed = colorManager.createEmbed().setDescription('**No Admins يادلخ**').setThumbnail(client.user.displayAvatarURL({ format: 'png', size: 128 }));
-            await message.channel.send({ embeds: [embed] });
-            return;
-        }
-        const memberActivities = [];
-        for (const [userId, member] of allAdminMembers) {
-            const activity = await getUserActivity(userId);
-            const totalActivity = activity.totalMessages + (activity.totalVoiceTime / 60000);
-            memberActivities.push({ member, activity, totalActivity, xp: Math.floor(activity.totalMessages / 10) });
-        }
-        memberActivities.sort((a, b) => b.totalActivity - a.totalActivity);
-        let currentPage = 0;
-        const itemsPerPage = 10;
-        const totalPages = Math.ceil(memberActivities.length / itemsPerPage);
-        const generateEmbed = (page) => {
-            const start = page * itemsPerPage;
-            const end = Math.min(start + itemsPerPage, memberActivities.length);
-            const pageMembers = memberActivities.slice(start, end);
-            const embed = colorManager.createEmbed().setTitle(`**Rooms : Admin Roles**`).setDescription(`** All members :** ${memberActivities.length}`).setFooter({ text: `By Ahmed. | صفحة ${page + 1} من ${totalPages}`, iconURL: message.guild.iconURL({ dynamic: true }) }).setTimestamp();
-            pageMembers.forEach((data, index) => {
-                const globalRank = start + index + 1;
-                const member = data.member;
-                const activity = data.activity;
-                let lastVoiceInfo = '**No Data**';
-                if (activity.lastVoiceChannel) {
-                    const voiceChannel = message.guild.channels.cache.find(ch => ch.name === activity.lastVoiceChannel);
-                    lastVoiceInfo = `${voiceChannel ? `<#${voiceChannel.id}>` : `**${activity.lastVoiceChannel}**`} - \`${formatTimeSince(activity.lastVoiceTime)}\``;
-                }
-                let lastMessageInfo = '**No Data**';
-                if (activity.lastMessageChannel) {
-                    const textChannel = message.guild.channels.cache.find(ch => ch.name === activity.lastMessageChannel);
-                    lastMessageInfo = `${textChannel ? `<#${textChannel.id}>` : `**${activity.lastMessageChannel}**`} - \`${formatTimeSince(activity.lastMessageTime)}\``;
-                }
-                embed.addFields([{ name: `**#${globalRank} - ${member.displayName}**`, value: `> **<:emoji_7:1429246526949036212> Last Voice :** ${lastVoiceInfo}\n` + `> **<:emoji_8:1429246555726020699> Last Text :** ${lastMessageInfo}`, inline: false }]);
-            });
-            return embed;
-        };
-        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('prev').setLabel('السابق').setStyle(ButtonStyle.Primary).setDisabled(true), new ButtonBuilder().setCustomId('next').setLabel('التالي').setStyle(ButtonStyle.Primary).setDisabled(totalPages <= 1), new ButtonBuilder().setCustomId('notify').setLabel('تنبيه').setStyle(ButtonStyle.Danger));
-        const sentMessage = await message.channel.send({ embeds: [generateEmbed(0)], components: [row] });
-        const collector = sentMessage.createMessageComponentCollector({ filter: i => i.user.id === message.author.id, time: 300000 });
-        collector.on('collect', async interaction => {
-            if (interaction.customId === 'prev') currentPage--;
-            else if (interaction.customId === 'next') currentPage++;
-            if (interaction.customId === 'prev' || interaction.customId === 'next') {
-                const newRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('prev').setLabel('السابق').setStyle(ButtonStyle.Primary).setDisabled(currentPage === 0), new ButtonBuilder().setCustomId('next').setLabel('التالي').setStyle(ButtonStyle.Primary).setDisabled(currentPage === totalPages - 1), new ButtonBuilder().setCustomId('notify').setLabel('تنبيه').setStyle(ButtonStyle.Danger));
-                await interaction.update({ embeds: [generateEmbed(currentPage)], components: [newRow] });
-            }
-        });
-    } catch (error) { await message.channel.send({ content: '**حدث خطأ أثناء جلب البيانات**' }); }
+async function showAdminRolesActivity(m, c, r) {
+    const admins = new Map();
+    for (const id of r) { const role = await m.guild.roles.fetch(id); if (role) role.members.forEach(mem => { if (!mem.user.bot) admins.set(mem.id, mem); }); }
+    const acts = []; for (const [id, mem] of admins) { const a = await getUserActivity(id); acts.push({ mem, a, total: a.totalMessages + (a.totalVoiceTime / 60000) }); }
+    acts.sort((a, b) => b.total - a.total);
+    const emb = colorManager.createEmbed().setTitle('**Admin Activity**').setDescription(acts.slice(0, 10).map((d, i) => `**#${i + 1} - ${d.mem.displayName}**`).join('\n'));
+    await m.channel.send({ embeds: [emb] });
 }
 
-async function showRoleActivity(message, role, client) {
-    try {
-        const members = role.members;
-        if (members.size === 0) {
-            const embed = colorManager.createEmbed().setDescription('**No one in the role**').setThumbnail(client.user.displayAvatarURL({ format: 'png', size: 128 }));
-            await message.channel.send({ embeds: [embed] });
-            return;
-        }
-        const memberActivities = [];
-        for (const [userId, member] of members) {
-            if (member.user.bot) continue;
-            const activity = await getUserActivity(userId);
-            const totalActivity = activity.totalMessages + (activity.totalVoiceTime / 60000);
-            memberActivities.push({ member, activity, totalActivity, xp: Math.floor(activity.totalMessages / 10) });
-        }
-        memberActivities.sort((a, b) => b.totalActivity - a.totalActivity);
-        let currentPage = 0;
-        const itemsPerPage = 10;
-        const totalPages = Math.ceil(memberActivities.length / itemsPerPage);
-        const generateEmbed = (page) => {
-            const start = page * itemsPerPage;
-            const end = Math.min(start + itemsPerPage, memberActivities.length);
-            const pageMembers = memberActivities.slice(start, end);
-            const embed = colorManager.createEmbed().setTitle(`**Rooms : ${role.name}**`).setDescription(`** All members :** ${memberActivities.length}`).setFooter({ text: `By Ahmed. | صفحة ${page + 1} من ${totalPages}`, iconURL: message.guild.iconURL({ dynamic: true }) }).setTimestamp();
-            pageMembers.forEach((data, index) => {
-                const globalRank = start + index + 1;
-                const member = data.member;
-                const activity = data.activity;
-                let lastVoiceInfo = '**No Data**';
-                if (activity.lastVoiceChannel) {
-                    const voiceChannel = message.guild.channels.cache.find(ch => ch.name === activity.lastVoiceChannel);
-                    lastVoiceInfo = `${voiceChannel ? `<#${voiceChannel.id}>` : `**${activity.lastVoiceChannel}**`} - \`${formatTimeSince(activity.lastVoiceTime)}\``;
-                }
-                let lastMessageInfo = '**No Data**';
-                if (activity.lastMessageChannel) {
-                    const textChannel = message.guild.channels.cache.find(ch => ch.name === activity.lastMessageChannel);
-                    lastMessageInfo = `${textChannel ? `<#${textChannel.id}>` : `**${activity.lastMessageChannel}**`} - \`${formatTimeSince(activity.lastMessageTime)}\``;
-                }
-                embed.addFields([{ name: `**#${globalRank} - ${member.displayName}**`, value: `> **<:emoji_7:1429246526949036212> Last Voice :** ${lastVoiceInfo}\n` + `> **<:emoji_8:1429246555726020699> Last Text :** ${lastMessageInfo}`, inline: false }]);
-            });
-            return embed;
-        };
-        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('prev').setLabel('السابق').setStyle(ButtonStyle.Primary).setDisabled(true), new ButtonBuilder().setCustomId('next').setLabel('التالي').setStyle(ButtonStyle.Primary).setDisabled(totalPages <= 1), new ButtonBuilder().setCustomId('notify').setLabel('تنبيه').setStyle(ButtonStyle.Danger));
-        const sentMessage = await message.channel.send({ embeds: [generateEmbed(0)], components: [row] });
-        const collector = sentMessage.createMessageComponentCollector({ filter: i => i.user.id === message.author.id, time: 300000 });
-        collector.on('collect', async interaction => {
-            if (interaction.customId === 'prev') currentPage--;
-            else if (interaction.customId === 'next') currentPage++;
-            if (interaction.customId === 'prev' || interaction.customId === 'next') {
-                const newRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('prev').setLabel('السابق').setStyle(ButtonStyle.Primary).setDisabled(currentPage === 0), new ButtonBuilder().setCustomId('next').setLabel('التالي').setStyle(ButtonStyle.Primary).setDisabled(currentPage === totalPages - 1), new ButtonBuilder().setCustomId('notify').setLabel('تنبيه').setStyle(ButtonStyle.Danger));
-                await interaction.update({ embeds: [generateEmbed(currentPage)], components: [newRow] });
-            }
-        });
-    } catch (error) { await message.channel.send({ content: '**حدث خطأ أثناء جلب البيانات**' }); }
+async function showRoleActivity(m, r, c) {
+    const acts = []; for (const [id, mem] of r.members) { if (!mem.user.bot) { const a = await getUserActivity(id); acts.push({ mem, a, total: a.totalMessages + (a.totalVoiceTime / 60000) }); } }
+    acts.sort((a, b) => b.total - a.total);
+    const emb = colorManager.createEmbed().setTitle(`**Role: ${r.name}**`).setDescription(acts.slice(0, 10).map((d, i) => `**#${i + 1} - ${d.mem.displayName}**`).join('\n'));
+    await m.channel.send({ embeds: [emb] });
 }
 
 module.exports = { name, execute, handleInteractions };
