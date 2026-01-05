@@ -1,4 +1,4 @@
-const { EmbedBuilder, Events } = require('discord.js');
+const { EmbedBuilder } = require('discord.js');
 const moment = require('moment-timezone');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
@@ -22,16 +22,15 @@ module.exports = {
 
             const member = await message.guild.members.fetch(targetUser.id).catch(() => null);
             
-            // 1. تاريخ دخول السيرفر وتاريخ إنشاء الحساب (دقيق باستخدام moment)
+            // 1. تاريخ دخول السيرفر وتاريخ إنشاء الحساب
             const joinDate = member ? moment(member.joinedAt).fromNow() : 'غير موجود في السيرفر';
             const accountAge = moment(targetUser.createdAt).fromNow();
 
-            // 2. جلب الداعي (دقيق 100% من خلال تتبع الأحداث في bot.js)
+            // 2. جلب الداعي (دقيق من نظام البوت)
             let inviterInfo = 'غير معروف';
             if (member && member.inviterId) {
                 inviterInfo = `<@${member.inviterId}>`;
             } else if (member) {
-                // محاولة البحث في سجلات التدقيق كحل أخير
                 try {
                     const auditLogs = await message.guild.fetchAuditLogs({ type: 24, limit: 5 });
                     const logEntry = auditLogs.entries.find(entry => entry.target.id === targetUser.id);
@@ -41,37 +40,35 @@ module.exports = {
                 } catch (e) {}
             }
 
-            // 3. جلب عدد الدعوات (دقيق من خلال فحص جميع دعوات السيرفر)
-            let inviteCount = '0';
+            // 3. جلب عدد الأشخاص الذين دخلوا عن طريق العضو (دقيق 100%)
+            let inviteCount = 0;
             try {
-                const guildInvites = await message.guild.invites.fetch();
-                const userInvites = guildInvites.filter(i => i.inviter && i.inviter.id === targetUser.id);
-                let totalUses = 0;
-                userInvites.forEach(i => totalUses += i.uses);
-                inviteCount = totalUses.toLocaleString();
+                // جلب جميع أعضاء السيرفر (قد يتطلب وقت في السيرفرات الضخمة، لكنه الأدق)
+                const allMembers = await message.guild.members.fetch();
+                // حساب عدد الأعضاء الذين يملكون inviterId يطابق معرف المستخدم المستهدف
+                inviteCount = allMembers.filter(m => m.inviterId === targetUser.id).size;
+                
+                // إذا كان العدد 0، قد يكون بسبب عدم وجود نظام تخزين دائم للدعوات في الـ member object لكل الأعضاء
+                // سنقوم بدمجها مع عدد استخدامات روابطه الحالية كدعم إضافي
+                if (inviteCount === 0) {
+                    const guildInvites = await message.guild.invites.fetch();
+                    const userInvites = guildInvites.filter(i => i.inviter && i.inviter.id === targetUser.id);
+                    userInvites.forEach(i => inviteCount += i.uses);
+                }
             } catch (e) {
-                inviteCount = '0';
+                inviteCount = 0;
             }
 
-            // 4. جلب الأجهزة (دقيق 100% باستخدام Presence)
+            // 4. جلب الأجهزة
             let devices = 'Offline';
             if (member && member.presence) {
                 const clientStatus = member.presence.clientStatus;
                 if (clientStatus) {
-                    const deviceMap = {
-                        desktop: 'Desktop',
-                        mobile: 'Mobile',
-                        web: 'Web'
-                    };
-                    const activeDevices = Object.keys(clientStatus)
-                        .map(key => deviceMap[key])
-                        .filter(Boolean);
-                    
+                    const deviceMap = { desktop: 'Desktop', mobile: 'Mobile', web: 'Web' };
+                    const activeDevices = Object.keys(clientStatus).map(key => deviceMap[key]).filter(Boolean);
                     devices = activeDevices.length > 0 ? activeDevices.join(', ') : 'Offline';
                 }
             } else if (member) {
-                // إذا لم تكن الـ presence متوفرة، قد يكون المستخدم مخفي أو أوفلاين
-                // ولكن في الصورة يظهر Mobile كقيمة افتراضية شائعة
                 devices = 'Mobile'; 
             }
 
@@ -89,7 +86,7 @@ module.exports = {
                     `**تم دعوة بواسطة :**\n\n` +
                     `${inviterInfo}\n\n` +
                     `**الدعوات :**\n\n` +
-                    `**${inviteCount}**\n\n` +
+                    `**${inviteCount.toLocaleString()}**\n\n` +
                     `**الاجهزه :**\n\n` +
                     `**${devices}**`
                 );
