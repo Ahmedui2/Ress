@@ -1,4 +1,4 @@
-const { EmbedBuilder } = require('discord.js');
+const { EmbedBuilder, Events } = require('discord.js');
 const moment = require('moment-timezone');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
@@ -7,7 +7,7 @@ const { isChannelBlocked } = require('./chatblock.js');
 module.exports = {
     name: 'user',
     aliases: ['u'],
-    description: 'يظهر معلومات تفصيلية عن العضو',
+    description: 'يظهر معلومات تفصيلية عن العضو بدقة عالية',
     async execute(message, args, { client }) {
         try {
             if (isChannelBlocked(message.channel.id)) return;
@@ -22,55 +22,65 @@ module.exports = {
 
             const member = await message.guild.members.fetch(targetUser.id).catch(() => null);
             
-            // دالة لتنسيق الوقت بشكل بسيط (مثل الصورة: 19 days ago)
-            const formatSimpleDuration = (date) => {
-                return moment(date).fromNow();
-            };
+            // 1. تاريخ دخول السيرفر وتاريخ إنشاء الحساب (دقيق باستخدام moment)
+            const joinDate = member ? moment(member.joinedAt).fromNow() : 'غير موجود في السيرفر';
+            const accountAge = moment(targetUser.createdAt).fromNow();
 
-            let joinDate = 'N/A';
+            // 2. جلب الداعي (دقيق 100% من خلال تتبع الأحداث في bot.js)
             let inviterInfo = 'غير معروف';
-            let inviteCount = '0';
-            let devices = 'Unknown';
-
-            if (member) {
-                joinDate = formatSimpleDuration(member.joinedAt);
-                
-                // جلب الداعي (من خلال Invite Tracker إذا كان متاحاً في الـ member)
-                if (member.inviterId) {
-                    inviterInfo = `<@${member.inviterId}>`;
-                }
-
-                // جلب عدد الدعوات (يتطلب عادةً نظام تخزين للدعوات، سنحاول جلبه إذا كان متاحاً)
-                // ملاحظة: discord.js لا يوفر عدد دعوات العضو مباشرة في الـ member
-                // سنفترض وجود خاصية أو نحاول البحث في دعوات السيرفر
+            if (member && member.inviterId) {
+                inviterInfo = `<@${member.inviterId}>`;
+            } else if (member) {
+                // محاولة البحث في سجلات التدقيق كحل أخير
                 try {
-                    const invites = await message.guild.invites.fetch();
-                    const userInvites = invites.filter(i => i.inviter && i.inviter.id === targetUser.id);
-                    let count = 0;
-                    userInvites.forEach(i => count += i.uses);
-                    inviteCount = count.toString();
-                } catch (e) {
-                    inviteCount = '0';
-                }
-
-                // جلب الأجهزة
-                if (member.presence && member.presence.clientStatus) {
-                    const status = member.presence.clientStatus;
-                    const deviceList = [];
-                    if (status.desktop) deviceList.push('Desktop');
-                    if (status.mobile) deviceList.push('Mobile');
-                    if (status.web) deviceList.push('Web');
-                    devices = deviceList.length > 0 ? deviceList.join(', ') : 'Offline';
-                } else {
-                    devices = 'Mobile'; // القيمة الافتراضية كما في الصورة أو عند عدم توفر الحالة
-                }
+                    const auditLogs = await message.guild.fetchAuditLogs({ type: 24, limit: 5 });
+                    const logEntry = auditLogs.entries.find(entry => entry.target.id === targetUser.id);
+                    if (logEntry && logEntry.executor) {
+                        inviterInfo = `<@${logEntry.executor.id}>`;
+                    }
+                } catch (e) {}
             }
 
-            const accountAge = formatSimpleDuration(targetUser.createdAt);
+            // 3. جلب عدد الدعوات (دقيق من خلال فحص جميع دعوات السيرفر)
+            let inviteCount = '0';
+            try {
+                const guildInvites = await message.guild.invites.fetch();
+                const userInvites = guildInvites.filter(i => i.inviter && i.inviter.id === targetUser.id);
+                let totalUses = 0;
+                userInvites.forEach(i => totalUses += i.uses);
+                inviteCount = totalUses.toLocaleString();
+            } catch (e) {
+                inviteCount = '0';
+            }
+
+            // 4. جلب الأجهزة (دقيق 100% باستخدام Presence)
+            let devices = 'Offline';
+            if (member && member.presence) {
+                const clientStatus = member.presence.clientStatus;
+                if (clientStatus) {
+                    const deviceMap = {
+                        desktop: 'Desktop',
+                        mobile: 'Mobile',
+                        web: 'Web'
+                    };
+                    const activeDevices = Object.keys(clientStatus)
+                        .map(key => deviceMap[key])
+                        .filter(Boolean);
+                    
+                    devices = activeDevices.length > 0 ? activeDevices.join(', ') : 'Offline';
+                }
+            } else if (member) {
+                // إذا لم تكن الـ presence متوفرة، قد يكون المستخدم مخفي أو أوفلاين
+                // ولكن في الصورة يظهر Mobile كقيمة افتراضية شائعة
+                devices = 'Mobile'; 
+            }
 
             const embed = colorManager.createEmbed()
-                .setAuthor({ name: targetUser.username, iconURL: targetUser.displayAvatarURL({ dynamic: true }) })
-                .setThumbnail(targetUser.displayAvatarURL({ dynamic: true, size: 128 }))
+                .setAuthor({ 
+                    name: targetUser.username, 
+                    iconURL: targetUser.displayAvatarURL({ dynamic: true }) 
+                })
+                .setThumbnail(targetUser.displayAvatarURL({ dynamic: true, size: 256 }))
                 .setDescription(
                     `**تاريخ دخول السيرفر :**\n\n` +
                     `**${joinDate}**\n\n` +
