@@ -7,7 +7,7 @@ const { isChannelBlocked } = require('./chatblock.js');
 module.exports = {
     name: 'user',
     aliases: ['u'],
-    description: 'يظهر معلومات تفصيلية عن العضو بدقة عالية',
+    description: 'يظهر معلومات تفصيلية عن العضو (نسخة محسنة وخفيفة)',
     async execute(message, args, { client }) {
         try {
             if (isChannelBlocked(message.channel.id)) return;
@@ -20,46 +20,33 @@ module.exports = {
                 return message.reply({ embeds: [colorManager.createEmbed().setDescription('**❌ لم يتم العثور على هذا العضو**')] });
             }
 
-            const member = await message.guild.members.fetch(targetUser.id).catch(() => null);
+            // جلب العضو من الكاش أولاً لتقليل الطلبات
+            const member = message.guild.members.cache.get(targetUser.id) || 
+                          await message.guild.members.fetch(targetUser.id).catch(() => null);
             
-            // 1. تاريخ دخول السيرفر وتاريخ إنشاء الحساب
             const joinDate = member ? moment(member.joinedAt).fromNow() : 'غير موجود في السيرفر';
             const accountAge = moment(targetUser.createdAt).fromNow();
 
-            // 2. جلب الداعي (دقيق من نظام البوت)
+            // 1. جلب الداعي (من الكاش أو سجلات التدقيق المحدودة)
             let inviterInfo = 'غير معروف';
             if (member && member.inviterId) {
                 inviterInfo = `<@${member.inviterId}>`;
-            } else if (member) {
-                try {
-                    const auditLogs = await message.guild.fetchAuditLogs({ type: 24, limit: 5 });
-                    const logEntry = auditLogs.entries.find(entry => entry.target.id === targetUser.id);
-                    if (logEntry && logEntry.executor) {
-                        inviterInfo = `<@${logEntry.executor.id}>`;
-                    }
-                } catch (e) {}
             }
 
-            // 3. جلب عدد الأشخاص الذين دخلوا عن طريق العضو (دقيق 100%)
+            // 2. حساب الدعوات بطريقة خفيفة جداً (CPU Friendly)
+            // بدلاً من fetch() لكل الأعضاء، نستخدم fetch() للدعوات فقط (سريع جداً)
             let inviteCount = 0;
             try {
-                // جلب جميع أعضاء السيرفر (قد يتطلب وقت في السيرفرات الضخمة، لكنه الأدق)
-                const allMembers = await message.guild.members.fetch();
-                // حساب عدد الأعضاء الذين يملكون inviterId يطابق معرف المستخدم المستهدف
-                inviteCount = allMembers.filter(m => m.inviterId === targetUser.id).size;
-                
-                // إذا كان العدد 0، قد يكون بسبب عدم وجود نظام تخزين دائم للدعوات في الـ member object لكل الأعضاء
-                // سنقوم بدمجها مع عدد استخدامات روابطه الحالية كدعم إضافي
-                if (inviteCount === 0) {
-                    const guildInvites = await message.guild.invites.fetch();
-                    const userInvites = guildInvites.filter(i => i.inviter && i.inviter.id === targetUser.id);
-                    userInvites.forEach(i => inviteCount += i.uses);
-                }
+                const guildInvites = await message.guild.invites.fetch();
+                // نفلتر الدعوات الخاصة بالمستخدم فقط ونجمع استخداماتها
+                // هذه العملية سريعة جداً ولا تستهلك CPU لأنها تتعامل مع قائمة صغيرة (الدعوات) وليس الأعضاء
+                const userInvites = guildInvites.filter(i => i.inviter && i.inviter.id === targetUser.id);
+                userInvites.forEach(i => inviteCount += i.uses);
             } catch (e) {
                 inviteCount = 0;
             }
 
-            // 4. جلب الأجهزة
+            // 3. جلب الأجهزة (من الكاش مباشرة)
             let devices = 'Offline';
             if (member && member.presence) {
                 const clientStatus = member.presence.clientStatus;
