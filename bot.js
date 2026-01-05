@@ -61,9 +61,37 @@ function writeJSONFile(filePath, data) {
     }
 }
 
-// تحميل البيانات مباشرة من الملفات
+// تحميل البيانات مباشرة من قاعدة البيانات والملفات
+const { dbManager } = require('./utils/database.js');
 let points = readJSONFile(DATA_FILES.points, {});
-let responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
+global.responsibilities = {};
+
+// دالة لتهيئة المسؤوليات من قاعدة البيانات
+async function initializeResponsibilities() {
+    try {
+        if (!dbManager.isInitialized) {
+            await dbManager.initialize();
+        }
+        const data = await dbManager.getResponsibilities();
+        if (data && Object.keys(data).length > 0) {
+            global.responsibilities = data;
+            console.log(`✅ تم تحميل ${Object.keys(global.responsibilities).length} مسؤولية من قاعدة البيانات`);
+        } else {
+            console.log('⚠️ قاعدة البيانات فارغة، جاري التحميل من JSON');
+            global.responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
+            
+            // Seed DB if JSON has data
+            if (Object.keys(global.responsibilities).length > 0) {
+                for (const [name, config] of Object.entries(global.responsibilities)) {
+                    await dbManager.updateResponsibility(name, config);
+                }
+            }
+        }
+    } catch (error) {
+        console.error('❌ خطأ في تحميل المسؤوليات من قاعدة البيانات:', error);
+        global.responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
+    }
+}
 let logConfig = readJSONFile(DATA_FILES.logConfig, {
     settings: {
         'RESPONSIBILITY_MANAGEMENT': { enabled: false, channelId: null },
@@ -377,9 +405,14 @@ async function saveData(force = false) {
         }
         
         // تنفيذ الحفظ بشكل متوازي وغير متزامن
+        const dbPromises = [];
+        for (const [name, config] of Object.entries(global.responsibilities)) {
+            dbPromises.push(dbManager.updateResponsibility(name, config));
+        }
+
         await Promise.all([
+            ...dbPromises,
             fs.promises.writeFile(DATA_FILES.points, JSON.stringify(points, null, 2)),
-            fs.promises.writeFile(DATA_FILES.responsibilities, JSON.stringify(responsibilities, null, 2)),
             fs.promises.writeFile(DATA_FILES.logConfig, JSON.stringify(client.logConfig || logConfig, null, 2)),
             fs.promises.writeFile(DATA_FILES.botConfig, JSON.stringify(botConfig, null, 2))
         ]);
@@ -544,7 +577,7 @@ function cleanInvalidUserIds() {
         let needsSave = false;
 
         // تنظيف responsibilities
-        for (const [respName, respData] of Object.entries(responsibilities)) {
+        for (const [respName, respData] of Object.entries(global.responsibilities)) {
             if (respData.responsibles && Array.isArray(respData.responsibles)) {
                 const validIds = respData.responsibles.filter(id => {
                     if (typeof id === 'string' && /^\d{17,19}$/.test(id)) {
@@ -555,7 +588,7 @@ function cleanInvalidUserIds() {
                         return false;
                     }
                 });
-                responsibilities[respName].responsibles = validIds;
+                global.responsibilities[respName].responsibles = validIds;
             }
         }
 
@@ -628,7 +661,102 @@ global.setupGlobalSetupCollector = setupGlobalSetupCollector;
 global.invalidateCache = invalidateCache;
 global.updateAdminRolesCache = updateAdminRolesCache;
 
+const guildInvites = new Map();
+
+client.on(Events.InviteCreate, (invite) => {
+
+    const invites = guildInvites.get(invite.guild.id);
+
+    if (invites) {
+
+        invites.set(invite.code, invite.uses);
+
+    }
+
+});
+
+client.on(Events.InviteDelete, (invite) => {
+
+    const invites = guildInvites.get(invite.guild.id);
+
+    if (invites) {
+
+        invites.delete(invite.code);
+
+    }
+
+});
+
+client.on(Events.GuildMemberAdd, async (member) => {
+
+    try {
+
+        const oldInvites = guildInvites.get(member.guild.id);
+
+        const newInvites = await member.guild.invites.fetch();
+
+        
+
+        let usedInvite = newInvites.find(inv => {
+
+            const prevUses = oldInvites?.get(inv.code) || 0;
+
+            return inv.uses > prevUses;
+
+        });
+
+        // تحديث الكاش
+
+        const inviteMap = new Map();
+
+        newInvites.forEach(inv => inviteMap.set(inv.code, inv.uses));
+
+        guildInvites.set(member.guild.id, inviteMap);
+
+        if (usedInvite) {
+
+            member.inviterId = usedInvite.inviterId;
+
+        }
+
+    } catch (error) {
+
+        console.error('❌ خطأ في تتبع دخول عضو:', error);
+
+    }
+
+});
+
 client.once(Events.ClientReady, async () => {
+
+  try {
+
+    // تهيئة كاش الدعوات
+
+    for (const guild of client.guilds.cache.values()) {
+
+        try {
+
+            const invites = await guild.invites.fetch();
+
+            const inviteMap = new Map();
+
+            invites.forEach(inv => inviteMap.set(inv.code, inv.uses));
+
+            guildInvites.set(guild.id, inviteMap);
+
+        } catch (err) {}
+
+    }
+
+    if (!dbManager.isInitialized) {
+ 
+        await dbManager.initialize();
+    }
+    global.responsibilities = await dbManager.getResponsibilities();
+  } catch (dbError) {
+    console.error('❌ Error initializing database/responsibilities:', dbError);
+  }
   console.log(`✅ تم تسجيل الدخول بنجاح باسم: ${client.user.tag}!`);
 
     // تهيئة قاعدة البيانات أولاً قبل أي شيء آخر
@@ -1085,6 +1213,32 @@ client.once(Events.ClientReady, async () => {
   // التحقق من نظام الكولداون
   const cooldownData = readJSONFile(DATA_FILES.cooldowns, {});
   console.log(`✅ نظام الكولداون جاهز - الافتراضي: ${(cooldownData.default || 60000) / 1000} ثانية`);
+
+  // Interaction Create Handler
+  client.on('interactionCreate', async interaction => {
+    try {
+      const respCommand = client.commands.get('resp');
+      if (interaction.isButton()) {
+        if (interaction.customId === 'apply_resp_button') {
+          await respCommand.handleApplyRespButton(interaction, client);
+        } else if (interaction.customId.startsWith('approve_apply_') || interaction.customId.startsWith('reject_apply_')) {
+          await respCommand.handleApplyAction(interaction, client);
+        }
+      } else if (interaction.isStringSelectMenu()) {
+        if (interaction.customId === 'apply_resp_select') {
+          await respCommand.handleApplyRespSelect(interaction, client);
+        }
+      } else if (interaction.isModalSubmit()) {
+        if (interaction.customId.startsWith('apply_resp_modal_')) {
+          await respCommand.handleApplyRespModal(interaction, client);
+        } else if (interaction.customId.startsWith('reject_reason_modal_')) {
+          await respCommand.handleRejectReasonModal(interaction, client);
+        }
+      }
+    } catch (error) {
+      console.error('Interaction Error:', error);
+    }
+  });
 
   startReminderSystem(client);
 
@@ -1754,7 +1908,49 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
             }
         }
 
-        // 3. حماية نظام الحظر من الترقيات
+        // 3. حماية نظام التقديم الإداري
+        const adminApplicationsPath = path.join(__dirname, 'data', 'adminApplications.json');
+        if (fs.existsSync(adminApplicationsPath)) {
+            try {
+                const adminApps = JSON.parse(fs.readFileSync(adminApplicationsPath, 'utf8'));
+                const adminRoles = loadAdminRoles();
+                
+                for (const [roleId, role] of addedRoles) {
+                    if (adminRoles.includes(roleId)) {
+                        // فحص إذا كان العضو لديه طلب معلق
+                        const hasPending = adminApps.pendingApplications && Object.values(adminApps.pendingApplications).some(app => app.candidateId === userId);
+                        
+                        // فحص إذا كان العضو مرفوضاً (كولداون نشط)
+                        const cooldown = adminApps.rejectedCooldowns?.[userId];
+                        const isRejected = cooldown && (new Date().getTime() < new Date(cooldown.rejectedAt).getTime() + (adminApps.settings.rejectCooldownHours * 60 * 60 * 1000));
+
+                        if (hasPending || isRejected) {
+                            console.log(`🚨 منع رول إداري يدوي لـ ${newMember.displayName}: ${role.name} (${hasPending ? 'طلب معلق' : 'مرفوض'})`);
+                            try {
+                                await newMember.roles.remove(role, hasPending ? 'منع رول إداري - طلب تقديم معلق' : 'منع رول إداري - الشخص مرفوض حالياً');
+                                
+                                logEvent(client, newMember.guild, {
+                                    type: 'SECURITY_ACTIONS',
+                                    title: 'منع تعيين رول إداري يدوي',
+                                    description: `تم منع إعطاء رول إداري للعضو <@${userId}>`,
+                                    user: newMember.user,
+                                    fields: [
+                                        { name: 'الرول', value: `<@&${roleId}>`, inline: true },
+                                        { name: 'السبب', value: hasPending ? 'لديه طلب تقديم قيد الدراسة' : 'تم رفض طلبه مسبقاً وهو في فترة التقييد', inline: true }
+                                    ]
+                                });
+                            } catch (err) {
+                                console.error('خطأ في منع الرول الإداري:', err);
+                            }
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error('خطأ في فحص حماية التقديم الإداري:', err);
+            }
+        }
+
+        // 4. حماية نظام التذاكر والمنع من الترقيات (المحظورين من الترقيات)
         const promoteBans = promoteManager.getPromotionBans();
         const banKey = `${userId}_${newMember.guild.id}`;
         const banData = promoteBans[banKey];
@@ -2651,6 +2847,23 @@ client.on('interactionCreate', async (interaction) => {
     // --- Vacation System Interaction Router ---
     if (interaction.customId && interaction.customId.startsWith('vac_')) {
         const vacationContext = { client, BOT_OWNERS };
+if (interaction.customId.startsWith('vac_list_') || 
+
+            interaction.customId.startsWith('vac_pending_') || 
+
+            interaction.customId.startsWith('vac_terminate_')) {
+
+            const vacationsCommand = client.commands.get('اجازات');
+
+            if (vacationsCommand && vacationsCommand.handleInteraction) {
+
+                await vacationsCommand.handleInteraction(interaction, vacationContext);
+
+            }
+
+            return;
+
+        }
 
         // Route to set-vacation command - تحسين معالجة التفاعلات
         if (interaction.customId.includes('_set_') ||
@@ -3209,17 +3422,13 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
     
-    // === معالج نموذج الاستدعاء من اختصارات المنشن ===
+      // === معالج نموذج الاستدعاء من اختصارات المنشن ===
     if (interaction.isModalSubmit() && interaction.customId.startsWith('shortcut_call_modal_')) {
       console.log(`[SHORTCUT_CALL_MODAL] نموذج استدعاء: ${interaction.customId}`);
       
-      // فحص البلوك
       const { isUserBlocked } = require('./commands/block.js');
-      if (isUserBlocked(interaction.user.id)) {
-        return;
-      }
+      if (isUserBlocked(interaction.user.id)) return;
       
-      // استخراج الـ customId الأصلي للزر
       const buttonCustomId = 'shortcut_call_' + interaction.customId.replace('shortcut_call_modal_', '');
       const callData = client.shortcutCallData?.get(buttonCustomId);
       
@@ -3229,169 +3438,63 @@ client.on('interactionCreate', async (interaction) => {
       }
       
       const reason = interaction.fields.getTextInputValue('call_reason').trim() || 'غير محدد';
-      const { responsibilityName, responsibles, requesterId, channelId, messageId, guildId, timestamp } = callData;
+      const { responsibilityName, responsibles, channelId, messageId, guildId } = callData;
       
       // بدء الكولداون
       const { startCooldown } = require('./commands/cooldown.js');
       startCooldown(interaction.user.id, responsibilityName);
       
-      // قراءة قناة الاستدعاء من الإعدادات
-      let targetChannelId = channelId;
-      let useCallChannel = false;
-      try {
-        const botConfigData = readJSONFile(DATA_FILES.botConfig, {});
-        if (botConfigData.settings && botConfigData.settings.callChannel) {
-          targetChannelId = botConfigData.settings.callChannel;
-          useCallChannel = true;
+      const messageLink = `https://discord.com/channels/${guildId}/${channelId}/${messageId}`;
+      const currentTime = new Date().toLocaleString('ar-EG', { timeZone: 'Asia/Riyadh' });
+
+      // إنشاء الزر للذهاب للرسالة
+      const linkButton = new ButtonBuilder()
+        .setLabel('اذهب للرساله')
+        .setStyle(ButtonStyle.Link)
+        .setURL(messageLink);
+      const row = new ActionRowBuilder().addComponents(linkButton);
+
+      // إرسال الرسالة لخاص المسؤولين
+      let successCount = 0;
+      for (const userId of responsibles) {
+        try {
+          const user = await client.users.fetch(userId);
+          await user.send({
+            content: `**🔔 استدعاك إداري **\n\n` +
+                     `**● المسؤولية :** ${responsibilityName}\n` +
+                     `**● الإداري المستدعي :** <@${interaction.user.id}>\n` +
+                     `**● الوقت :** ${currentTime}\n` +
+                     `**● السبب :** ${reason}`,
+            components: [row]
+          });
+          successCount++;
+        } catch (err) {
+          console.error(`فشل إرسال رسالة خاصة للمسؤول ${userId}:`, err.message);
         }
-      } catch (e) {
-        console.log('خطأ في قراءة قناة الاستدعاء');
       }
       
-      // إنشاء المنشنات
-      const mentions = responsibles.map(id => `<@${id}>`).join(' ');
-      
-      // إنشاء customId لزر الاستلام (مع علامة إذا كان في قناة الاستدعاء)
-      let claimId = `claim_task_${responsibilityName}_${timestamp}_${interaction.user.id}_${targetChannelId}_${messageId}`;
-      if (useCallChannel) {
-        claimId = `rclaim_${responsibilityName}_${timestamp}_${interaction.user.id}`;
-      }
-      if (claimId.length > 95) {
-        claimId = useCallChannel ? `rclaim_${responsibilityName}_${timestamp}` : `claim_task_${responsibilityName}_${timestamp}`;
-      }
-      
-      // حفظ بيانات الاستلام للاستخدام لاحقاً (خاصة لرابط الرسالة)
-      if (useCallChannel) {
-        if (!client.rclaimData) client.rclaimData = new Map();
-        client.rclaimData.set(claimId, {
-          originalChannelId: channelId,
-          originalMessageId: messageId,
-          guildId: guildId
-        });
-      }
-      
-      // إنشاء الإيمبد
-      const callEmbed = colorManager.createEmbed()
-        .setTitle(`استدعاء مسؤولي : ${responsibilityName}`)
-        .setDescription(`**من قِبل :** <@${interaction.user.id}>\n**السبب :** ${reason}\n\n**المسؤولين :**\n${mentions}`)
-        .setThumbnail('https://cdn.discordapp.com/emojis/1303973825591115846.png')
-        .setFooter({ text: 'By Ahmed.' })
-        .setTimestamp();
-      
-      const claimButton = new ButtonBuilder()
-        .setCustomId(claimId)
-        .setLabel('claim')
-.setEmoji('<:emoji_11:1448570670270251079>')
-        .setStyle(ButtonStyle.Success);
-      
-      const buttonRow = new ActionRowBuilder().addComponents(claimButton);
-      
-      // إرسال رسالة الاستدعاء في القناة المحددة
-      const targetChannel = await client.channels.fetch(targetChannelId);
-      await targetChannel.send({
-        content: mentions,
-        embeds: [callEmbed],
-        components: [buttonRow]
-      });
-      
-      // تحديث رسالة المنشنات الأصلية لإزالة الزر
+      // تحديث رسالة المنشنات الأصلية لإزالة الأزرار
       try {
         const originalChannel = await client.channels.fetch(channelId);
         const originalMessage = await originalChannel.messages.fetch(messageId);
         await originalMessage.edit({ components: [] });
-      } catch (err) {
-        console.log('لم يتم العثور على الرسالة الأصلية للتحديث');
-      }
-      
+      } catch (err) {}
+
       // تسجيل الحدث
       logEvent(client, interaction.guild, {
         type: 'TASK_LOGS',
-        title: 'استدعاء مسؤولين (اختصار)',
-        description: `تم استدعاء مسؤولي "${responsibilityName}"`,
+        title: 'استدعاء مسؤولين (خاص)',
+        description: `تم استدعاء مسؤولي "${responsibilityName}" عبر الخاص`,
         user: interaction.user,
         fields: [
           { name: 'المسؤولية', value: responsibilityName, inline: true },
           { name: 'السبب', value: reason, inline: false },
-          { name: 'عدد المسؤولين', value: `${responsibles.length}`, inline: true }
+          { name: 'عدد المسؤولين الناجح', value: `${successCount}/${responsibles.length}`, inline: true }
         ]
       });
       
-      await interaction.reply({ content: `**✅ تم استدعاء مسؤولي "${responsibilityName}" بنجاح!**`, flags: 64 });
-      
-      // حذف البيانات المحفوظة
+      await interaction.reply({ content: `**✅ تم استدعاء مسؤولي "${responsibilityName}" عبر الخاص!**`, flags: 64 });
       client.shortcutCallData.delete(buttonCustomId);
-      return;
-    }
-
-    // === معالج زر الاستلام المقيد للمسؤولين فقط (rclaim) ===
-    if (interaction.isButton() && interaction.customId.startsWith('rclaim_')) {
-      console.log(`[RCLAIM] زر استلام مقيد: ${interaction.customId}`);
-      
-      // استخراج اسم المسؤولية من الـ customId
-      const parts = interaction.customId.replace('rclaim_', '').split('_');
-      const responsibilityName = parts[0];
-      
-      // التحقق من وجود المسؤولية
-      if (!responsibilities[responsibilityName]) {
-        await interaction.reply({ content: '**❌ المسؤولية غير موجودة!**', flags: 64 });
-        return;
-      }
-      
-      const responsibility = responsibilities[responsibilityName];
-      const responsibles = responsibility.responsibles || [];
-      
-      // التحقق من أن المستخدم مسؤول في هذه المسؤولية
-      if (!responsibles.includes(interaction.user.id)) {
-        await interaction.reply({ content: '**❌ فقط المسؤولين المعينين يمكنهم استلام هذا الطلب!**', flags: 64 });
-        return;
-      }
-      
-      // تحديث الرسالة لإظهار من استلم الطلب
-      try {
-        const originalEmbed = interaction.message.embeds[0];
-        const updatedEmbed = colorManager.createEmbed()
-          .setTitle(originalEmbed.title)
-          .setDescription(`${originalEmbed.description}\n\n**✅ تم الاستلام بواسطة :** <@${interaction.user.id}>\n\n**السبب كان :** ${reason}`)
-          .setThumbnail(originalEmbed.thumbnail?.url)
-          .setFooter({ text: 'By Ahmed.' })
-          .setTimestamp();
-        
-        // إنشاء زر رابط الرسالة الأصلية
-        const rclaimData = client.rclaimData?.get(interaction.customId);
-        const components = [];
-        
-        if (rclaimData && rclaimData.originalChannelId && rclaimData.originalMessageId) {
-          const messageLink = `https://discord.com/channels/${rclaimData.guildId}/${rclaimData.originalChannelId}/${rclaimData.originalMessageId}`;
-          const linkButton = new ButtonBuilder()
-            .setLabel(' message')
-            .setStyle(ButtonStyle.Link)
-            .setURL(messageLink);
-          
-          const linkRow = new ActionRowBuilder().addComponents(linkButton);
-          components.push(linkRow);
-          
-          // حذف البيانات المحفوظة
-          client.rclaimData.delete(interaction.customId);
-        }
-        
-        await interaction.message.edit({ embeds: [updatedEmbed], components: components });
-        await interaction.reply({ content: `**✅ تم استلام الطلب بنجاح!**`, flags: 64 });
-        
-        // تسجيل الحدث
-        logEvent(client, interaction.guild, {
-          type: 'TASK_LOGS',
-          title: 'تم استلام طلب',
-          description: `تم استلام طلب في مسؤولية "${responsibilityName}"`,
-          user: interaction.user,
-          fields: [
-            { name: 'المسؤولية', value: responsibilityName, inline: true },
-            { name: 'المستلم', value: `<@${interaction.user.id}>`, inline: true }
-          ]
-        });
-      } catch (err) {
-        console.error('خطأ في معالجة زر الاستلام المقيد:', err);
-        await interaction.reply({ content: '**❌ حدث خطأ أثناء الاستلام!**', flags: 64 });
-      }
       return;
     }
 
@@ -4974,8 +5077,6 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('❌ فشل في حفظ البيانات:', saveError);
   }
 });
-
-const { dbManager } = require('./utils/database.js');
 
 async function startBot() {
     await dbManager.initialize();
