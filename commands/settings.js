@@ -104,18 +104,29 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
     }
   }
 
-  // جلب البيانات من الذاكرة إذا كانت متوفرة لتقليل الضغط
-  const currentResponsibilities = responsibilities || {};
+  // مزامنة المسؤوليات مع كائن البوت العالمي أو قاعدة البيانات
+  const { dbManager } = require('../utils/database.js');
+  if (!global.responsibilities || Object.keys(global.responsibilities).length === 0) {
+      const dbResps = await dbManager.getResponsibilities();
+      global.responsibilities = dbResps;
+  }
+  const currentResponsibilities = global.responsibilities;
   
   async function saveResponsibilities() {
     try {
-      const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
-      // الكتابة بشكل غير متزامن لتجنب حظر الـ Event Loop
-      await fs.promises.writeFile(responsibilitiesPath, JSON.stringify(responsibilities, null, 2));
-      console.log('✅ [SETTINGS] تم حفظ المسؤوليات بنجاح');
+      const { dbManager } = require('../utils/database.js');
+      // Update all responsibilities in DB
+      for (const [name, config] of Object.entries(responsibilities)) {
+        await dbManager.updateResponsibility(name, config);
+      }
+      global.responsibilities = responsibilities; // مزامنة التحديث العالمي فوراً
+      console.log('✅ [SETTINGS] تم حفظ المسؤوليات في قاعدة البيانات وتحديث الكائن العالمي');
       
       // التحديثات اللاحقة
-      updateRespEmbeds(client);
+      const respCommand = client.commands.get('resp');
+      if (respCommand && respCommand.updateEmbedMessage) {
+          await respCommand.updateEmbedMessage(client);
+      }
       return true;
     } catch (error) {
       console.error('❌ [SETTINGS] خطأ في حفظ المسؤوليات:', error.message);
@@ -519,6 +530,56 @@ const deleteButton = new ButtonBuilder()
             return;
           }
 
+          // محاولة استخراج ID المستخدم من المنشن أو النص
+          const mentionMatch = content.match(/^<@!?(\d+)>$/);
+          const userId = mentionMatch ? mentionMatch[1] : (content.length >= 17 && /^\d+$/.test(content) ? content : null);
+
+              if (userId) {
+                try {
+                  const member = await message.guild.members.fetch(userId).catch(() => null);
+                  if (!member) {
+                    const errorMsg = await message.channel.send(`**❌ المستخدم <@${userId}> غير موجود في السيرفر!**`);
+                    setTimeout(() => errorMsg.delete().catch(() => {}), 3000);
+                    return;
+                  }
+
+                  if (!responsibility.responsibles) responsibility.responsibles = [];
+                  
+                  if (responsibility.responsibles.includes(userId)) {
+                    const errorMsg = await message.channel.send(`**⚠️ <@${userId}> موجود بالفعل في هذه المسؤولية!**`);
+                    setTimeout(() => errorMsg.delete().catch(() => {}), 3000);
+                    return;
+                  }
+
+                  responsibility.responsibles.push(userId);
+                  const { dbManager } = require('../utils/database.js');
+                  await dbManager.updateResponsibility(responsibilityName, responsibility);
+                  
+                  await syncResponsibilityRoles(responsibilityName, message.guild);
+                  updateRespEmbeds(client);
+
+                  // إرسال رسالة ترحيبية للمسؤول الجديد
+                  try {
+                    const welcomeEmbed = colorManager.createEmbed()
+                      .setTitle('**Congrat ✅️**')
+                      .setDescription(`\nتم اضافتك مسؤول لمسؤوليه الـ **${responsibilityName}**\n\nبواسطه مسؤول المسؤوليات <@${interaction.user.id}>\n\nفي سيرفر : **${interaction.guild.name}**\n`)
+                      .setThumbnail(message.guild.iconURL({ dynamic: true }));
+                    
+                    await member.send({ embeds: [welcomeEmbed] }).catch(() => {
+                      console.log(`فشل إرسال رسالة ترحيب للمستخدم ${member.user.tag} (الخاص مغلق)`);
+                    });
+                  } catch (dmError) {
+                    console.error('خطأ في إرسال الرسالة الترحيبية:', dmError);
+                  }
+
+                  const updatedContent = await generateManagementContent(responsibilityName);
+                  await sentMessage.edit(updatedContent);
+                } catch (error) {
+                  console.error('خطأ في إضافة مسؤول:', error);
+                }
+                return;
+              }
+
           if (/^\d+$/.test(content)) {
             const index = parseInt(content) - 1;
             const currentResponsibles = responsibility.responsibles || [];
@@ -566,25 +627,21 @@ const deleteButton = new ButtonBuilder()
                 }
               }
 
-              if (removedMember) {
-                try {
-                  const removalEmbed = colorManager.createEmbed()
-                    .setTitle('Deleted ')
-                    .setDescription(`**تم إزالتك من مسؤولية: ${responsibilityName}**`)
-                    .addFields([
-                      { name: 'المسؤولية', value: responsibilityName, inline: true },
-                      { name: 'السيرفر', value: message.guild.name, inline: true },
-                      { name: 'تمت الإزالة بواسطة', value: interaction.user.tag, inline: true }
-                    ])
-                    .setTimestamp();
-
-                  await removedMember.send({ embeds: [removalEmbed] });
-                } catch (error) {
-                  console.log(`لا يمكن إرسال رسالة للمستخدم ${removedUserId}: ${error.message}`);
-                }
-              }
-
               await safeFollowUp(interaction, `**✅ تم حذف المسؤول رقم ${content} بنجاح**`);
+
+              // إرسال رسالة إشعار للمسؤول المزال
+              if (removedMember) {
+                  try {
+                      const goodbyeEmbed = colorManager.createEmbed()
+                          .setTitle('**إزالة مسؤولية**')
+                          .setDescription(`\nتم حذفك من مسؤولية الـ **${responsibilityName}**\n\nبواسطه مسؤول المسؤوليات <@${interaction.user.id}>\n\nفي سيرفر : **${interaction.guild.name}**\n`)
+                          .setThumbnail(message.guild.iconURL({ dynamic: true }));
+                      
+                      await removedMember.send({ embeds: [goodbyeEmbed] }).catch(() => {});
+                  } catch (dmError) {
+                      console.error('خطأ في إرسال رسالة الإزالة:', dmError);
+                  }
+              }
 
               logEvent(client, message.guild, {
                 type: 'RESPONSIBILITY_MANAGEMENT',
@@ -653,14 +710,9 @@ const deleteButton = new ButtonBuilder()
 
                     try {
                       const welcomeEmbed = colorManager.createEmbed()
-                        .setTitle(' Resb')
-                        .setDescription(`**تم تعيينك كمسؤول عن: ${responsibilityName}**`)
-                        .addFields([
-                          { name: 'المسؤولية', value: responsibilityName, inline: true },
-                          { name: 'السيرفر', value: message.guild.name, inline: true },
-                          { name: 'تم التعيين بواسطة', value: interaction.user.tag, inline: true }
-                        ])
-                        .setTimestamp();
+                        .setTitle('**Congrat ✅️**')
+                        .setDescription(`\nتم اضافتك مسؤول لمسؤوليه الـ **${responsibilityName}**\n\nبواسطه مسؤول المسؤوليات <@${interaction.user.id}>\n\nفي سيرفر : **${interaction.guild.name}**\n`)
+                        .setThumbnail(message.guild.iconURL({ dynamic: true }));
 
                       await member.send({ embeds: [welcomeEmbed] });
                     } catch (error) {
@@ -1286,14 +1338,15 @@ const deleteButton = new ButtonBuilder()
 
         if (action === 'delete') {
           try {
+            const { dbManager } = require('../utils/database.js');
             const deletedResponsibility = { ...responsibilities[responsibilityName] };
+            
+            // حذف من قاعدة البيانات أولاً
+            await dbManager.deleteResponsibility(responsibilityName);
+            
+            // حذف من الكائن المحلي والعالمي
             delete responsibilities[responsibilityName];
-
-            const saved = await saveResponsibilities();
-            if (!saved) {
-              await safeReply(interaction, '**فشل في حذف المسؤولية!**');
-              return;
-            }
+            if (global.responsibilities) delete global.responsibilities[responsibilityName];
 
             logEvent(client, message.guild, {
               type: 'RESPONSIBILITY_MANAGEMENT',
@@ -1701,14 +1754,9 @@ const deleteButton = new ButtonBuilder()
             try {
               const member = await message.guild.members.fetch(memberId);
               const welcomeEmbed = colorManager.createEmbed()
-                .setTitle('Resb')
-                .setDescription(`**تم تعيينك كمسؤول عن: ${responsibilityName}**`)
-                .addFields([
-                  { name: 'المسؤولية', value: responsibilityName, inline: true },
-                  { name: 'السيرفر', value: message.guild.name, inline: true },
-                  { name: 'تم التعيين بواسطة', value: interaction.user.tag, inline: true }
-                ])
-                .setTimestamp();
+                .setTitle('**تهانينا! تم تعيينك كمسؤول جديد**')
+                .setDescription(`\nتم اضافتك مسؤول لمسؤوليه الـ **${responsibilityName}**\n\nبواسطه مسؤول المسؤوليات <@${interaction.user.id}>\n\nفي سيرفر : **${interaction.guild.name}**\n`)
+                .setThumbnail(message.guild.iconURL({ dynamic: true }));
 
               await member.send({ embeds: [welcomeEmbed] });
             } catch (error) {
@@ -1774,19 +1822,13 @@ const deleteButton = new ButtonBuilder()
           return;
         }
 
-        // إعادة تحميل المسؤوليات من الملف للتأكد من البيانات الحديثة
-        const fs = require('fs');
-        const path = require('path');
-        const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
-        
+        // إعادة تحميل المسؤوليات من SQLite
+        const { dbManager } = require('../utils/database.js');
         let currentResponsibilities = {};
         try {
-          if (fs.existsSync(responsibilitiesPath)) {
-            const data = fs.readFileSync(responsibilitiesPath, 'utf8');
-            currentResponsibilities = JSON.parse(data);
-          }
+          currentResponsibilities = await dbManager.getResponsibilities();
         } catch (error) {
-          console.error('خطأ في قراءة المسؤوليات:', error);
+          console.error('خطأ في جلب المسؤوليات من SQLite:', error);
           currentResponsibilities = {};
         }
 
@@ -1803,21 +1845,22 @@ const deleteButton = new ButtonBuilder()
         // إضافة المسؤولية الجديدة للكائن المحمّل والكائن الرئيسي
         const maxOrder = Math.max(-1, ...Object.values(currentResponsibilities).map(r => r.order ?? -1));
         
-        currentResponsibilities[name] = {
+        const newRespConfig = {
           description: (!desc || desc.toLowerCase() === 'لا') ? '' : desc,
           responsibles: [],
           order: maxOrder + 1
         };
         
-        responsibilities[name] = currentResponsibilities[name];
+        currentResponsibilities[name] = newRespConfig;
+        responsibilities[name] = newRespConfig;
 
-        // حفظ الكائن الحديث بدلاً من القديم
+        // حفظ المسؤولية الجديدة في SQLite
         try {
-          fs.writeFileSync(responsibilitiesPath, JSON.stringify(currentResponsibilities, null, 2));
-          console.log('✅ [SETTINGS] تم حفظ المسؤولية الجديدة بنجاح');
+          await dbManager.updateResponsibility(name, newRespConfig);
+          console.log('✅ [SETTINGS] تم حفظ المسؤولية الجديدة في SQLite بنجاح');
         } catch (error) {
-          console.error('❌ [SETTINGS] خطأ في حفظ المسؤولية:', error);
-          return await safeReply(interaction, '**فشل في إنشاء المسؤولية!**');
+          console.error('❌ [SETTINGS] خطأ في حفظ المسؤولية في SQLite:', error);
+          return await safeReply(interaction, '**فشل في إنشاء المسؤولية في قاعدة البيانات!**');
         }
         
         // تحديث setup menus

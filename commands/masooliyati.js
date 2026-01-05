@@ -9,6 +9,10 @@ const fs = require('fs');
 
 const path = require('path');
 
+const DATA_FILES = {
+    categories: path.join(__dirname, '..', 'data', 'respCategories.json')
+};
+
 module.exports = {
 
     name: 'مسؤولياتي',
@@ -53,34 +57,50 @@ module.exports = {
 
         // التحقق من وجود منشن
 
-        let targetUser = message.mentions.users.first() || message.author;
+        let targetUser = message.mentions.users.first();
 
-        let userId = targetUser.id;
+        
 
-        // تحميل المسؤوليات الحديثة من SQLite
-        let currentResponsibilities = {};
-        try {
-            currentResponsibilities = await dbManager.getResponsibilities();
-        } catch (error) {
-            console.error('خطأ في جلب المسؤوليات من SQLite:', error);
-        }
+        if (!targetUser && args[0]) {
 
-        // دالة للبحث عن قسم المسؤولية
+            // محاولة جلب المستخدم عن طريق الآي دي إذا لم يكن هناك منشن
 
-        function findCategoryForResp(respName) {
+            const userIdArg = args[0].replace(/[<@!>]/g, '');
 
-            for (const [catName, catData] of Object.entries(categories)) {
+            if (/^\d{17,19}$/.test(userIdArg)) {
 
-                if (catData.responsibilities && catData.responsibilities.includes(respName)) {
-
-                    return catName;
-
-                }
+                targetUser = await client.users.fetch(userIdArg).catch(() => null);
 
             }
 
-            return null;
+        }
 
+        if (!targetUser) targetUser = message.author;
+        let userId = targetUser.id;
+
+        // تحميل المسؤوليات الحديثة من الكائن العالمي أو SQLite
+        let currentResponsibilities = global.responsibilities;
+        if (!currentResponsibilities || Object.keys(currentResponsibilities).length === 0) {
+            try {
+                const database = require('../utils/database');
+                const dbManager = database.getDatabase ? database.getDatabase() : database.dbManager;
+                currentResponsibilities = await dbManager.getResponsibilities();
+                global.responsibilities = currentResponsibilities;
+            } catch (error) {
+                console.error('خطأ في جلب المسؤوليات:', error);
+                currentResponsibilities = {};
+            }
+        }
+
+        // دالة للبحث عن قسم المسؤولية
+        const categories = fs.existsSync(DATA_FILES.categories) ? JSON.parse(fs.readFileSync(DATA_FILES.categories, 'utf8')) : {};
+        function findCategoryForResp(respName) {
+            for (const [catName, catData] of Object.entries(categories)) {
+                if (catData.responsibilities && catData.responsibilities.includes(respName)) {
+                    return catName;
+                }
+            }
+            return null;
         }
 
         // البحث عن مسؤوليات المستخدم المحدد
@@ -145,60 +165,56 @@ module.exports = {
 
             let descriptionText = userId === message.author.id ? '** Your Res :**\n\n' : `**Res ${targetUser.displayName || targetUser.username}:**\n\n`;
 
+            // تجميع المسؤوليات حسب القسم
+            const groupedResps = {};
+            userResponsibilities.forEach(resp => {
+                const cat = resp.category || 'No Category';
+                if (!groupedResps[cat]) groupedResps[cat] = [];
+                groupedResps[cat].push(resp.name);
+            });
+
+            const categoriesList = Object.keys(groupedResps);
             
-
-            if (allSameCategory) {
-
+            if (categoriesList.length === 1 && categoriesList[0] !== 'No Category') {
                 // جميع المسؤوليات من نفس القسم - عرض مميز
-
-                descriptionText += `<:emoji_4:1428973990315167814>  **Category : ${uniqueCategories[0]}**\n\n`;
-
-                responsibilitiesList = userResponsibilities.map((resp, index) => 
-
-                    `**${index + 1}.** ${resp.name}`
-
+                descriptionText += `<:emoji_4:1428973990315167814>  **Category : ${categoriesList[0]}**\n\n`;
+                descriptionText += groupedResps[categoriesList[0]].map((name, index) => 
+                    `**${index + 1} :** ${name}`
                 ).join('\n');
-
             } else {
+                // تجميع وعرض الأقسام
+                let index = 1;
+                const formattedGroups = [];
+                
+                // عرض الأقسام الحقيقية أولاً
+                for (const cat of categoriesList) {
+                    if (cat === 'No Category') continue;
+                    const resps = groupedResps[cat];
+                    const respsText = resps.map(name => `**${index++} :** ${name}`).join('\n');
+                    formattedGroups.push(`<:emoji_4:1428973990315167814>  **Category : ${cat}**\n${respsText}`
 
-                // مسؤوليات من أقسام مختلفة أو بعضها بدون قسم
-
-                responsibilitiesList = userResponsibilities.map((resp, index) => {
-
-                    let line = `**${index + 1}.** ${resp.name}`;
-
-                    if (resp.category) {
-
-                        line += `\n   <:emoji_4:1428973990315167814>  Category : ${resp.category}`;
-
-                    }
-
-                    return line;
-
-                }).join('\n\n');
-
+);
+                }
+                
+                // عرض المسؤوليات بدون قسم في النهاية
+                if (groupedResps['No Category']) {
+                    const respsText = groupedResps['No Category'].map(name => `**${index++}.** ${name}`).join('\n');
+                    formattedGroups.push(respsText);
+                }
+                
+                descriptionText += formattedGroups.join('\n\n');
             }
 
             const displayName = targetUser.displayName || targetUser.username;
-
             const respEmbed = colorManager.createEmbed()
-
                 .setTitle(`Res : ${displayName}`)
-
-                .setDescription(descriptionText + responsibilitiesList)
-
+                .setDescription(descriptionText)
                 .setThumbnail(targetUser.displayAvatarURL({ dynamic: true }))
-
                 .addFields([
-
                     { name: 'All Res', value: `${userResponsibilities.length}`, inline: true },
-
                     { name: 'Person', value: `<@${userId}>`, inline: true }
-
                 ])
-
                 .setFooter({ text: 'By Ahmed.' })
-
                 .setTimestamp();
 
             const selectMenu = new StringSelectMenuBuilder()
@@ -231,10 +247,33 @@ module.exports = {
 
                 if (selectedResp) {
                     const desc = selectedResp.description || 'لا يوجد وصف لهذه المسؤولية.';
-                    await interaction.reply({
-                        content: `**شرح مسؤولية "${selectedRespName}" :**\n${desc}`,
-                        ephemeral: true
-                    });
+                    
+                    if (desc.length > 2000) {
+                        const parts = [];
+                        let current = '';
+                        for (const line of desc.split('\n')) {
+                            if ((current + line + '\n').length > 2000) {
+                                parts.push(current);
+                                current = '';
+                            }
+                            current += line + '\n';
+                        }
+                        if (current.trim()) parts.push(current);
+
+                        for (let i = 0; i < parts.length; i++) {
+                            const content = i === 0 ? `**شرح مسؤولية "${selectedRespName}" :**\n${parts[i]}` : parts[i];
+                            if (i === 0) {
+                                await interaction.reply({ content, ephemeral: true });
+                            } else {
+                                await interaction.followUp({ content, ephemeral: true });
+                            }
+                        }
+                    } else {
+                        await interaction.reply({
+                            content: `**شرح مسؤولية "${selectedRespName}" :**\n${desc}`,
+                            ephemeral: true
+                        });
+                    }
                 }
             });
 

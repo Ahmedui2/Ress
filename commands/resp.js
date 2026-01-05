@@ -9,39 +9,43 @@ const DATA_FILES = {
     categories: path.join(__dirname, '..', 'data', 'respCategories.json')
 };
 
-// دالة لقراءة ملف JSON (للكونفيغ فقط)
+// دالة لقراءة ملف JSON
 function readJSONFile(filePath, defaultValue = {}) {
     try {
         if (fs.existsSync(filePath)) {
             const data = fs.readFileSync(filePath, 'utf8');
-            if (!data || data.trim() === '') return defaultValue;
             return JSON.parse(data);
         }
         return defaultValue;
     } catch (error) {
-        console.error(`خطأ في قراءة ${filePath}:`, error.message);
+        console.error(`خطأ في قراءة ${filePath}:`, error);
         return defaultValue;
     }
 }
 
-const { dbManager } = require('../utils/database.js');
+// دالة لكتابة ملف JSON
+function writeJSONFile(filePath, data) {
+    try {
+        fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+        return true;
+    } catch (error) {
+        console.error(`خطأ في كتابة ${filePath}:`, error);
+        return false;
+    }
+}
 
 // متغير لتخزين رسائل الايمبد (دعم عدة سيرفرات)
 let embedMessages = new Map(); // guildId -> { messageId, channelId, message }
 
-async function getResponsibilities() {
-    return await dbManager.getResponsibilities();
-}
-
-// دالة لإنشاء الايمبد باستخدام الكاش
-async function createResponsibilitiesEmbed() {
-    const responsibilities = await getResponsibilities();
+// دالة لإنشاء الايمبد
+function createResponsibilitiesEmbed(responsibilities) {
     const embed = colorManager.createEmbed()
         .setTitle('Responsibilities');
     
+    const currentResps = global.responsibilities || responsibilities;
     const categories = readJSONFile(DATA_FILES.categories, {});
     
-    if (Object.keys(responsibilities).length === 0 && Object.keys(categories).length === 0) {
+    if (Object.keys(currentResps).length === 0 && Object.keys(categories).length === 0) {
         embed.setDescription('لا توجد مسؤوليات محددة حالياً');
         return embed;
     }
@@ -59,20 +63,22 @@ async function createResponsibilitiesEmbed() {
                 description += `*No Res*\n\n`;
             } else {
                 for (const respName of categoryResps) {
-                    const respData = responsibilities[respName];
+                    const respData = currentResps[respName];
                     if (respData) {
                         description += `** المسؤوليه : ال${respName}**\n`;
+                        
                         if (respData.responsibles && respData.responsibles.length > 0) {
                             const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' , ');
                             description += `- **المسؤولين : ${responsiblesList}**\n\n`;
                         } else {
-description += `- ** المسؤولين : N/A **\n\n`;                        }
+                            description += `- ** المسؤولين : N/A **\n\n`;
+                        }
                     }
                 }
             }
         }
         
-        const uncategorizedResps = Object.keys(responsibilities).filter(respName => {
+        const uncategorizedResps = Object.keys(currentResps).filter(respName => {
             return !sortedCategories.some(([_, catData]) => 
                 catData.responsibilities && catData.responsibilities.includes(respName)
             );
@@ -82,8 +88,9 @@ description += `- ** المسؤولين : N/A **\n\n`;                        }
             description += `\n**# No categories**\n\n`;
             
             for (const respName of uncategorizedResps) {
-                const respData = responsibilities[respName];
+                const respData = currentResps[respName];
                 description += `**المسؤوليه : ال${respName}**\n`;
+                
                 if (respData.responsibles && respData.responsibles.length > 0) {
                     const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' , ');
                     description += `- **المسؤولين : ${responsiblesList}**\n\n`;
@@ -93,8 +100,11 @@ description += `- ** المسؤولين : N/A **\n\n`;                        }
             }
         }
     } else {
-        for (const [respName, respData] of Object.entries(responsibilities)) {
+        const sortedKeys = Object.keys(currentResps).sort((a, b) => (currentResps[a].order || 0) - (currentResps[b].order || 0));
+        for (const respName of sortedKeys) {
+            const respData = currentResps[respName];
             description += `**المسؤوليه : ال${respName}**\n`;
+            
             if (respData.responsibles && respData.responsibles.length > 0) {
                 const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' , ');
                 description += `- **المسؤولين : ${responsiblesList}**\n\n`;
@@ -110,12 +120,12 @@ description += `- ** المسؤولين : N/A **\n\n`;                        }
 
 // دالة لإنشاء رسالة نصية للمسؤوليات
 function createResponsibilitiesText(responsibilities) {
+    const currentResps = global.responsibilities || responsibilities;
     const categories = readJSONFile(DATA_FILES.categories, {});
     
-    if (Object.keys(responsibilities).length === 0 && Object.keys(categories).length === 0) {
+    if (Object.keys(currentResps).length === 0 && Object.keys(categories).length === 0) {
         return '**Responsibilities**\n\nلا توجد مسؤوليات محددة حالياً';
- 
-}
+    }
     let text = '**Responsibilities**\n';
     
     if (Object.keys(categories).length > 0) {
@@ -129,9 +139,10 @@ function createResponsibilitiesText(responsibilities) {
                 text += `*No Res*\n\n`;
             } else {
                 for (const respName of categoryResps) {
-                    const respData = responsibilities[respName];
+                    const respData = currentResps[respName];
                     if (respData) {
                         text += `**المسؤوليه : ال${respName}**\n`;
+                        
                         if (respData.responsibles && respData.responsibles.length > 0) {
                             const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' , ');
                             text += `- **المسؤولين : ${responsiblesList}**\n\n`;
@@ -143,7 +154,7 @@ function createResponsibilitiesText(responsibilities) {
             }
         }
         
-        const uncategorizedResps = Object.keys(responsibilities).filter(respName => {
+        const uncategorizedResps = Object.keys(currentResps).filter(respName => {
             return !sortedCategories.some(([_, catData]) => 
                 catData.responsibilities && catData.responsibilities.includes(respName)
             );
@@ -153,8 +164,9 @@ function createResponsibilitiesText(responsibilities) {
             text += `\n**# No categories**\n\n`;
             
             for (const respName of uncategorizedResps) {
-                const respData = responsibilities[respName];
+                const respData = currentResps[respName];
                 text += `**المسؤوليه : ال${respName}**\n`;
+                
                 if (respData.responsibles && respData.responsibles.length > 0) {
                     const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join(' , ');
                     text += `- **المسؤولين  : ${responsiblesList}**\n\n`;
@@ -164,8 +176,11 @@ function createResponsibilitiesText(responsibilities) {
             }
         }
     } else {
-        for (const [respName, respData] of Object.entries(responsibilities)) {
+        const sortedKeys = Object.keys(currentResps).sort((a, b) => (currentResps[a].order || 0) - (currentResps[b].order || 0));
+        for (const respName of sortedKeys) {
+            const respData = currentResps[respName];
             text += `**المسؤوليه : ال${respName}**\n`;
+            
             if (respData.responsibles && respData.responsibles.length > 0) {
                 const responsiblesList = respData.responsibles.map(id => `<@${id}>`).join('  ,  ');
                 text += `- **المسؤولين : ${responsiblesList}**\n\n`;
@@ -205,13 +220,13 @@ function splitText(text, maxLength = 2000) {
 
 // دالة لإنشاء الأزرار والمنيو
 function createSuggestionComponents() {
-    const responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
+    const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
     const components = [];
     
     // إنشاء منيو المسؤوليات إذا وجدت
-    if (Object.keys(responsibilities).length > 0) {
+    if (Object.keys(currentResps).length > 0) {
         // ترتيب المسؤوليات حسب الـ order
-        const sortedResps = Object.entries(responsibilities)
+        const sortedResps = Object.entries(currentResps)
             .sort((a, b) => (a[1].order || 0) - (b[1].order || 0))
             .slice(0, 25); // حد أقصى 25 خيار
         
@@ -229,13 +244,18 @@ function createSuggestionComponents() {
         components.push(menuRow);
     }
     
-    // زر الاقتراحات
+    // زر الاقتراحات وطلب المسؤولية
     const buttonRow = new ActionRowBuilder()
         .addComponents(
             new ButtonBuilder()
                 .setCustomId('suggestion_button')
-                .setLabel('Suggestion')
+                .setLabel('أقتراح')
                 .setEmoji('<:emoji_72:1442588665913151619>')
+                .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId('apply_resp_button')
+                .setLabel('طلب مسؤولية')
+                .setEmoji('<:emoji_19:1457493164826034186> ')
                 .setStyle(ButtonStyle.Secondary)
         );
     components.push(buttonRow);
@@ -248,46 +268,56 @@ function createSuggestionButton() {
     return createSuggestionComponents();
 }
 
-// دالة لتحديث جميع رسائل الايمبد (مع تقليل مرات الاستدعاء)
+// دالة لتحديث جميع رسائل الايمبد
 async function updateEmbedMessage(client) {
-    if (global.isUpdatingResp) return;
-    global.isUpdatingResp = true;
-    
-    setTimeout(async () => {
-        try {
-            const responsibilities = await dbManager.getResponsibilities();
-            const newEmbed = createResponsibilitiesEmbed(responsibilities);
-            const newText = createResponsibilitiesText(responsibilities);
-            const components = createSuggestionComponents();
-            
-            for (const [guildId, embedData] of embedMessages.entries()) {
-                try {
-                    const config = readJSONFile(DATA_FILES.respConfig, { guilds: {} });
-                    const format = config.guilds[guildId]?.messageFormat || embedData.format || 'embed';
-                    
-                    let editOptions = format === 'text' ? { content: newText, embeds: [], components } : { content: null, embeds: [newEmbed], components };
-                    
-                    if (embedData.message) {
-                        await embedData.message.edit(editOptions);
-                    } else if (embedData.messageId && embedData.channelId) {
-                        const channel = await client.channels.fetch(embedData.channelId);
-                        const message = await channel.messages.fetch(embedData.channelId, embedData.messageId);
-                        await message.edit(editOptions);
-                        embedData.message = message;
-                    }
-                } catch (error) {
-                    console.error(`خطأ في تحديث رسالة المسؤوليات للسيرفر ${guildId}:`, error);
+    try {
+        const { dbManager } = require('../utils/database.js');
+        const responsibilities = await dbManager.getResponsibilities();
+        
+        const newEmbed = createResponsibilitiesEmbed(responsibilities);
+        const newText = createResponsibilitiesText(responsibilities);
+        const components = createSuggestionComponents();
+        
+        for (const [guildId, embedData] of embedMessages.entries()) {
+            try {
+                // جلب نوع الرسالة من الكونفيغ
+                const config = readJSONFile(DATA_FILES.respConfig, { guilds: {} });
+                const format = config.guilds[guildId]?.messageFormat || embedData.format || 'embed';
+                
+                let editOptions;
+                if (format === 'text') {
+                    editOptions = {
+                        content: newText,
+                        embeds: [],
+                        components: components
+                    };
+                } else {
+                    editOptions = {
+                        content: null,
+                        embeds: [newEmbed],
+                        components: components
+                    };
                 }
+                
+                if (embedData.message) {
+                    await embedData.message.edit(editOptions);
+                    console.log(`تم تحديث رسالة المسؤوليات في السيرفر ${guildId} (${format})`);
+                } else if (embedData.messageId && embedData.channelId) {
+                    // إعادة بناء مرجع الرسالة
+                    const channel = await client.channels.fetch(embedData.channelId);
+                    const message = await channel.messages.fetch(embedData.messageId);
+                    await message.edit(editOptions);
+                    embedData.message = message;
+                    console.log(`تم إعادة بناء وتحديث رسالة المسؤوليات في السيرفر ${guildId} (${format})`);
+                }
+            } catch (error) {
+                console.error(`خطأ في تحديث رسالة المسؤوليات للسيرفر ${guildId}:`, error);
             }
-        } finally {
-            global.isUpdatingResp = false;
         }
-    }, 5000); 
+    } catch (error) {
+        console.error('خطأ في جلب المسؤوليات من قاعدة البيانات:', error);
+    }
 }
-
-// التصدير للتوافق مع الأنظمة الأخرى
-global.updateRespEmbeds = updateEmbedMessage;
-
 
 // دالة للتعامل مع زر الاقتراحات
 async function handleSuggestionButton(interaction, client) {
@@ -379,16 +409,16 @@ async function handleResponsibilitySelect(interaction, client) {
         await interaction.deferReply({ ephemeral: true });
         
         const selectedResp = interaction.values[0];
-        const responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
+        const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
         
-        if (!responsibilities[selectedResp]) {
+        if (!currentResps[selectedResp]) {
             await interaction.editReply({
                 content: '**المسؤولية غير موجودة!**'
             });
             return;
         }
         
-        const respData = responsibilities[selectedResp];
+        const respData = currentResps[selectedResp];
         
         // إنشاء إيمبد منظم
         const embed = colorManager.createEmbed()
@@ -515,9 +545,284 @@ async function handleResponsibilitySelect(interaction, client) {
     }
 }
 
+// دالة للتعامل مع زر طلب المسؤولية
+async function handleApplyRespButton(interaction, client) {
+    try {
+        const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
+        
+        if (Object.keys(currentResps).length === 0) {
+            return await interaction.reply({
+                content: 'لا توجد مسؤوليات متاحة للتقديم عليها حالياً',
+                ephemeral: true
+            });
+        }
+
+        const sortedResps = Object.entries(currentResps)
+            .sort((a, b) => (a[1].order || 0) - (b[1].order || 0))
+            .slice(0, 25);
+        
+        const options = sortedResps.map(([name, data]) => {
+            const isAlreadyResponsible = data.responsibles && data.responsibles.includes(interaction.user.id);
+            return {
+                label: name,
+                value: name,
+                description: isAlreadyResponsible ? 'أنت بالفعل مسؤول في هذه المسؤولية' : `عدد المسؤولين : ${data.responsibles ? data.responsibles.length : 0}`
+            };
+        });
+        
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('apply_resp_select')
+            .setPlaceholder('اختر المسؤولية التي تود التقديم عليها')
+            .addOptions(options);
+        
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+        
+        await interaction.reply({
+            content: 'يرجى اختيار المسؤولية من القائمة أدناه:',
+            components: [row],
+            ephemeral: true
+        });
+    } catch (error) {
+        console.error('Error in handleApplyRespButton:', error);
+    }
+}
+
+// دالة للتعامل مع اختيار المسؤولية للتقديم
+async function handleApplyRespSelect(interaction, client) {
+    try {
+        const selectedResp = interaction.values[0];
+        
+        const modal = new ModalBuilder()
+            .setCustomId(`apply_resp_modal_${selectedResp}`)
+            .setTitle(`تقديم طلب مسؤولية : ${selectedResp}`);
+
+        const reasonInput = new TextInputBuilder()
+            .setCustomId('apply_reason')
+            .setLabel('لماذا تود الحصول على هذه المسؤولية؟')
+            .setStyle(TextInputStyle.Paragraph)
+            .setPlaceholder('اكتب أسبابك وخبراتك هنا...')
+            .setRequired(true);
+
+        const row = new ActionRowBuilder().addComponents(reasonInput);
+        modal.addComponents(row);
+
+        await interaction.showModal(modal);
+    } catch (error) {
+        console.error('Error in handleApplyRespSelect:', error);
+    }
+}
+
+// دالة للتعامل مع مودال التقديم
+async function handleApplyRespModal(interaction, client) {
+    try {
+        const respName = interaction.customId.replace('apply_resp_modal_', '');
+        const reason = interaction.fields.getTextInputValue('apply_reason');
+        const guildId = interaction.guild.id;
+      
+        const config = readJSONFile(DATA_FILES.respConfig, { guilds: {} });
+        const applyChannelId = config.guilds[guildId]?.applyChannel;
+        
+        // التحقق من أن العضو ليس مسؤولاً بالفعل في هذه المسؤولية
+        const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
+        if (currentResps[respName] && currentResps[respName].responsibles && currentResps[respName].responsibles.includes(interaction.user.id)) {
+            return await interaction.reply({
+                content: `❌ **أنت بالفعل مسؤول في "${respName}" ولا يمكنك التقديم عليها مرة أخرى.**`,
+                ephemeral: true
+            });
+        }
+
+        if (!applyChannelId) {
+            return await interaction.reply({
+                content: 'نظام الطلبات غير مفعل حالياً (لم يتم تحديد قناة الطلبات)',
+                ephemeral: true
+            });
+        }
+
+        const channel = await client.channels.fetch(applyChannelId).catch(() => null);
+        if (!channel) {
+            return await interaction.reply({
+                content: 'قناة الطلبات غير موجودة، يرجى التواصل مع الإدارة',
+                ephemeral: true
+            });
+        }
+
+        const applyEmbed = colorManager.createEmbed()
+            .setTitle('طلب مسؤولية جديد')
+            .addFields([
+                { name: 'المقدم', value: `<@${interaction.user.id}>`, inline: true },
+                { name: 'المسؤولية', value: respName, inline: true },
+                { name: 'السبب/الخبرة', value: reason }
+            ])
+            .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
+            .setTimestamp();
+
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId(`approve_apply_${interaction.user.id}_${respName}`)
+                .setLabel('قبول')
+                .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+                .setCustomId(`reject_apply_${interaction.user.id}_${respName}`)
+                .setLabel('رفض')
+                .setStyle(ButtonStyle.Danger)
+        );
+
+        await channel.send({ embeds: [applyEmbed], components: [row] });
+        
+        await interaction.reply({
+            content: 'تم إرسال طلبك بنجاح، سيتم الرد عليك قريباً',
+            ephemeral: true
+        });
+    } catch (error) {
+        console.error('Error in handleApplyRespModal:', error);
+    }
+}
+
+// دالة للتعامل مع أزرار القبول والرفض
+async function handleApplyAction(interaction, client) {
+    try {
+        const botConfig = readJSONFile(path.join(__dirname, '..', 'data', 'botConfig.json'), {});
+        const BOT_OWNERS = botConfig.owners || [];
+        const isAllowed = BOT_OWNERS.includes(interaction.user.id) || interaction.guild.ownerId === interaction.user.id;
+
+        if (!isAllowed) {
+            return await interaction.reply({
+                content: '❌ **مب مسؤول؟ والله ماوريك.**',
+                ephemeral: true
+            });
+        }
+
+        const [action, , userId, respName] = interaction.customId.split('_');
+        const targetMember = await interaction.guild.members.fetch(userId).catch(() => null);
+        
+        if (action === 'approve') {
+            const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
+            if (!currentResps[respName]) return interaction.reply({ content: 'المسؤولية لم تعد موجودة', ephemeral: true });
+            
+            if (!currentResps[respName].responsibles) currentResps[respName].responsibles = [];
+            if (!currentResps[respName].responsibles.includes(userId)) {
+                currentResps[respName].responsibles.push(userId);
+                const { dbManager } = require('../utils/database.js');
+                await dbManager.updateResponsibility(respName, currentResps[respName]);
+                
+                // إضافة الرولات تلقائياً
+                if (targetMember && currentResps[respName].roles) {
+                    for (const roleId of currentResps[respName].roles) {
+                        const role = interaction.guild.roles.cache.get(roleId);
+                        if (role) {
+                            await targetMember.roles.add(role).catch(err => console.error(`Failed to add responsibility role ${roleId}:`, err));
+                        }
+                    }
+                }
+                
+                // إخطار المستخدم
+                if (targetMember) {
+                    const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
+                    const respData = currentResps[respName];
+                    
+                    const approveEmbed = colorManager.createEmbed()
+                        .setTitle('Accepted')
+                        .setDescription(`** تم قبول طلبك لمسؤولية ال${respName}**\n\n ** في سيرفر ${interaction.guild.name}**`)
+                        .setThumbnail(interaction.guild.iconURL({ dynamic: true }));
+                    
+                    if (respData && respData.image) {
+                        approveEmbed.setImage(respData.image);
+                    }
+                    
+                    await targetMember.send({ embeds: [approveEmbed] }).catch(() => {});
+                }
+                
+                await interaction.update({ 
+                    content: `**✅ تم قبول المسؤول الجديد : <@${userId}>**\n\n ليكون مسؤول** لمسؤولية ال${respName}**\n\n** قبلة مسؤول المسؤوليات : ** <@${interaction.user.id}>`, 
+                    embeds: [],
+                    files: currentResps[respName]?.image ? [currentResps[respName].image] : [],
+                    components: [] 
+                });
+            }
+        } else if (action === 'reject') {
+            const modal = new ModalBuilder()
+                .setCustomId(`reject_reason_modal_${userId}_${respName}`)
+                .setTitle('سبب الرفض');
+            
+            const reasonInput = new TextInputBuilder()
+                .setCustomId('reject_reason')
+                .setLabel('اذكر سبب الرفض')
+                .setStyle(TextInputStyle.Paragraph)
+                .setRequired(true);
+            
+            modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
+            await interaction.showModal(modal);
+        }
+    } catch (error) {
+        console.error('Error in handleApplyAction:', error);
+    }
+}
+
+// دالة للتعامل مع مودال سبب الرفض
+async function handleRejectReasonModal(interaction, client) {
+    try {
+        const botConfig = readJSONFile(path.join(__dirname, '..', 'data', 'botConfig.json'), {});
+        const BOT_OWNERS = botConfig.owners || [];
+        const isAllowed = BOT_OWNERS.includes(interaction.user.id) || interaction.guild.ownerId === interaction.user.id;
+
+        if (!isAllowed) {
+            return await interaction.reply({
+                content: '❌ **مب مسؤول؟ والله ماوريك.**',
+                ephemeral: true
+            });
+        }
+
+        const [, , , userId, respName] = interaction.customId.split('_');
+        const reason = interaction.fields.getTextInputValue('reject_reason');
+        const targetMember = await interaction.guild.members.fetch(userId).catch(() => null);
+        
+        if (targetMember) {
+            const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
+            const respData = currentResps[respName];
+            
+            const rejectEmbed = colorManager.createEmbed()
+                .setTitle('Rejected')
+                .setDescription(`**تم رفض طلبك لمسؤولية ال${respName}**\n\n ** في سيرفر ${interaction.guild.name}**\n\n**السبب للرفض:** ${reason}`)
+                .setThumbnail(interaction.guild.iconURL({ dynamic: true }));
+            
+            if (respData && respData.image) {
+                rejectEmbed.setImage(respData.image);
+            }
+            
+            await targetMember.send({ embeds: [rejectEmbed] }).catch(() => {});
+        }
+        
+        const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
+        const respImage = currentResps[respName]?.image;
+
+        await interaction.reply({ 
+            content: `❌** تم رفض الإداري <@${userId}>**\n\n** لتقديمة في مسؤولية ال${respName}** مع ذكر السبب.`,
+            embeds: [],
+            files: respImage ? [respImage] : [],
+            ephemeral: true 
+        });
+        // محاولة تعديل الرسالة الأصلية في قناة الطلبات
+        if (interaction.message) {
+            await interaction.message.edit({ 
+                content: `** ❌ تم رفض الاداري <@${userId}>**\n\n **لمسؤولية ال${respName}**\n\n** بواسطة مسؤول المسؤوليات **:<@${interaction.user.id}>\n**السبب :** ${reason}`,
+                embeds: [],
+                files: respImage ? [respImage] : [],
+                components: [] 
+            }).catch(() => {});
+        }
+    } catch (error) {
+        console.error('Error in handleRejectReasonModal:', error);
+    }
+}
+
 module.exports = {
     name: 'resp',
-    description: 'عرض المسؤوليات وإعداد نظام الاقتراحات',
+    description: 'عرض المسؤوليات وإعداد نظام الاقتراحات والطلبات',
+    handleApplyRespButton,
+    handleApplyRespSelect,
+    handleApplyRespModal,
+    handleApplyAction,
+    handleRejectReasonModal,
     
     // تهيئة النظام عند بدء التشغيل
     initialize(client) {
@@ -526,6 +831,7 @@ module.exports = {
     
     async execute(message, args, context) {
         const { client } = context;
+        const subCommand = args[0] ? args[0].toLowerCase() : null;
         
         // فحص إذا كان المستخدم مالكًا
         const botConfig = readJSONFile(path.join(__dirname, '..', 'data', 'botConfig.json'), {});
@@ -580,118 +886,191 @@ module.exports = {
             });
         }
 
-        // التحقق من وجود قناة الاقتراحات
-        if (!guildConfig.suggestionsChannel) {
-            await message.channel.send('منشن روم الاقتراحات');
+        if (subCommand === 'img') {
+            const respName = args[1];
+            if (!respName) {
+                return message.reply({ content: '❌ يرجى تحديد اسم المسؤولية أو كتابة `all`. مثال: `resp img الشات` أو `resp img all`' });
+            }
+
+            const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
             
-            // انتظار منشن القناة
-            const channelCollector = message.channel.createMessageCollector({
-                filter: m => m.author.id === message.author.id && m.mentions.channels.size > 0,
-                time: 60000,
-                max: 1
-            });
-            
-            channelCollector.on('collect', async (msg) => {
-                const suggestionsChannel = msg.mentions.channels.first();
-                
-                // تأكيد أن القناة تنتمي لنفس السيرفر
-                if (suggestionsChannel.guild.id !== guildId) {
-                    await msg.channel.send('يجب اختيار روم من نفس السيرفر');
-                    return;
+            let imageUrl = message.attachments.first()?.url || args[2];
+            if (!imageUrl) {
+                return message.reply({ content: '❌ يرجى إرفاق صورة أو وضع رابطها.' });
+            }
+
+            // Simple validation for image URL
+            const isImage = /\.(jpg|jpeg|png|webp|gif|svg)(\?.*)?$/i.test(imageUrl);
+            if (!isImage && !message.attachments.first()) {
+                return message.reply({ content: '❌ الرابط المقدم لا يبدو أنه رابط صورة صالح.' });
+            }
+
+            const { dbManager } = require('../utils/database.js');
+
+            if (respName.toLowerCase() === 'all') {
+                if (Object.keys(currentResps).length === 0) {
+                    return message.reply({ content: '❌ لا توجد مسؤوليات مسجلة حالياً.' });
                 }
+
+                for (const name in currentResps) {
+                    currentResps[name].image = imageUrl;
+                }
+
+                writeJSONFile(DATA_FILES.responsibilities, currentResps);
+                global.responsibilities = currentResps;
+
+                try {
+                    if (dbManager && dbManager.run) {
+                        await dbManager.run('ALTER TABLE responsibilities ADD COLUMN image TEXT').catch(() => {});
+                        await dbManager.run('UPDATE responsibilities SET image = ?', [imageUrl]);
+                    }
+                } catch (e) {}
+
+                return message.reply({ content: `✅ تم تعيين الصورة لجميع المسؤوليات (${Object.keys(currentResps).length}) بنجاح.` });
+            }
+
+            if (!currentResps[respName]) {
+                return message.reply({ content: `❌ المسؤولية "**${respName}**" غير موجودة.` });
+            }
+
+            currentResps[respName].image = imageUrl;
+            
+            writeJSONFile(DATA_FILES.responsibilities, currentResps);
+            global.responsibilities = currentResps;
+
+            // Update database if possible
+            try {
+                if (dbManager && dbManager.run) {
+                    await dbManager.run('ALTER TABLE responsibilities ADD COLUMN image TEXT').catch(() => {});
+                    await dbManager.run('UPDATE responsibilities SET image = ? WHERE name = ?', [imageUrl, respName]);
+                }
+            } catch (e) {}
+
+            return message.reply({ content: `✅ تم تعيين الصورة للمسؤولية "**${respName}**" بنجاح.` });
+        }
+
+        if (args[0] === 'chat') {
+            const channel = message.mentions.channels.first() || message.guild.channels.cache.get(args[1]);
+            if (!channel) return message.reply('**يرجى منشن القناة أو كتابة الآيدي الخاص بها**');
+            
+            const configData = readJSONFile(DATA_FILES.respConfig, { guilds: {} });
+            if (!configData.guilds[guildId]) configData.guilds[guildId] = {};
+            configData.guilds[guildId].applyChannel = channel.id;
+            writeJSONFile(DATA_FILES.respConfig, configData);
+            
+            return message.reply(`**✅ تم تحديد قناة طلبات المسؤولية: <#${channel.id}>**`);
+        }
+
+        if (subCommand === 'setup') {
+            // التحقق من وجود قناة الاقتراحات
+            if (!guildConfig.suggestionsChannel) {
+                await message.channel.send('منشن روم الاقتراحات');
                 
-                setGuildConfig(guildId, { suggestionsChannel: suggestionsChannel.id });
-                
-                await msg.channel.send('منشن روم الايمبد');
-                
-                // انتظار منشن روم الايمبد
-                const embedCollector = msg.channel.createMessageCollector({
+                // انتظار منشن القناة
+                const channelCollector = message.channel.createMessageCollector({
                     filter: m => m.author.id === message.author.id && m.mentions.channels.size > 0,
-                    time: 600000, // 10 minutes
+                    time: 60000,
                     max: 1
                 });
-
-                embedCollector.on('end', () => {
-                    embedCollector.removeAllListeners();
+                
+                channelCollector.on('collect', async (msg) => {
+                    const suggestionsChannel = msg.mentions.channels.first();
+                    
+                    // تأكيد أن القناة تنتمي لنفس السيرفر
+                    if (suggestionsChannel.guild.id !== guildId) {
+                        await msg.channel.send('يجب اختيار روم من نفس السيرفر');
+                        return;
+                    }
+                    
+                    setGuildConfig(guildId, { suggestionsChannel: suggestionsChannel.id });
+                    
+                    await msg.channel.send('منشن روم الايمبد');
+                    
+                    // انتظار منشن روم الايمبد
+                    const embedCollector = msg.channel.createMessageCollector({
+                        filter: m => m.author.id === message.author.id && m.mentions.channels.size > 0,
+                        time: 60000,
+                        max: 1
+                    });
+                    
+                    embedCollector.on('collect', async (embedMsg) => {
+                        const embedChannel = embedMsg.mentions.channels.first();
+                        
+                        // تأكيد أن القناة تنتمي لنفس السيرفر
+                        if (embedChannel.guild.id !== guildId) {
+                            await embedMsg.channel.send('يجب اختيار قناة من نفس السيرفر');
+                            return;
+                        }
+                        
+                        setGuildConfig(guildId, { embedChannel: embedChannel.id });
+                        
+                        // سؤال نوع الرسالة
+                        askMessageFormat(embedMsg.channel, message.author.id, async (format) => {
+                            await sendResponsibilitiesMessage(embedChannel, client, format);
+                        });
+                    });
+                    
+                    embedCollector.on('end', (collected) => {
+                        if (collected.size === 0) {
+                            msg.channel.send('انتهت مهلة الانتظار لمنشن روم الايمبد');
+                        }
+                    });
                 });
                 
-                embedCollector.on('collect', async (embedMsg) => {
-                    const embedChannel = embedMsg.mentions.channels.first();
+                channelCollector.on('end', (collected) => {
+                    if (collected.size === 0) {
+                        message.channel.send('انتهت مهلة الانتظار لمنشن روم الاقتراحات');
+                    }
+                });
+                
+            } else if (!guildConfig.embedChannel) {
+                await message.channel.send('منشن روم الايمبد');
+                
+                const embedCollector = message.channel.createMessageCollector({
+                    filter: m => m.author.id === message.author.id && m.mentions.channels.size > 0,
+                    time: 60000,
+                    max: 1
+                });
+                
+                embedCollector.on('collect', async (msg) => {
+                    const embedChannel = msg.mentions.channels.first();
                     
                     // تأكيد أن القناة تنتمي لنفس السيرفر
                     if (embedChannel.guild.id !== guildId) {
-                        await embedMsg.channel.send('يجب اختيار قناة من نفس السيرفر');
+                        await msg.channel.send('يجب اختيار قناة من نفس السيرفر');
                         return;
                     }
                     
                     setGuildConfig(guildId, { embedChannel: embedChannel.id });
                     
                     // سؤال نوع الرسالة
-                    askMessageFormat(embedMsg.channel, message.author.id, async (format) => {
+                    askMessageFormat(msg.channel, message.author.id, async (format) => {
                         await sendResponsibilitiesMessage(embedChannel, client, format);
                     });
                 });
                 
                 embedCollector.on('end', (collected) => {
                     if (collected.size === 0) {
-                        msg.channel.send('انتهت مهلة الانتظار لمنشن روم الايمبد');
+                        message.channel.send('انتهت مهلة الانتظار لمنشن روم الايمبد');
                     }
                 });
-            });
-            
-            channelCollector.on('end', (collected) => {
-                if (collected.size === 0) {
-                    message.channel.send('انتهت مهلة الانتظار لمنشن روم الاقتراحات');
-                }
-            });
-            
-        } else if (!guildConfig.embedChannel) {
-            await message.channel.send('منشن روم الايمبد');
-            
-            const embedCollector = message.channel.createMessageCollector({
-                filter: m => m.author.id === message.author.id && m.mentions.channels.size > 0,
-                time: 60000,
-                max: 1
-            });
-            
-            embedCollector.on('collect', async (msg) => {
-                const embedChannel = msg.mentions.channels.first();
                 
-                // تأكيد أن القناة تنتمي لنفس السيرفر
-                if (embedChannel.guild.id !== guildId) {
-                    await msg.channel.send('يجب اختيار قناة من نفس السيرفر');
-                    return;
+            } else {
+                // إذا كانت القنوات محددة، اسأل عن نوع الرسالة ثم أرسلها
+                try {
+                    const embedChannel = await client.channels.fetch(guildConfig.embedChannel);
+                    if (embedChannel && embedChannel.guild.id === guildId) {
+                        // سؤال نوع الرسالة
+                        askMessageFormat(message.channel, message.author.id, async (format) => {
+                            await sendResponsibilitiesMessage(embedChannel, client, format);
+                        });
+                    } else {
+                        await message.channel.send('روم الايمبد المحدد غير موجود أو غير صحيح، منشن روم جديد للايمبد');
+                    }
+                } catch (error) {
+                    console.error('خطأ في جلب قناة الايمبد:', error);
+                    await message.channel.send('حدث خطأ في جلب روم الايمبد، منشن روم جديد للايمبد');
                 }
-                
-                setGuildConfig(guildId, { embedChannel: embedChannel.id });
-                
-                // سؤال نوع الرسالة
-                askMessageFormat(msg.channel, message.author.id, async (format) => {
-                    await sendResponsibilitiesMessage(embedChannel, client, format);
-                });
-            });
-            
-            embedCollector.on('end', (collected) => {
-                if (collected.size === 0) {
-                    message.channel.send('انتهت مهلة الانتظار لمنشن روم الايمبد');
-                }
-            });
-            
-        } else {
-            // إذا كانت القنوات محددة، اسأل عن نوع الرسالة ثم أرسلها
-            try {
-                const embedChannel = await client.channels.fetch(guildConfig.embedChannel);
-                if (embedChannel && embedChannel.guild.id === guildId) {
-                    // سؤال نوع الرسالة
-                    askMessageFormat(message.channel, message.author.id, async (format) => {
-                        await sendResponsibilitiesMessage(embedChannel, client, format);
-                    });
-                } else {
-                    await message.channel.send('روم الايمبد المحدد غير موجود أو غير صحيح، منشن روم جديد للايمبد');
-                }
-            } catch (error) {
-                console.error('خطأ في جلب قناة الايمبد:', error);
-                await message.channel.send('حدث خطأ في جلب روم الايمبد، منشن روم جديد للايمبد');
             }
         }
     },

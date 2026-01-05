@@ -1,4 +1,4 @@
-const { EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
+const { EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const moment = require('moment-timezone');
@@ -845,6 +845,12 @@ async function handleAdminApplicationInteraction(interaction) {
                     await candidate.roles.add(roleId, `موافقة على طلب التقديم الإداري - بواسطة ${interaction.user.tag}`);
                     addedRoles.push({ id: roleId, name: role.name });
                     console.log(`✅ تم إضافة الدور ${role.name} للمرشح ${candidate.displayName}`);
+
+                    // إزالة التقييد عند القبول (في حال كان مرفوضاً سابقاً)
+                    if (settings.rejectedCooldowns && settings.rejectedCooldowns[application.candidateId]) {
+                        delete settings.rejectedCooldowns[application.candidateId];
+                        saveAdminApplicationSettings(settings);
+                    }
 
                     // تأخير بسيط بين إضافة الأدوار لتجنب rate limiting
                     if (adminRolesToGrant.length > 1) {
