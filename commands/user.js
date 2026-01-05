@@ -7,7 +7,7 @@ const { isChannelBlocked } = require('./chatblock.js');
 module.exports = {
     name: 'user',
     aliases: ['u'],
-    description: 'يظهر معلومات تفصيلية عن العضو (نسخة محسنة وخفيفة)',
+    description: 'يظهر معلومات تفصيلية عن العضو مع تنبيه للأعضاء الجدد',
     async execute(message, args, { client }) {
         try {
             if (isChannelBlocked(message.channel.id)) return;
@@ -20,33 +20,36 @@ module.exports = {
                 return message.reply({ embeds: [colorManager.createEmbed().setDescription('**❌ لم يتم العثور على هذا العضو**')] });
             }
 
-            // جلب العضو من الكاش أولاً لتقليل الطلبات
             const member = message.guild.members.cache.get(targetUser.id) || 
                           await message.guild.members.fetch(targetUser.id).catch(() => null);
             
             const joinDate = member ? moment(member.joinedAt).fromNow() : 'غير موجود في السيرفر';
             const accountAge = moment(targetUser.createdAt).fromNow();
 
-            // 1. جلب الداعي (من الكاش أو سجلات التدقيق المحدودة)
+            // فحص إذا كان العضو جديداً (انضم خلال آخر 24 ساعة)
+            let isNewMember = '';
+            if (member) {
+                const joinedTimestamp = member.joinedTimestamp;
+                const twentyFourHoursAgo = Date.now() - (24 * 60 * 60 * 1000);
+                if (joinedTimestamp > twentyFourHoursAgo) {
+                    isNewMember = '\n\n**الحالة :**\n\n**عضو جديد ✨**';
+                }
+            }
+
             let inviterInfo = 'غير معروف';
             if (member && member.inviterId) {
                 inviterInfo = `<@${member.inviterId}>`;
             }
 
-            // 2. حساب الدعوات بطريقة خفيفة جداً (CPU Friendly)
-            // بدلاً من fetch() لكل الأعضاء، نستخدم fetch() للدعوات فقط (سريع جداً)
             let inviteCount = 0;
             try {
                 const guildInvites = await message.guild.invites.fetch();
-                // نفلتر الدعوات الخاصة بالمستخدم فقط ونجمع استخداماتها
-                // هذه العملية سريعة جداً ولا تستهلك CPU لأنها تتعامل مع قائمة صغيرة (الدعوات) وليس الأعضاء
                 const userInvites = guildInvites.filter(i => i.inviter && i.inviter.id === targetUser.id);
                 userInvites.forEach(i => inviteCount += i.uses);
             } catch (e) {
                 inviteCount = 0;
             }
 
-            // 3. جلب الأجهزة (من الكاش مباشرة)
             let devices = 'Offline';
             if (member && member.presence) {
                 const clientStatus = member.presence.clientStatus;
@@ -75,7 +78,8 @@ module.exports = {
                     `**الدعوات :**\n\n` +
                     `**${inviteCount.toLocaleString()}**\n\n` +
                     `**الاجهزه :**\n\n` +
-                    `**${devices}**`
+                    `**${devices}**` +
+                    isNewMember
                 );
 
             await message.reply({ embeds: [embed] });
