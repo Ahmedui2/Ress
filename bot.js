@@ -688,43 +688,33 @@ client.on(Events.InviteDelete, (invite) => {
 });
 
 client.on(Events.GuildMemberAdd, async (member) => {
-
     try {
-
         const oldInvites = guildInvites.get(member.guild.id);
-
         const newInvites = await member.guild.invites.fetch();
 
-        
-
         let usedInvite = newInvites.find(inv => {
-
             const prevUses = oldInvites?.get(inv.code) || 0;
-
             return inv.uses > prevUses;
-
         });
 
-        // تحديث الكاش
-
         const inviteMap = new Map();
-
         newInvites.forEach(inv => inviteMap.set(inv.code, inv.uses));
-
         guildInvites.set(member.guild.id, inviteMap);
 
         if (usedInvite) {
-
-            member.inviterId = usedInvite.inviterId;
-
+            member.inviterId = usedInvite.inviter?.id;
+            console.log(`👤 العضو ${member.user.tag} انضم بواسطة ${usedInvite.inviter?.tag || "غير معروف"} (كود: ${usedInvite.code})`);
+            await dbManager.addInvite(member.id, member.inviterId, "invite");
+        } else {
+            const isVanity = member.guild.vanityURLCode && (member.guild.features.includes("VANITY_URL"));
+            const method = isVanity ? "vanity" : "unknown";
+            const inviterId = member.guild.ownerId;
+            console.log(`🔗 العضو ${member.user.tag} انضم بطريقة (${method}) - تم احتسابها لمالك السيرفر: ${inviterId}`);
+            await dbManager.addInvite(member.id, inviterId, method);
         }
-
     } catch (error) {
-
-        console.error('❌ خطأ في تتبع دخول عضو:', error);
-
+        console.error("❌ خطأ في تتبع دخول عضو:", error);
     }
-
 });
 
 client.once(Events.ClientReady, async () => {
@@ -1690,8 +1680,8 @@ const { isChannelBlocked } = require('./commands/chatblock.js');
     const CURRENT_ADMIN_ROLES = getCachedAdminRoles();
     const hasAdminRole = CURRENT_ADMIN_ROLES.length > 0 && member.roles.cache.some(role => CURRENT_ADMIN_ROLES.includes(role.id));
 
-    // Commands for everyone (help, tops, تفاعلي, ستريكي, profile, myprofile)
-    if (commandName === 'help' || commandName === 'tops' || commandName === 'توب' || commandName === 'تفاعلي' || commandName === 'تواجدي' || commandName === 'me' || commandName === 'ستريكي' || commandName === 'profile' || commandName === 'id' || commandName === 'p' || commandName === 'myprofile') {
+    // Commands for everyone (help, tops, تفاعلي, ستريكي, profile, myprofile, داوني)
+    if (commandName === 'help' || commandName === 'tops' || commandName === 'توب' || commandName === 'تفاعلي' || commandName === 'تواجدي' || commandName === 'me' || commandName === 'ستريكي' || commandName === 'profile' || commandName === 'id' || commandName === 'p' || commandName === 'myprofile' || commandName === 'داوني') {
       if (commandName === 'مسؤولياتي') {
         await showUserResponsibilities(message, message.author, responsibilities, client);
       } else {
@@ -1702,8 +1692,8 @@ const { isChannelBlocked } = require('./commands/chatblock.js');
     else if (commandName === 'اجازتي') {
       await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
     }
-    // Commands for admins and owners (مسؤول, اجازه, check, rooms)
-    else if (commandName === 'مسؤول' || commandName === 'اجازه' || commandName === 'مسؤولياتي' || commandName === 'اجازتي' || commandName === 'check' || commandName === 'rooms') {
+    // Commands for admins and owners (user, مسؤول, اجازه, check, rooms)
+    else if (commandName === 'user' || commandName === 'مسؤول' || commandName === 'اجازه' || commandName === 'مسؤولياتي' || commandName === 'اجازتي' || commandName === 'check' || commandName === 'rooms') {
       if (commandName === 'مسؤول') {
         console.log(`🔍 التحقق من صلاحيات المستخدم ${message.author.id} لأمر مسؤول:`);
         console.log(`- isOwner: ${isOwner}`);
