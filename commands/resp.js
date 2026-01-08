@@ -712,11 +712,6 @@ async function handleApplyRespModal(interaction, client) {
             .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
             .setTimestamp();
 
-        // إضافة صورة المسؤولية داخل الإيمبد لضمان وصولهما معاً
-        if (respData && respData.image) {
-            applyEmbed.setImage(respData.image);
-        }
-
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId(`approve_apply_${interaction.user.id}_${respName}`)
@@ -730,9 +725,14 @@ async function handleApplyRespModal(interaction, client) {
 
         await channel.send({ embeds: [applyEmbed], components: [row] });
         
-        // إرسال الصورة الفاصلة كرسالة منفصلة بعد الإيمبد مباشرة
-        const separatorUrl = 'https://cdn.discordapp.com/attachments/1446184605056106690/1447086623954173972/colors-5.png?ex=693657f0&is=69350670&hm=126e0ab559dc0a642e9672d1c0d1a3e62d10a704b14fa25c46460870b67d9682&';
-        await channel.send({ content: separatorUrl }).catch(err => console.error('Failed to send separator image:', err));
+        // إرسال صورة المسؤولية (المعينة عبر resp img) كخط فاصل منفصل بعد الإيمبد مباشرة
+        if (respData && respData.image) {
+            await channel.send({ content: respData.image }).catch(err => console.error('Failed to send responsibility separator image:', err));
+        } else {
+            // خط فاصل افتراضي في حال عدم وجود صورة للمسؤولية
+            const defaultSeparator = 'https://cdn.discordapp.com/attachments/1446184605056106690/1447086623954173972/colors-5.png?ex=693657f0&is=69350670&hm=126e0ab559dc0a642e9672d1c0d1a3e62d10a704b14fa25c46460870b67d9682&';
+            await channel.send({ content: defaultSeparator }).catch(err => console.error('Failed to send default separator image:', err));
+        }
 
         // تعيين الكولداون للمستخدم بعد إرسال الطلب بنجاح
         applyCooldowns.set(interaction.user.id, Date.now());
