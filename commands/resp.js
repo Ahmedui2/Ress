@@ -5,7 +5,7 @@ const colorManager = require('../utils/colorManager.js');
 
 // نظام الكولداون
 const applyCooldowns = new Map();
-const COOLDOWN_TIME = 5 * 60 * 1000; // 5 دقائق بالملي ثانية
+const COOLDOWN_TIME = 30 * 60 * 1000; // 30 دقيقة بالملي ثانية
 
 const DATA_FILES = {
     responsibilities: path.join(__dirname, '..', 'data', 'responsibilities.json'),
@@ -615,6 +615,20 @@ async function handleApplyRespSelect(interaction, client) {
     try {
         if (interaction.replied || interaction.deferred) return;
 
+        // التحقق من الكولداون
+        const lastApply = applyCooldowns.get(interaction.user.id);
+        if (lastApply) {
+            const timeLeft = lastApply + COOLDOWN_TIME - Date.now();
+            if (timeLeft > 0) {
+                const minutes = Math.floor(timeLeft / 60000);
+                const seconds = Math.floor((timeLeft % 60000) / 1000);
+                return await interaction.reply({
+                    content: `⏳ **يجب عليك الانتظار ${minutes}د و ${seconds}ث قبل تقديم طلب آخر.**`,
+                    ephemeral: true
+                });
+            }
+        }
+
         const selectedResp = interaction.values[0];
         
         const modal = new ModalBuilder()
@@ -641,6 +655,20 @@ async function handleApplyRespSelect(interaction, client) {
 async function handleApplyRespModal(interaction, client) {
     try {
         if (interaction.replied || interaction.deferred) return;
+
+        // التحقق من الكولداون
+        const lastApply = applyCooldowns.get(interaction.user.id);
+        if (lastApply) {
+            const timeLeft = lastApply + COOLDOWN_TIME - Date.now();
+            if (timeLeft > 0) {
+                const minutes = Math.floor(timeLeft / 60000);
+                const seconds = Math.floor((timeLeft % 60000) / 1000);
+                return await interaction.reply({
+                    content: `⏳ **يجب عليك الانتظار ${minutes}د و ${seconds}ث قبل تقديم طلب آخر.**`,
+                    ephemeral: true
+                });
+            }
+        }
 
         const respName = interaction.customId.replace('apply_resp_modal_', '');
         const reason = interaction.fields.getTextInputValue('apply_reason');
