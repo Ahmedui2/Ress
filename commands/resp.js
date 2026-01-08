@@ -3,6 +3,10 @@ const fs = require('fs');
 const path = require('path');
 const colorManager = require('../utils/colorManager.js');
 
+// نظام الكولداون
+const applyCooldowns = new Map();
+const COOLDOWN_TIME = 5 * 60 * 1000; // 5 دقائق بالملي ثانية
+
 const DATA_FILES = {
     responsibilities: path.join(__dirname, '..', 'data', 'responsibilities.json'),
     respConfig: path.join(__dirname, '..', 'data', 'respConfig.json'),
@@ -405,6 +409,9 @@ async function handleSuggestionModal(interaction, client) {
 // دالة للتعامل مع اختيار مسؤولية من المنيو
 async function handleResponsibilitySelect(interaction, client) {
     try {
+        // فحص حالة التفاعل قبل البدء
+        if (interaction.replied || interaction.deferred) return;
+
         // Defer immediately to prevent "Unknown Interaction" error
         await interaction.deferReply({ ephemeral: true });
         
@@ -548,6 +555,22 @@ async function handleResponsibilitySelect(interaction, client) {
 // دالة للتعامل مع زر طلب المسؤولية
 async function handleApplyRespButton(interaction, client) {
     try {
+        if (interaction.replied || interaction.deferred) return;
+
+        // التحقق من الكولداون
+        const lastApply = applyCooldowns.get(interaction.user.id);
+        if (lastApply) {
+            const timeLeft = lastApply + COOLDOWN_TIME - Date.now();
+            if (timeLeft > 0) {
+                const minutes = Math.floor(timeLeft / 60000);
+                const seconds = Math.floor((timeLeft % 60000) / 1000);
+                return await interaction.reply({
+                    content: `⏳ **يجب عليك الانتظار ${minutes}د و ${seconds}ث قبل تقديم طلب آخر.**`,
+                    ephemeral: true
+                });
+            }
+        }
+
         const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
         
         if (Object.keys(currentResps).length === 0) {
@@ -590,6 +613,8 @@ async function handleApplyRespButton(interaction, client) {
 // دالة للتعامل مع اختيار المسؤولية للتقديم
 async function handleApplyRespSelect(interaction, client) {
     try {
+        if (interaction.replied || interaction.deferred) return;
+
         const selectedResp = interaction.values[0];
         
         const modal = new ModalBuilder()
@@ -615,6 +640,8 @@ async function handleApplyRespSelect(interaction, client) {
 // دالة للتعامل مع مودال التقديم
 async function handleApplyRespModal(interaction, client) {
     try {
+        if (interaction.replied || interaction.deferred) return;
+
         const respName = interaction.customId.replace('apply_resp_modal_', '');
         const reason = interaction.fields.getTextInputValue('apply_reason');
         const guildId = interaction.guild.id;
@@ -669,6 +696,20 @@ async function handleApplyRespModal(interaction, client) {
 
         await channel.send({ embeds: [applyEmbed], components: [row] });
         
+        // إرسال صورة المسؤولية كرسالة منفصلة إذا وجدت
+        const respData = currentResps[respName];
+        if (respData && respData.image) {
+            await channel.send({ content: respData.image });
+        }
+        
+        // تعيين الكولداون للمستخدم بعد إرسال الطلب بنجاح
+        applyCooldowns.set(interaction.user.id, Date.now());
+        
+        // إرسال الصورة الفاصلة بعد الإيمبد إذا كانت موجودة في الإعدادات
+        if (config.guilds[guildId] && config.guilds[guildId].respImage) {
+            await channel.send({ content: config.guilds[guildId].respImage });
+        }
+        
         await interaction.reply({
             content: 'تم إرسال طلبك بنجاح، سيتم الرد عليك قريباً',
             ephemeral: true
@@ -696,8 +737,13 @@ async function handleApplyAction(interaction, client) {
         const targetMember = await interaction.guild.members.fetch(userId).catch(() => null);
         
         if (action === 'approve') {
+            if (interaction.replied || interaction.deferred) return;
+            await interaction.deferUpdate();
+
             const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
-            if (!currentResps[respName]) return interaction.reply({ content: 'المسؤولية لم تعد موجودة', ephemeral: true });
+            if (!currentResps[respName]) {
+                return interaction.followUp({ content: 'المسؤولية لم تعد موجودة', ephemeral: true });
+            }
             
             if (!currentResps[respName].responsibles) currentResps[respName].responsibles = [];
             if (!currentResps[respName].responsibles.includes(userId)) {
@@ -732,11 +778,16 @@ async function handleApplyAction(interaction, client) {
                     await targetMember.send({ embeds: [approveEmbed] }).catch(() => {});
                 }
                 
-                await interaction.update({ 
-                    content: `**✅ تم قبول المسؤول الجديد : <@${userId}>**\n\n ليكون مسؤول** لمسؤولية ال${respName}**\n\n** قبلة مسؤول المسؤوليات : ** <@${interaction.user.id}>`, 
+                await interaction.editReply({ 
+                    content: `**✅ تم قبول المسؤول الجديد : <@${userId}>**\n\n ليكون مسؤول** لمسؤولية ال${respName}**\n\n** قبلة مسؤول المسؤوليات : ** <@${interaction.user.id}>\n\n${currentResps[respName]?.image || 'https://media.discordapp.net/attachments/1310189726883581962/1325785089312882779/line_1.png'}`, 
                     embeds: [],
-                    files: currentResps[respName]?.image ? [currentResps[respName].image] : [],
+                    files: [],
                     components: [] 
+                });
+            } else {
+                await interaction.editReply({
+                    content: `**⚠️ <@${userId}> مسؤول بالفعل في مسؤولية ال${respName}**`,
+                    components: []
                 });
             }
         } else if (action === 'reject') {
@@ -774,6 +825,10 @@ async function handleRejectReasonModal(interaction, client) {
 
         const [, , , userId, respName] = interaction.customId.split('_');
         const reason = interaction.fields.getTextInputValue('reject_reason');
+        
+        if (interaction.replied || interaction.deferred) return;
+        await interaction.deferReply({ ephemeral: true });
+
         const targetMember = await interaction.guild.members.fetch(userId).catch(() => null);
         
         if (targetMember) {
@@ -793,20 +848,19 @@ async function handleRejectReasonModal(interaction, client) {
         }
         
         const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
-        const respImage = currentResps[respName]?.image;
+        const respImage = currentResps[respName]?.image || 'https://media.discordapp.net/attachments/1310189726883581962/1325785089312882779/line_1.png';
 
-        await interaction.reply({ 
-            content: `❌** تم رفض الإداري <@${userId}>**\n\n** لتقديمة في مسؤولية ال${respName}** مع ذكر السبب.`,
+        await interaction.editReply({ 
+            content: `❌** تم رفض الإداري <@${userId}>**\n\n** لتقديمة في مسؤولية ال${respName}** مع ذكر السبب.\n\n${respImage}`,
             embeds: [],
-            files: respImage ? [respImage] : [],
-            ephemeral: true 
+            files: []
         });
         // محاولة تعديل الرسالة الأصلية في قناة الطلبات
         if (interaction.message) {
             await interaction.message.edit({ 
-                content: `** ❌ تم رفض الاداري <@${userId}>**\n\n **لمسؤولية ال${respName}**\n\n** بواسطة مسؤول المسؤوليات **:<@${interaction.user.id}>\n**السبب :** ${reason}`,
+                content: `** ❌ تم رفض الاداري <@${userId}>**\n\n **لمسؤولية ال${respName}**\n\n** بواسطة مسؤول المسؤوليات **:<@${interaction.user.id}>\n**السبب :** ${reason}\n\n${respImage}`,
                 embeds: [],
-                files: respImage ? [respImage] : [],
+                files: [],
                 components: [] 
             }).catch(() => {});
         }
@@ -886,68 +940,181 @@ module.exports = {
             });
         }
 
-        if (subCommand === 'img') {
-            const respName = args[1];
-            if (!respName) {
-                return message.reply({ content: '❌ يرجى تحديد اسم المسؤولية أو كتابة `all`. مثال: `resp img الشات` أو `resp img all`' });
-            }
+        
+if (subCommand === 'delete' && args[1] === 'all') {
+    const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
+    let totalRemoved = 0;
+    let totalRolesRemoved = 0;
 
-            const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
-            
-            let imageUrl = message.attachments.first()?.url || args[2];
-            if (!imageUrl) {
-                return message.reply({ content: '❌ يرجى إرفاق صورة أو وضع رابطها.' });
-            }
+    const confirmMsg = await message.reply(
+        '**⚠️ هل أنت متأكد من إزالة جميع المسؤولين من كافة المسؤوليات؟**\n' +
+        'سيتم فقط:\n' +
+        '- سحب رولات المسؤوليات\n' +
+        '- تفريغ المسؤولين\n' +
+        '**(لن يتم حذف أي مسؤولية أو إعداداتها)**\n\n' +
+        'لديك 15 ثانية للتأكيد.'
+    );
 
-            // Simple validation for image URL
-            const isImage = /\.(jpg|jpeg|png|webp|gif|svg)(\?.*)?$/i.test(imageUrl);
-            if (!isImage && !message.attachments.first()) {
-                return message.reply({ content: '❌ الرابط المقدم لا يبدو أنه رابط صورة صالح.' });
-            }
+    await confirmMsg.react('✅');
+    await confirmMsg.react('❌');
 
-            const { dbManager } = require('../utils/database.js');
+    const filter = (reaction, user) =>
+        ['✅', '❌'].includes(reaction.emoji.name) &&
+        user.id === message.author.id;
 
-            if (respName.toLowerCase() === 'all') {
-                if (Object.keys(currentResps).length === 0) {
-                    return message.reply({ content: '❌ لا توجد مسؤوليات مسجلة حالياً.' });
-                }
+    const collected = await confirmMsg
+        .awaitReactions({ filter, max: 1, time: 15000 })
+        .catch(() => null);
 
-                for (const name in currentResps) {
-                    currentResps[name].image = imageUrl;
-                }
+    if (!collected || collected.first().emoji.name === '❌') {
+        return confirmMsg.edit('**❌ تم إلغاء العملية.**');
+    }
 
-                writeJSONFile(DATA_FILES.responsibilities, currentResps);
-                global.responsibilities = currentResps;
+    await confirmMsg.edit('**⏳ جاري إزالة المسؤولين وسحب الرولات...**');
 
+    const { dbManager } = require('../utils/database.js');
+
+    for (const respName in currentResps) {
+        const resp = currentResps[respName];
+        const roleId = resp.roleId;
+
+        // توحيد المصدر
+        const members = resp.responsibles || resp.members || [];
+
+        if (members.length > 0) {
+            for (const userId of members) {
+                totalRemoved++;
                 try {
-                    if (dbManager && dbManager.run) {
-                        await dbManager.run('ALTER TABLE responsibilities ADD COLUMN image TEXT').catch(() => {});
-                        await dbManager.run('UPDATE responsibilities SET image = ?', [imageUrl]);
+                    const member = await message.guild.members.fetch(userId).catch(() => null);
+                    if (member && roleId && member.roles.cache.has(roleId)) {
+                        await member.roles.remove(roleId).catch(() => {});
+                        totalRolesRemoved++;
                     }
-                } catch (e) {}
-
-                return message.reply({ content: `✅ تم تعيين الصورة لجميع المسؤوليات (${Object.keys(currentResps).length}) بنجاح.` });
+                } catch (_) {}
             }
-
-            if (!currentResps[respName]) {
-                return message.reply({ content: `❌ المسؤولية "**${respName}**" غير موجودة.` });
-            }
-
-            currentResps[respName].image = imageUrl;
-            
-            writeJSONFile(DATA_FILES.responsibilities, currentResps);
-            global.responsibilities = currentResps;
-
-            // Update database if possible
-            try {
-                if (dbManager && dbManager.run) {
-                    await dbManager.run('ALTER TABLE responsibilities ADD COLUMN image TEXT').catch(() => {});
-                    await dbManager.run('UPDATE responsibilities SET image = ? WHERE name = ?', [imageUrl, respName]);
-                }
-            } catch (e) {}
-
-            return message.reply({ content: `✅ تم تعيين الصورة للمسؤولية "**${respName}**" بنجاح.` });
         }
+
+        // تفريغ المسؤولين
+        resp.members = [];
+        resp.responsibles = [];
+        
+        // تحديث قاعدة البيانات لكل مسؤولية بشكل صحيح
+        if (dbManager && dbManager.updateResponsibility) {
+            await dbManager.updateResponsibility(respName, resp);
+        }
+    }
+
+    // مزامنة الملف والذاكرة العالمية
+    writeJSONFile(DATA_FILES.responsibilities, currentResps);
+    global.responsibilities = currentResps;
+
+    // تحديث إيمبد العرض تلقائياً ليعكس التغييرات
+    try {
+        await updateEmbedMessage(message.client);
+    } catch (error) {
+        console.error('Error updating embed message after delete all:', error);
+    }
+
+    return confirmMsg.edit(
+        `**✅ تم بنجاح.**\n` +
+        `- عدد المسؤولين المزالين: \`${totalRemoved}\`\n` +
+        `- عدد الرولات المسحوبة: \`${totalRolesRemoved}\`\n\n` +
+        `**المسؤوليات ما زالت موجودة بدون أي تغيير ✅**`
+    );
+}
+
+        if (subCommand === 'img') {
+    const respName = args[1];
+
+    if (!respName) {
+        return message.reply({
+            content: '❌ يرجى تحديد اسم المسؤولية أو كتابة `all`.\nمثال: `resp img الشات` أو `resp img all`'
+        });
+    }
+
+    const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
+
+    // جلب الصورة (مرفوعة أو رابط)
+    const attachment = message.attachments.first();
+    const imageUrl = attachment?.url || args[2];
+
+    if (!imageUrl) {
+        return message.reply({ content: '❌ يرجى إرفاق صورة أو وضع رابطها.' });
+    }
+
+    // فحص بسيط للصورة
+    const isImage =
+        attachment ||
+        /\.(jpg|jpeg|png|webp|gif)$/i.test(imageUrl);
+
+    if (!isImage) {
+        return message.reply({ content: '❌ الرابط المقدم لا يبدو أنه صورة صالحة.' });
+    }
+
+    const { dbManager } = require('../utils/database.js');
+
+    // ===== img all =====
+    if (respName.toLowerCase() === 'all') {
+        const respKeys = Object.keys(currentResps);
+
+        if (respKeys.length === 0) {
+            return message.reply({ content: '❌ لا توجد مسؤوليات مسجلة حالياً.' });
+        }
+
+        for (const name of respKeys) {
+            currentResps[name].image = imageUrl;
+        }
+
+        writeJSONFile(DATA_FILES.responsibilities, currentResps);
+        global.responsibilities = currentResps;
+
+        // تحديث قاعدة البيانات (مرة وحدة فقط)
+        try {
+            if (dbManager?.run) {
+                await dbManager.run(
+                    'ALTER TABLE responsibilities ADD COLUMN image TEXT'
+                ).catch(() => {});
+                await dbManager.run(
+                    'UPDATE responsibilities SET image = ?',
+                    [imageUrl]
+                );
+            }
+        } catch (_) {}
+
+        return message.reply({
+            content: `✅ تم تعيين الصورة لجميع المسؤوليات (${respKeys.length}) بنجاح.`
+        });
+    }
+
+    // ===== img <respName> =====
+    if (!currentResps[respName]) {
+        return message.reply({
+            content: `❌ المسؤولية "**${respName}**" غير موجودة.`
+        });
+    }
+
+    currentResps[respName].image = imageUrl;
+
+    writeJSONFile(DATA_FILES.responsibilities, currentResps);
+    global.responsibilities = currentResps;
+
+    try {
+        if (dbManager?.run) {
+            await dbManager.run(
+                'ALTER TABLE responsibilities ADD COLUMN image TEXT'
+            ).catch(() => {});
+            await dbManager.run(
+                'UPDATE responsibilities SET image = ? WHERE name = ?',
+                [imageUrl, respName]
+            );
+        }
+    } catch (_) {}
+
+    return message.reply({
+        content: `✅ تم تعيين الصورة للمسؤولية "**${respName}**" بنجاح.`
+    });
+}
+
 
         if (args[0] === 'chat') {
             const channel = message.mentions.channels.first() || message.guild.channels.cache.get(args[1]);
