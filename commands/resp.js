@@ -701,6 +701,7 @@ async function handleApplyRespModal(interaction, client) {
             });
         }
 
+        const respData = currentResps[respName];
         const applyEmbed = colorManager.createEmbed()
             .setTitle('طلب مسؤولية جديد')
             .addFields([
@@ -710,6 +711,11 @@ async function handleApplyRespModal(interaction, client) {
             ])
             .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
             .setTimestamp();
+
+        // إضافة صورة المسؤولية داخل الإيمبد لضمان وصولهما معاً
+        if (respData && respData.image) {
+            applyEmbed.setImage(respData.image);
+        }
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
@@ -723,12 +729,6 @@ async function handleApplyRespModal(interaction, client) {
         );
 
         await channel.send({ embeds: [applyEmbed], components: [row] });
-        
-        // إرسال صورة المسؤولية كرسالة منفصلة إذا وجدت
-        const respData = currentResps[respName];
-        if (respData && respData.image) {
-            await channel.send({ content: respData.image });
-        }
         
         // تعيين الكولداون للمستخدم بعد إرسال الطلب بنجاح
         applyCooldowns.set(interaction.user.id, Date.now());
