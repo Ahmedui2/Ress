@@ -385,10 +385,36 @@ this.startAutoMenuUpdate(client);
     // Bulk Promotion Operations
     async createBulkPromotion(guild, client, targetUserId, sourceRoleId, targetRoleId, duration, reason, byUserId, isBulkOperation = true, sendDM = false) {
         try {
-            // Use the regular promotion logic but skip individual logging and DM for bulk operations
-            const result = await this.createPromotion(guild, client, targetUserId, targetRoleId, duration, reason, byUserId, isBulkOperation, sendDM);
+            const targetMember = await guild.members.fetch(targetUserId);
+            const targetRole = await guild.roles.fetch(targetRoleId);
+            
+            if (targetMember && targetRole) {
+                // حفظ الرولات الإدارية الحالية قبل الترقية الجماعية
+                const adminRoles = this.getAdminRoles();
+                const currentAdminRoles = targetMember.roles.cache.filter(r => 
+                    r.name !== '@everyone' && adminRoles.includes(r.id)
+                );
 
-            return result;
+                // تطبيق الترقية
+                const result = await this.createPromotion(guild, client, targetUserId, targetRoleId, duration, reason, byUserId, isBulkOperation, sendDM);
+
+                // إزالة الرولات القديمة بناءً على المنطق الذكي (للترقيات الجماعية النهائية)
+                if (result.success && (!duration || duration === 'نهائي')) {
+                    for (const [oldRoleId, oldRole] of currentAdminRoles) {
+                        if (oldRoleId !== targetRoleId && targetMember.roles.cache.has(oldRoleId)) {
+                            const isNewRoleRank = targetRole.name.length <= 2;
+                            const isOldRoleRank = oldRole.name.length <= 2;
+
+                            if (isNewRoleRank === isOldRoleRank) {
+                                await targetMember.roles.remove(oldRoleId, `إزالة الرول القديم (${isNewRoleRank ? 'حرف' : 'ظواهر'}) بعد الترقية الجماعية: ${reason}`);
+                                console.log(`[Bulk-Smart Logic] تم إزالة ${oldRole.name} من ${targetMember.displayName}`);
+                            }
+                        }
+                    }
+                }
+                return result;
+            }
+            return { success: false, error: 'العضو أو الرول غير موجود' };
         } catch (error) {
             console.error('Error in bulk promotion:', error);
             return { success: false, error: 'حدث خطأ أثناء الترقية الجماعية' };
@@ -480,11 +506,11 @@ this.startAutoMenuUpdate(client);
                 r.name !== '@everyone' && this.isAdminRole(r.id)
             );
             const previousHighestRole = targetMember.roles.highest;
-            const previousRoleName = previousHighestRole.name === '@everyone' ? 'لا يوجد رول' : previousHighestRole.name;
+            const previousRoleMention = previousHighestRole.id === guild.id ? '@everyone' : `<@&${previousHighestRole.id}>`;
 
-            // تحديد إذا كان يجب إزالة الرولات القديمة (فقط للترقيات النهائية المفردة وليس المتعددة)
+            // تحديد إذا كان يجب إزالة الرولات القديمة (تم استبداله بالمنطق الذكي بالأسفل)
             const isPermanentPromotion = !duration || duration === null || duration === undefined || duration === 'نهائي';
-            const shouldRemoveOldRoles = isPermanentPromotion && currentAdminRoles.size > 0 && !isMultiPromotion;
+            const shouldRemoveOldRoles = false; // تعطيل المنطق القديم لصالح المنطق الذكي المدمج بالأسفل
 
             // Add the role with error handling
             try {
@@ -495,21 +521,31 @@ this.startAutoMenuUpdate(client);
                 return { success: false, error: 'فشل في إضافة الرول - تحقق من صلاحيات البوت' };
             }
 
-            // إزالة الرولات الإدارية القديمة فقط للترقيات النهائية المفردة (ليس المتعددة)
+            // إزالة الرولات القديمة بناءً على قاعدة الـ 3 أحرف الذكية
             let removedOldRoles = [];
-            if (shouldRemoveOldRoles) {
-                for (const [oldRoleId, oldRole] of currentAdminRoles) {
-                    try {
-                        // تأكد من أن الرول ليس هو نفسه الرول الجديد
-                        if (oldRoleId !== roleId && targetMember.roles.cache.has(oldRoleId)) {
-                            await targetMember.roles.remove(oldRoleId, `إزالة الرول الإداري القديم بعد الترقية النهائية: ${reason}`);
-                            removedOldRoles.push(oldRole.name);
-                            console.log(`تم إزالة الرول القديم ${oldRole.name} من ${targetMember.displayName} بعد الترقية النهائية`);
+            for (const [oldRoleId, oldRole] of currentAdminRoles) {
+                try {
+                    // تأكد من أن الرول ليس هو نفسه الرول الجديد
+                    if (oldRoleId !== roleId && targetMember.roles.cache.has(oldRoleId)) {
+                        const newRoleName = role.name;
+                        const oldRoleName = oldRole.name;
+
+                        // قاعدة الـ 3 أحرف:
+                        // إذا كان الرول الجديد <= 2 أحرف (حرف)، يزيل فقط الرولات اللي <= 2 أحرف
+                        // إذا كان الرول الجديد > 2 أحرف (ظواهر)، يزيل فقط الرولات اللي > 2 أحرف
+                        const isNewRoleRank = newRoleName.length <= 2;
+                        const isOldRoleRank = oldRoleName.length <= 2;
+
+                        if (isNewRoleRank === isOldRoleRank) {
+                            await targetMember.roles.remove(oldRoleId, `إزالة الرول القديم (${isNewRoleRank ? 'حرف' : 'ظواهر'}) بعد الترقية: ${reason}`);
+                            removedOldRoles.push(`<@&${oldRoleId}>`);
+                            console.log(`[Smart Logic] تم إزالة ${oldRoleName} لأن الرول الجديد ${newRoleName} من نفس النوع`);
+                        } else {
+                            console.log(`[Smart Logic] تم الإبقاء على ${oldRoleName} لأن الرول الجديد ${newRoleName} من نوع مختلف`);
                         }
-                    } catch (removeError) {
-                        console.error(`خطأ في إزالة الرول القديم ${oldRole.name}:`, removeError);
-                        // لا نوقف العملية، فقط نسجل الخطأ
                     }
+                } catch (removeError) {
+                    console.error(`خطأ في إزالة الرول القديم ${oldRole.name}:`, removeError);
                 }
             }
 
@@ -564,7 +600,7 @@ this.startAutoMenuUpdate(client);
                     role: role,
                     previousRole: {
                         id: previousHighestRole.id,
-                        name: previousRoleName
+                        mention: previousRoleMention
                     },
                     duration: duration || 'نهائي',
                     reason,
@@ -580,11 +616,11 @@ this.startAutoMenuUpdate(client);
                 try {
                     const dmEmbed = colorManager.createEmbed()
                         .setTitle('**تهانينا! تم ترقيتك**')
-                        .setDescription(`تم ترقيتك في خادم **${guild.name}** من **${previousRoleName}** إلى **${role.name}**`)
+                        .setDescription(`تم ترقيتك في خادم **${guild.name}** من **${previousRoleMention}** إلى **${role}**`)
                         .addFields([
                             { name: '**معلومات الترقية**', value: 'تفاصيل الترقية', inline: false },
-                            { name: '**من**', value: previousRoleName, inline: true },
-                            { name: '**إلى**', value: `**${role.name}**`, inline: true },
+                            { name: '**من**', value: previousRoleMention, inline: true },
+                            { name: '**إلى**', value: `**${role}**`, inline: true },
                             { name: '**المدة**', value: duration || 'نهائي', inline: true },
                             { name: '**السبب**', value: reason, inline: false },
                             { name: '**تم بواسطة**', value: `<@${byUserId}>`, inline: true },
@@ -618,7 +654,7 @@ this.startAutoMenuUpdate(client);
                 endTime: endTime,
                 removedOldRoles: removedOldRoles,
                 roleName: role.name,
-                previousRoleName: previousRoleName
+                previousRoleMention: previousRoleMention
             };
 
         } catch (error) {
@@ -1190,8 +1226,8 @@ this.startAutoMenuUpdate(client);
         switch (type) {
             case 'PROMOTION_APPLIED':
                 const promotionDescription = data.previousRole ?
-                    `تم ترقية العضو <@${data.targetUser.id}> من **${data.previousRole.name}** إلى **${data.role.name}**` :
-                    `تم ترقية العضو <@${data.targetUser.id}> إلى **${data.role.name}**`;
+                    `تم ترقية العضو <@${data.targetUser.id}> من ${data.previousRole.mention || data.previousRole.name} إلى <@&${data.role.id}>` :
+                    `تم ترقية العضو <@${data.targetUser.id}> إلى <@&${data.role.id}>`;
 
                 embed.setTitle('**تم تطبيق ترقية فردية**')
                     .setDescription(promotionDescription)
@@ -1205,9 +1241,10 @@ this.startAutoMenuUpdate(client);
                     ]);
 
                 if (data.previousRole && data.previousRole.name !== 'لا يوجد رول') {
+                    const oldRoleMention = data.previousRole.mention || `<@&${data.previousRole.id}>`;
                     const oldRoleText = data.removedOldRole ?
-                        `${data.previousRole.name} *(تم إزالته)*` :
-                        data.previousRole.name;
+                        `${oldRoleMention} *(تم إزالته)*` :
+                        oldRoleMention;
                     embed.addFields([{ name: '**الرول السابق**', value: oldRoleText, inline: true }]);
                 }
 
@@ -1231,8 +1268,8 @@ this.startAutoMenuUpdate(client);
             case 'BULK_PROMOTION':
                 embed.setTitle('**تم ترقية رول**')
                     .addFields([
-                        { name: '**من الرول:**', value: data.sourceRoleName || 'غير محدد', inline: true },
-                        { name: '**الى الرول:**', value: data.targetRoleName || 'غير محدد', inline: true },
+                        { name: '**من الرول:**', value: data.sourceRoleId ? `<@&${data.sourceRoleId}>` : (data.sourceRoleName || 'غير محدد'), inline: true },
+                        { name: '**الى الرول:**', value: data.targetRoleId ? `<@&${data.targetRoleId}>` : (data.targetRoleName || 'غير محدد'), inline: true },
                         { name: '**بواسطة:**', value: `<@${data.moderatorId}>`, inline: true },
                         { name: '**السبب:**', value: data.reason, inline: false },
                         { name: '**المده:**', value: data.duration, inline: true },
@@ -1367,7 +1404,7 @@ this.startAutoMenuUpdate(client);
 
                 // إضافة قائمة الرولات الجديدة
                 if (data.roles && data.roles.length > 0) {
-                    const rolesText = data.roles.map(role => `• **${role.name}**`).join('\n');
+                    const rolesText = data.roles.map(role => `• <@&${role.id}>`).join('\n');
                     embed.addFields([
                         { name: '**الرولات الجديدة**', value: rolesText, inline: false }
                     ]);
@@ -1375,7 +1412,7 @@ this.startAutoMenuUpdate(client);
 
                 // إضافة معلومات الرولات المُزالة إذا وجدت
                 if (data.removedOldRoles && data.removedOldRoles.length > 0) {
-                    const removedText = data.removedOldRoles.map(role => `• **${role}**`).join('\n');
+                    const removedText = data.removedOldRoles.map(roleMention => `• ${roleMention}`).join('\n');
                     embed.addFields([
                         { name: '**الرولات المُزالة**', value: removedText, inline: false },
                         { name: '**سبب الإزالة**', value: 'ترقية نهائية - تم إزالة الرولات الإدارية السابقة', inline: false }
