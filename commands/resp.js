@@ -730,10 +730,12 @@ async function handleApplyRespModal(interaction, client) {
 
         await channel.send({ embeds: [applyEmbed], components: [row] });
         
+        // إرسال الصورة الفاصلة كرسالة منفصلة بعد الإيمبد مباشرة
+        const separatorUrl = 'https://cdn.discordapp.com/attachments/1446184605056106690/1447086623954173972/colors-5.png?ex=693657f0&is=69350670&hm=126e0ab559dc0a642e9672d1c0d1a3e62d10a704b14fa25c46460870b67d9682&';
+        await channel.send({ content: separatorUrl }).catch(err => console.error('Failed to send separator image:', err));
+
         // تعيين الكولداون للمستخدم بعد إرسال الطلب بنجاح
         applyCooldowns.set(interaction.user.id, Date.now());
-        
-        // تم إزالة إرسال الصورة الفاصلة التلقائية بناءً على طلب المستخدم
         
         await interaction.reply({
             content: 'تم إرسال طلبك بنجاح، سيتم الرد عليك قريباً',
