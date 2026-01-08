@@ -412,20 +412,6 @@ async function handleResponsibilitySelect(interaction, client) {
         // فحص حالة التفاعل قبل البدء
         if (interaction.replied || interaction.deferred) return;
 
-        // التحقق من الكولداون
-        const lastApply = applyCooldowns.get(interaction.user.id);
-        if (lastApply) {
-            const timeLeft = lastApply + COOLDOWN_TIME - Date.now();
-            if (timeLeft > 0) {
-                const minutes = Math.floor(timeLeft / 60000);
-                const seconds = Math.floor((timeLeft % 60000) / 1000);
-                return await interaction.reply({
-                    content: `⏳ **يجب عليك الانتظار ${minutes}د و ${seconds}ث قبل تقديم طلب آخر أو اختيار مسؤولية أخرى.**`,
-                    ephemeral: true
-                });
-            }
-        }
-
         // Defer immediately to prevent "Unknown Interaction" error
         await interaction.deferReply({ ephemeral: true });
         
