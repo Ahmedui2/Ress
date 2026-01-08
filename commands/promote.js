@@ -1591,24 +1591,68 @@ async function handlePromoteInteractions(interaction, context) {
         const adminRoles = readJson(adminRolesPath, []);
         const currentSourceRole = interaction.guild.roles.cache.get(sourceRoleId);
 
+        // إضافة مرحلة اختيار النوع (ظواهر أو حرف) للترقية الجماعية
+        const typeSelect = new StringSelectMenuBuilder()
+            .setCustomId(`promote_bulk_type_select_${sourceRoleId}`)
+            .setPlaceholder('اختر نوع الترقية (ظواهر / حرف)...')
+            .addOptions([
+                {
+                    label: 'ظواهر (أدوار 3 حروف فأكثر)',
+                    value: 'type_phenomena',
+                    description: 'عرض الرولات الإدارية التي تتكون من 3 حروف فأكثر',
+                    emoji: '🌟'
+                },
+                {
+                    label: 'حرف (أدوار حرفين أو أقل)',
+                    value: 'type_letter',
+                    description: 'عرض الرولات الإدارية التي تتكون من حرف أو حرفين فقط',
+                    emoji: '🔤'
+                }
+            ]);
+
+        const typeRow = new ActionRowBuilder().addComponents(typeSelect);
+
+        await interaction.update({
+            embeds: [statsEmbed],
+            content: ' **يرجى اختيار نوع الترقية لعرض الرولات الجماعية المناسبة:**',
+            components: [typeRow]
+        });
+        return;
+    }
+
+    // Handle bulk type selection
+    if (interaction.isStringSelectMenu() && customId.startsWith('promote_bulk_type_select_')) {
+        const sourceRoleId = customId.split('_')[4];
+        const type = interaction.values[0];
+        
+        const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
+        const adminRoles = readJson(adminRolesPath, []);
+        const currentSourceRole = interaction.guild.roles.cache.get(sourceRoleId);
+
         const availableTargetRoles = adminRoles.filter(roleId => {
-            if (roleId === sourceRoleId) return false; // استبعاد نفس الرول
+            if (roleId === sourceRoleId) return false;
             const targetRole = interaction.guild.roles.cache.get(roleId);
-            // إظهار الرولات الأعلى فقط (position أكبر)
-            return targetRole && currentSourceRole && targetRole.position > currentSourceRole.position;
+            
+            // فلترة حسب النوع (ظواهر أو حرف) والوضعية (أعلى فقط)
+            if (!targetRole || !currentSourceRole || targetRole.position <= currentSourceRole.position) return false;
+            
+            if (type === 'type_phenomena') {
+                return targetRole.name.length >= 3;
+            } else {
+                return targetRole.name.length <= 2;
+            }
         }).map(roleId => {
             const role = interaction.guild.roles.cache.get(roleId);
             return role ? {
                 label: role.name,
                 value: `${sourceRoleId}_${roleId}`,
-                description: `ترقية إلى ${role.name} (موضع أعلى)`
+                description: `ترقية إلى ${role.name} (${type === 'type_phenomena' ? 'ظواهر' : 'حرف'})`
             } : null;
         }).filter(Boolean).slice(0, 25);
 
         if (availableTargetRoles.length === 0) {
             await interaction.update({
-                embeds: [statsEmbed],
-                content: ' **لا توجد رولات متاحة للترقية إليها!**',
+                content: `⚠️ **لا توجد رولات ${type === 'type_phenomena' ? 'ظواهر' : 'حرف'} متاحة للترقية إليها وموضعية أعلى من الرول الحالي!**`,
                 components: []
             });
             return;
@@ -1622,8 +1666,7 @@ async function handlePromoteInteractions(interaction, context) {
         const targetRoleRow = new ActionRowBuilder().addComponents(targetRoleSelect);
 
         await interaction.update({
-            embeds: [statsEmbed],
-            content: ' **اختر الرول المستهدف لترقية الأعضاء إليه:**',
+            content: `**الرول الحالي:** <@&${sourceRoleId}>\n**النوع المختار:** ${type === 'type_phenomena' ? 'ظواهر' : 'حرف'}\nاختر الرول المستهدف:`,
             components: [targetRoleRow]
         });
         return;
@@ -1632,8 +1675,6 @@ async function handlePromoteInteractions(interaction, context) {
     // Handle bulk promotion target role selection
     if (interaction.isStringSelectMenu() && customId === 'promote_bulk_role_target') {
         const [sourceRoleId, targetRoleId] = interaction.values[0].split('_');
-
-        // التحقق من هرمية الرولات قبل إظهار النموذج
         const sourceRole = interaction.guild.roles.cache.get(sourceRoleId);
         const targetRole = interaction.guild.roles.cache.get(targetRoleId);
 
@@ -1645,52 +1686,139 @@ async function handlePromoteInteractions(interaction, context) {
             return;
         }
 
-        // فحص أن الرول المستهدف أعلى من الرول المصدر
-        if (targetRole.position <= sourceRole.position) {
-            await interaction.reply({
-                content: `❌ **الرول المستهدف (${targetRole.name}) يجب أن يكون أعلى من الرول المصدر (${sourceRole.name})**`,
-                flags: MessageFlags.Ephemeral
-            });
-            return;
-        }
+        const members = sourceRole.members.filter(m => !m.user.bot);
+        const memberOptions = members.map(m => ({
+            label: m.displayName,
+            value: m.id,
+            description: `استبعاد ${m.displayName} من الترقية`
+        }));
 
-        // فحص أن الرول المستهدف أقل من رول المُرقي
-        const promoterMember = await interaction.guild.members.fetch(interaction.user.id);
-        const promoterHighestRole = promoterMember.roles.highest;
+        // Pagination logic for member exclusion
+        let currentPage = 0;
+        const itemsPerPage = 25;
+        const totalPages = Math.ceil(memberOptions.length / itemsPerPage);
 
-        // تحسين منطق التحقق: إذا كان الشخص المعين مالك البوت، يُسمح بالترقية بغض النظر عن الهرمية
-        const settings = promoteManager.getSettings();
-        const botOwnersData = readJson(path.join(__dirname, '..', 'data', 'botConfig.json'), {});
-        const botOwners = botOwnersData.owners || [];
+        async function sendExclusionMenu(page) {
+            const start = page * itemsPerPage;
+            const end = start + itemsPerPage;
+            const currentOptions = memberOptions.slice(start, end);
 
-        if (!botOwners.includes(interaction.user.id)) {
-            if (targetRole.position >= promoterHighestRole.position) {
-                await interaction.reply({
-                    content: `❌ **لا يمكنك ترقية أعضاء إلى رول (${targetRole.name}) أعلى من أو مساوي لرولك الأعلى (${promoterHighestRole.name})**`,
-                    flags: MessageFlags.Ephemeral
-                });
-                return;
+            const row = new ActionRowBuilder().addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId(`promote_bulk_exclude_${sourceRoleId}_${targetRoleId}_${page}`)
+                    .setPlaceholder(`استبعاد أعضاء (صفحة ${page + 1}/${totalPages})...`)
+                    .setMinValues(0)
+                    .setMaxValues(currentOptions.length)
+                    .addOptions(currentOptions)
+            );
+
+            const navRow = new ActionRowBuilder();
+            if (page > 0) {
+                navRow.addComponents(new ButtonBuilder().setCustomId(`promote_bulk_exclude_prev_${sourceRoleId}_${targetRoleId}_${page}`).setLabel('السابق').setStyle(ButtonStyle.Secondary));
             }
+            if (page < totalPages - 1) {
+                navRow.addComponents(new ButtonBuilder().setCustomId(`promote_bulk_exclude_next_${sourceRoleId}_${targetRoleId}_${page}`).setLabel('التالي').setStyle(ButtonStyle.Secondary));
+            }
+            navRow.addComponents(new ButtonBuilder().setCustomId(`promote_bulk_skip_exclude_${sourceRoleId}_${targetRoleId}`).setLabel('متابعة الترقية').setStyle(ButtonStyle.Primary));
+
+            const components = [row];
+            if (navRow.components.length > 0) components.push(navRow);
+
+            await interaction.update({
+                content: `**الرول المستهدف:** ${targetRole.name}\n**حدد الأعضاء المراد استبعادهم من الترقية الجماعية:**`,
+                components: components
+            });
         }
 
-        // Create modal for duration and reason
+        if (memberOptions.length === 0) {
+            await showBulkModal(interaction, sourceRoleId, targetRoleId, []);
+        } else {
+            await sendExclusionMenu(0);
+        }
+        return;
+    }
+
+    // Handle navigation and exclusion selection
+    if (interaction.isButton() && (customId.startsWith('promote_bulk_exclude_prev_') || customId.startsWith('promote_bulk_exclude_next_'))) {
+        const parts = customId.split('_');
+        const sourceRoleId = parts[4];
+        const targetRoleId = parts[5];
+        let page = parseInt(parts[6]);
+        if (customId.includes('prev')) page--;
+        else page++;
+        
+        // We need to re-fetch memberOptions or store it. For simplicity in this edit, we assume interaction state.
+        // Re-implementing logic for the button click
+        const sourceRole = interaction.guild.roles.cache.get(sourceRoleId);
+        const targetRole = interaction.guild.roles.cache.get(targetRoleId);
+        const members = sourceRole.members.filter(m => !m.user.bot);
+        const memberOptions = members.map(m => ({
+            label: m.displayName,
+            value: m.id,
+            description: `استبعاد ${m.displayName} من الترقية`
+        }));
+        const itemsPerPage = 25;
+        const totalPages = Math.ceil(memberOptions.length / itemsPerPage);
+
+        const start = page * itemsPerPage;
+        const end = start + itemsPerPage;
+        const currentOptions = memberOptions.slice(start, end);
+
+        const row = new ActionRowBuilder().addComponents(
+            new StringSelectMenuBuilder()
+                .setCustomId(`promote_bulk_exclude_${sourceRoleId}_${targetRoleId}_${page}`)
+                .setPlaceholder(`استبعاد أعضاء (صفحة ${page + 1}/${totalPages})...`)
+                .setMinValues(0)
+                .setMaxValues(currentOptions.length)
+                .addOptions(currentOptions)
+        );
+
+        const navRow = new ActionRowBuilder();
+        if (page > 0) navRow.addComponents(new ButtonBuilder().setCustomId(`promote_bulk_exclude_prev_${sourceRoleId}_${targetRoleId}_${page}`).setLabel('السابق').setStyle(ButtonStyle.Secondary));
+        if (page < totalPages - 1) navRow.addComponents(new ButtonBuilder().setCustomId(`promote_bulk_exclude_next_${sourceRoleId}_${targetRoleId}_${page}`).setLabel('التالي').setStyle(ButtonStyle.Secondary));
+        navRow.addComponents(new ButtonBuilder().setCustomId(`promote_bulk_skip_exclude_${sourceRoleId}_${targetRoleId}`).setLabel('متابعة الترقية').setStyle(ButtonStyle.Primary));
+
+        const components = [row];
+        if (navRow.components.length > 0) components.push(navRow);
+
+        await interaction.update({ components });
+        return;
+    }
+
+    if (interaction.isButton() && customId.startsWith('promote_bulk_skip_exclude_')) {
+        const parts = customId.split('_');
+        const sourceRoleId = parts[4];
+        const targetRoleId = parts[5];
+        await showBulkModal(interaction, sourceRoleId, targetRoleId, []);
+        return;
+    }
+
+    if (interaction.isStringSelectMenu() && customId.startsWith('promote_bulk_exclude_')) {
+        const parts = customId.split('_');
+        const sourceRoleId = parts[3];
+        const targetRoleId = parts[4];
+        const excludedIds = interaction.values;
+        await showBulkModal(interaction, sourceRoleId, targetRoleId, excludedIds);
+        return;
+    }
+
+    async function showBulkModal(interaction, sourceRoleId, targetRoleId, excludedIds = []) {
         const modal = new ModalBuilder()
-            .setCustomId(`promote_bulk_modal_${sourceRoleId}_${targetRoleId}`)
+            .setCustomId(`promote_bulk_modal_${sourceRoleId}_${targetRoleId}_${excludedIds.join(',')}`)
             .setTitle('تفاصيل الترقية الجماعية');
 
         const durationInput = new TextInputBuilder()
             .setCustomId('promote_duration')
-            .setLabel('المدة (مثل: 7d أو 12h أو نهائي)')
+            .setLabel('المدة (مثلاً: 7d أو نهائي)')
             .setStyle(TextInputStyle.Short)
             .setRequired(true)
-            .setPlaceholder('7d, 12h, 30m, نهائي');
+            .setValue('نهائي');
 
         const reasonInput = new TextInputBuilder()
             .setCustomId('promote_reason')
             .setLabel('السبب')
             .setStyle(TextInputStyle.Paragraph)
-            .setRequired(true)
-            .setPlaceholder('اذكر سبب الترقية الجماعية...');
+            .setRequired(true);
 
         modal.addComponents(
             new ActionRowBuilder().addComponents(durationInput),
@@ -1698,87 +1826,34 @@ async function handlePromoteInteractions(interaction, context) {
         );
 
         await interaction.showModal(modal);
-        return;
     }
 
     // Handle user selection for promotion
     if (interaction.isUserSelectMenu() && customId === 'promote_select_user') {
-        const selectedUserId = interaction.values[0];
-        const member = await interaction.guild.members.fetch(selectedUserId);
+        const targetId = interaction.values[0];
+        
+        const promoSelect = new StringSelectMenuBuilder()
+            .setCustomId('promote_select_type')
+            .setPlaceholder('اختر نوع الترقية (ظواهر / حرف)...')
+            .addOptions([
+                {
+                    label: 'ظواهر (أدوار 3 حروف فأكثر)',
+                    value: 'type_phenomena',
+                    description: 'عرض الرولات الإدارية التي تتكون من 3 حروف فأكثر',
+                    emoji: '🌟'
+                },
+                {
+                    label: 'حرف (أدوار حرفين أو أقل)',
+                    value: 'type_letter',
+                    description: 'عرض الرولات الإدارية التي تتكون من حرف أو حرفين فقط',
+                    emoji: '🔤'
+                }
+            ]);
 
-        // Check if user is banned from promotions
-        const promoteBansPath = path.join(__dirname, '..', 'data', 'promoteBans.json');
-        const promoteBans = readJson(promoteBansPath, {});
-        const banKey = `${selectedUserId}_${interaction.guild.id}`;
-
-        if (promoteBans[banKey]) {
-            const banData = promoteBans[banKey];
-            const banEndTime = banData.endTime;
-
-            if (!banEndTime || banEndTime > Date.now()) {
-                const banEndText = banEndTime ? 
-                    `<t:${Math.floor(banEndTime / 1000)}:R>` : 
-                    'نهائي';
-                await interaction.reply({
-                    content: ` **العضو** <@${selectedUserId}> **محظور من الترقيات.**\n**ينتهي الحظر:** ${banEndText}`,
-                    flags: MessageFlags.Ephemeral
-                });
-                return;
-            }
-        }
-
-        const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
-        const adminRoles = readJson(adminRolesPath, []);
-
-        if (adminRoles.length === 0) {
-            await interaction.reply({
-                content: '⚠️ **لا توجد رولات إدارية محددة! يرجى إضافة رولات إدارية أولاً.**',
-                flags: MessageFlags.Ephemeral
-            });
-            return;
-        }
-
-        // Check if member has multiple admin roles to support multiple selection
-        const memberAdminRoles = member.roles.cache.filter(role => adminRoles.includes(role.id));
-        const memberHighestRole = member.roles.highest;
-
-        // Filter admin roles that user doesn't already have and show higher roles only
-        const availableRoles = adminRoles.filter(roleId => {
-            if (member.roles.cache.has(roleId)) return false; // العضو يملكه بالفعل
-            const targetRole = interaction.guild.roles.cache.get(roleId);
-            // إظهار الرولات الأعلى من أعلى رول للعضو فقط
-            return targetRole && targetRole.position > memberHighestRole.position;
-        }).map(roleId => {
-            const role = interaction.guild.roles.cache.get(roleId);
-            return role ? {
-                label: role.name,
-                value: roleId,
-                description: `ترقية إلى ${role.name} (أعلى من رولك الحالي)`
-            } : null;
-        }).filter(Boolean).slice(0, 25);
-
-        if (availableRoles.length === 0) {
-            await interaction.reply({
-                content: ` **العضو** <@${selectedUserId}> **يملك جميع الرولات الإدارية المتاحة!**`,
-                flags: MessageFlags.Ephemeral
-            });
-            return;
-        }
-
-        // تحسين النظام لدعم الاختيار المتعدد
-        const maxSelections = Math.min(availableRoles.length, 10); // الحد الأقصى 10 رولات
-        const hasMultipleOptions = availableRoles.length > 1;
-
-        const roleSelect = new StringSelectMenuBuilder()
-            .setCustomId(`promote_role_${selectedUserId}`)
-            .setPlaceholder(hasMultipleOptions ? 'اختر الرول/الرولات للترقية (يمكن اختيار متعدد)...' : 'اختر الرول للترقية...')
-            .setMinValues(1)
-            .setMaxValues(maxSelections)
-            .addOptions(availableRoles);
-
-        const roleRow = new ActionRowBuilder().addComponents(roleSelect);
+        const row = new ActionRowBuilder().addComponents(promoSelect);
 
         // جمع إحصائيات المستخدم
+        const member = await interaction.guild.members.fetch(targetId);
         const userStats = await collectUserStats(member);
 
         // حساب الوقت في الفويس بالأيام والساعات
@@ -1788,38 +1863,94 @@ async function handlePromoteInteractions(interaction, context) {
         const minutes = Math.floor((voiceTimeInMs % (1000 * 60 * 60)) / (1000 * 60));
         const voiceTimeFormatted = days > 0 ? `${days} يوم، ${hours} ساعة` : hours > 0 ? `${hours} ساعة، ${minutes} دقيقة` : `${minutes} دقيقة`;
 
-        const embedContent = colorManager.createEmbed()
-            .setTitle('🎯 اختيار رولات الترقية')
-            .setDescription(`**العضو المختار:** <@${selectedUserId}>\n\n` +
-                          `✅ **رولات متاحة للترقية:** ${availableRoles.length}\n` +
-                          `🎮 **اختيار متعدد:** ${hasMultipleOptions ? 'متاح' : 'غير متاح'}\n\n` +
-                          `${hasMultipleOptions ? 
-                              '**يمكنك اختيار رول واحد أو عدة رولات للترقية دفعة واحدة.**' : 
-                              '**يوجد رول واحد فقط متاح للترقية.**'}`)
-            .addFields([
-                {
-                    name: '📊 **إحصائيات العضو**',
-                    value: `🎤 **الوقت في الفويس:** ${voiceTimeFormatted}\n` +
-                           `💬 **الرسائل:** ${userStats.realMessages || 0}\n` +
-                           `⭐ **التفاعلات:** ${userStats.reactionsGiven || 0}\n` +
-                           `🔊 **الانضمام للفويس:** ${userStats.joinedChannels || 0} مرة`,
-                    inline: false
-                },
-                {
-                    name: '📋 **الرولات المتاحة**',
-                    value: availableRoles.map((role, index) => 
-                        `${index + 1}. **${role.label}**`
-                    ).join('\n'),
-                    inline: false
-                }
-            ])
-            .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
-            .setTimestamp();
+        const statsEmbed = colorManager.createEmbed()
+            .setTitle('📊 إحصائيات العضو المختار')
+            .setDescription(`**العضو:** <@${targetId}>\n\n` +
+                          `🎤 **الوقت في الفويس:** ${voiceTimeFormatted}\n` +
+                          `💬 **الرسائل:** ${userStats.realMessages || 0}\n` +
+                          `⭐ **التفاعلات:** ${userStats.reactionsGiven || 0}\n` +
+                          `🔊 **الانضمام للفويس:** ${userStats.joinedChannels || 0} مرة`)
+            .setThumbnail(member.user.displayAvatarURL({ dynamic: true }));
 
-        await interaction.reply({
-            embeds: [embedContent],
-            components: [roleRow],
-            flags: MessageFlags.Ephemeral
+        await interaction.update({
+            content: `**العضو المحدد:** <@${targetId}>\nيرجى اختيار نوع الترقية لعرض الرولات المناسبة:`,
+            components: [row],
+            embeds: [statsEmbed]
+        });
+        return;
+    }
+
+    if (interaction.customId === 'promote_select_type') {
+        const type = interaction.values[0];
+        const targetId = interaction.message.content.match(/<@(\d+)>/)[1];
+        
+        const guild = interaction.guild;
+        const targetMember = await guild.members.fetch(targetId);
+        const adminRoles = promoteManager.getAdminRoles();
+        
+        let filteredRoles = [];
+        const guildRoles = await guild.roles.fetch();
+        
+        if (type === 'type_phenomena') {
+            // ظواهر: 3 حروف أو أكثر وأعلى من أعلى رول ظواهر مع الشخص (بغض النظر عن الهرمية العامة)
+            const targetMemberAdminRoles = targetMember.roles.cache.filter(role => adminRoles.includes(role.id));
+            const highestPhenomenaRole = targetMemberAdminRoles
+                .filter(role => role.name.length >= 3)
+                .sort((a, b) => b.position - a.position)
+                .first();
+
+            // الفلترة بناءً على أعلى رول ظواهر فقط
+            const minPosition = highestPhenomenaRole ? highestPhenomenaRole.position : -1;
+
+            filteredRoles = adminRoles.filter(roleId => {
+                const role = guildRoles.get(roleId);
+                return role && role.name.length >= 3 && role.position > minPosition;
+            });
+        } else {
+            // حرف: أعلى من أعلى رول "حرف" مع الشخص (بغض النظر عن الهرمية العامة)
+            const targetMemberAdminRoles = targetMember.roles.cache.filter(role => adminRoles.includes(role.id));
+            const highestLetterRole = targetMemberAdminRoles
+                .filter(role => role.name.length <= 2)
+                .sort((a, b) => b.position - a.position)
+                .first();
+
+            // الفلترة بناءً على أعلى رول حرف فقط
+            const minPosition = highestLetterRole ? highestLetterRole.position : -1;
+
+            filteredRoles = adminRoles.filter(roleId => {
+                const role = guildRoles.get(roleId);
+                // رولات الحرف هي 1 أو 2 حرف
+                return role && role.name.length <= 2 && role.position > minPosition;
+            });
+        }
+
+        if (filteredRoles.length === 0) {
+            return interaction.update({
+                content: '⚠️ لم يتم العثور على رولات إدارية مناسبة لهذا العضو بناءً على الاختيار.',
+                components: [],
+                flags: MessageFlags.Ephemeral
+            });
+        }
+
+        const roleOptions = await Promise.all(filteredRoles.slice(0, 25).map(async roleId => {
+            const role = await guild.roles.fetch(roleId);
+            return {
+                label: role.name,
+                value: roleId,
+                description: `ID: ${roleId}`
+            };
+        }));
+
+        const roleSelect = new StringSelectMenuBuilder()
+            .setCustomId(`promote_role_${targetId}`)
+            .setPlaceholder('اختر الرول المطلوب للترقية...')
+            .addOptions(roleOptions);
+
+        const row = new ActionRowBuilder().addComponents(roleSelect);
+
+        await interaction.update({
+            content: `**العضو المحدد:** <@${targetId}>\nتمت تصفية الرولات بناءً على اختيارك (${type === 'type_phenomena' ? 'ظواهر' : 'حرف'}):`,
+            components: [row]
         });
         return;
     }
@@ -3228,7 +3359,11 @@ async function handlePromoteInteractions(interaction, context) {
 
     // Handle modal submission for bulk promotion
     if (interaction.isModalSubmit() && customId.startsWith('promote_bulk_modal_')) {
-        const [, , , sourceRoleId, targetRoleId] = customId.split('_');
+        const parts = customId.split('_');
+        const sourceRoleId = parts[3];
+        const targetRoleId = parts[4];
+        const excludedIdsString = parts[5] || '';
+        const excludedIds = excludedIdsString ? excludedIdsString.split(',') : [];
         const duration = interaction.fields.getTextInputValue('promote_duration');
         const reason = interaction.fields.getTextInputValue('promote_reason');
 
@@ -3253,6 +3388,7 @@ async function handlePromoteInteractions(interaction, context) {
             let successCount = 0;
             let failedCount = 0;
             let bannedCount = 0;
+            let excludedCount = 0;
             let results = [];
             let successfulMembers = [];
             let failedMembers = [];
@@ -3260,17 +3396,22 @@ async function handlePromoteInteractions(interaction, context) {
 
             // إرسال رسالة تحديث للمستخدم
             await interaction.editReply({
-                content: `⏳ **جاري معالجة الترقية الجماعية...**\n**الأعضاء المستهدفين:** ${membersWithRole.size}\n**من:** ${bulkSourceRole.name}\n**إلى:** ${targetRole.name}`
+                content: `⏳ **جاري معالجة الترقية الجماعية...**\n**الأعضاء المستهدفين:** ${membersWithRole.size}\n**المستبعدين:** ${excludedIds.length}\n**من:** ${bulkSourceRole.name}\n**إلى:** ${targetRole.name}`
             });
 
             // Process each member
             for (const [userId, member] of membersWithRole) {
-                const banKey = `${userId}_${interaction.guild.id}`;
-
                 // تجاهل البوتات
-                if (member.user.bot) {
+                if (member.user.bot) continue;
+
+                // Check if excluded manually
+                if (excludedIds.includes(userId)) {
+                    excludedCount++;
+                    results.push(`🚫 ${member.displayName}: مستبعد يدوياً`);
                     continue;
                 }
+
+                const banKey = `${userId}_${interaction.guild.id}`;
 
                 // Check if banned
                 if (promoteBans[banKey]) {
@@ -3375,6 +3516,7 @@ async function handlePromoteInteractions(interaction, context) {
                     { name: '**نجح**', value: successCount.toString(), inline: true },
                     { name: '**فشل**', value: failedCount.toString(), inline: true },
                     { name: '**محظورين**', value: bannedCount.toString(), inline: true },
+                    { name: '**مستبعدين يدوياً**', value: excludedCount.toString(), inline: true },
                     { name: '**إجمالي الأعضاء**', value: membersWithRole.size.toString(), inline: true },
                     { name: '**المدة**', value: duration === 'نهائي' || !duration ? 'نهائي' : duration, inline: true },
                     { name: '**التاريخ**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
@@ -3412,6 +3554,7 @@ async function handlePromoteInteractions(interaction, context) {
                 successCount,
                 failedCount,
                 bannedCount,
+                excludedCount,
                 totalMembers: membersWithRole.size,
                 guildId: interaction.guild.id,
                 successfulMembers: successfulMembers.map(m => m.id), // حفظ معرفات الأعضاء الناجحين
@@ -3431,6 +3574,7 @@ async function handlePromoteInteractions(interaction, context) {
                 successCount,
                 failedCount: failedMembers.length,
                 bannedCount: bannedMembers.length,
+                excludedCount: excludedCount,
                 totalMembers: membersWithRole.size,
                 successfulMembers: successfulMembers,
                 failedMembers: failedMembers,
@@ -3577,8 +3721,17 @@ async function handlePromoteInteractions(interaction, context) {
                     try {
                         // تأكد من أن الرول ليس من الرولات الجديدة المضافة
                         if (!newRoleIds.includes(oldRoleId) && member.roles.cache.has(oldRoleId)) {
-                            await member.roles.remove(oldRoleId, `إزالة الرول الإداري القديم بعد الترقية المتعددة النهائية: ${reason}`);
-                            allRemovedOldRoles.push(oldRole.name);
+                            // إزالة الرولات القديمة بناءً على قاعدة الـ 3 أحرف الذكية (مكررة للتأكد في حالة الترقية المتعددة)
+                            const isNewRoleRank = role.name.length <= 2;
+                            const isOldRoleRank = oldRole.name.length <= 2;
+
+                            if (isNewRoleRank === isOldRoleRank) {
+                                await member.roles.remove(oldRoleId, `إزالة الرول الإداري القديم بعد الترقية المتعددة النهائية: ${reason}`);
+                                console.log(`[Multi-Smart Logic] تم إزالة ${oldRole.name} لأن الرول الجديد ${role.name} من نفس النوع`);
+                                allRemovedOldRoles.push(oldRole.name);
+                            } else {
+                                console.log(`[Multi-Smart Logic] تم الإبقاء على ${oldRole.name} لأن الرول الجديد ${role.name} من نوع مختلف`);
+                            }
                             console.log(`تم إزالة الرول القديم ${oldRole.name} من ${member.displayName} بعد الترقية المتعددة النهائية`);
                         }
                     } catch (removeError) {
