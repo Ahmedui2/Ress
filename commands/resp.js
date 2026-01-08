@@ -733,10 +733,7 @@ async function handleApplyRespModal(interaction, client) {
         // تعيين الكولداون للمستخدم بعد إرسال الطلب بنجاح
         applyCooldowns.set(interaction.user.id, Date.now());
         
-        // إرسال الصورة الفاصلة بعد الإيمبد إذا كانت موجودة في الإعدادات
-        if (config.guilds[guildId] && config.guilds[guildId].respImage) {
-            await channel.send({ content: config.guilds[guildId].respImage });
-        }
+        // تم إزالة إرسال الصورة الفاصلة التلقائية بناءً على طلب المستخدم
         
         await interaction.reply({
             content: 'تم إرسال طلبك بنجاح، سيتم الرد عليك قريباً',
@@ -807,7 +804,7 @@ async function handleApplyAction(interaction, client) {
                 }
                 
                 await interaction.editReply({ 
-                    content: `**✅ تم قبول المسؤول الجديد : <@${userId}>**\n\n ليكون مسؤول** لمسؤولية ال${respName}**\n\n** قبلة مسؤول المسؤوليات : ** <@${interaction.user.id}>\n\n${currentResps[respName]?.image || 'https://media.discordapp.net/attachments/1310189726883581962/1325785089312882779/line_1.png'}`, 
+                    content: `**✅ تم قبول المسؤول الجديد : <@${userId}>**\n\n ليكون مسؤول** لمسؤولية ال${respName}**\n\n** قبلة مسؤول المسؤوليات : ** <@${interaction.user.id}>`, 
                     embeds: [],
                     files: [],
                     components: [] 
@@ -875,18 +872,15 @@ async function handleRejectReasonModal(interaction, client) {
             await targetMember.send({ embeds: [rejectEmbed] }).catch(() => {});
         }
         
-        const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
-        const respImage = currentResps[respName]?.image || 'https://media.discordapp.net/attachments/1310189726883581962/1325785089312882779/line_1.png';
-
         await interaction.editReply({ 
-            content: `❌** تم رفض الإداري <@${userId}>**\n\n** لتقديمة في مسؤولية ال${respName}** مع ذكر السبب.\n\n${respImage}`,
+            content: `❌** تم رفض الإداري <@${userId}>**\n\n** لتقديمة في مسؤولية ال${respName}** مع ذكر السبب.`,
             embeds: [],
             files: []
         });
         // محاولة تعديل الرسالة الأصلية في قناة الطلبات
         if (interaction.message) {
             await interaction.message.edit({ 
-                content: `** ❌ تم رفض الاداري <@${userId}>**\n\n **لمسؤولية ال${respName}**\n\n** بواسطة مسؤول المسؤوليات **:<@${interaction.user.id}>\n**السبب :** ${reason}\n\n${respImage}`,
+                content: `** ❌ تم رفض الاداري <@${userId}>**\n\n **لمسؤولية ال${respName}**\n\n** بواسطة مسؤول المسؤوليات **:<@${interaction.user.id}>\n**السبب :** ${reason}`,
                 embeds: [],
                 files: [],
                 components: [] 
