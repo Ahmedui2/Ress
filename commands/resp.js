@@ -600,11 +600,18 @@ async function handleApplyRespButton(interaction, client) {
         
         const row = new ActionRowBuilder().addComponents(selectMenu);
         
-        await interaction.reply({
-            content: 'يرجى اختيار المسؤولية من القائمة أدناه:',
-            components: [row],
-            ephemeral: true
-        });
+        if (interaction.replied || interaction.deferred) {
+            await interaction.editReply({
+                content: 'يرجى اختيار المسؤولية من القائمة أدناه:',
+                components: [row]
+            });
+        } else {
+            await interaction.reply({
+                content: 'يرجى اختيار المسؤولية من القائمة أدناه:',
+                components: [row],
+                ephemeral: true
+            });
+        }
     } catch (error) {
         console.error('Error in handleApplyRespButton:', error);
     }
@@ -656,6 +663,9 @@ async function handleApplyRespModal(interaction, client) {
     try {
         if (interaction.replied || interaction.deferred) return;
 
+        // استخدام deferReply لتجنب خطأ Unknown Interaction
+        await interaction.deferReply({ ephemeral: true });
+
         // التحقق من الكولداون
         const lastApply = applyCooldowns.get(interaction.user.id);
         if (lastApply) {
@@ -663,9 +673,8 @@ async function handleApplyRespModal(interaction, client) {
             if (timeLeft > 0) {
                 const minutes = Math.floor(timeLeft / 60000);
                 const seconds = Math.floor((timeLeft % 60000) / 1000);
-                return await interaction.reply({
-                    content: `⏳ **يجب عليك الانتظار ${minutes}د و ${seconds}ث قبل تقديم طلب آخر أو اختيار مسؤولية أخرى.**`,
-                    ephemeral: true
+                return await interaction.editReply({
+                    content: `⏳ **يجب عليك الانتظار ${minutes}د و ${seconds}ث قبل تقديم طلب آخر أو اختيار مسؤولية أخرى.**`
                 });
             }
         }
@@ -680,24 +689,21 @@ async function handleApplyRespModal(interaction, client) {
         // التحقق من أن العضو ليس مسؤولاً بالفعل في هذه المسؤولية
         const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
         if (currentResps[respName] && currentResps[respName].responsibles && currentResps[respName].responsibles.includes(interaction.user.id)) {
-            return await interaction.reply({
-                content: `❌ **أنت بالفعل مسؤول في "${respName}" ولا يمكنك التقديم عليها مرة أخرى.**`,
-                ephemeral: true
+            return await interaction.editReply({
+                content: `❌ **أنت بالفعل مسؤول في "${respName}" ولا يمكنك التقديم عليها مرة أخرى.**`
             });
         }
 
         if (!applyChannelId) {
-            return await interaction.reply({
-                content: 'نظام الطلبات غير مفعل حالياً (لم يتم تحديد قناة الطلبات)',
-                ephemeral: true
+            return await interaction.editReply({
+                content: 'نظام الطلبات غير مفعل حالياً (لم يتم تحديد قناة الطلبات)'
             });
         }
 
         const channel = await client.channels.fetch(applyChannelId).catch(() => null);
         if (!channel) {
-            return await interaction.reply({
-                content: 'قناة الطلبات غير موجودة، يرجى التواصل مع الإدارة',
-                ephemeral: true
+            return await interaction.editReply({
+                content: 'قناة الطلبات غير موجودة، يرجى التواصل مع الإدارة'
             });
         }
 
@@ -737,9 +743,8 @@ async function handleApplyRespModal(interaction, client) {
         // تعيين الكولداون للمستخدم بعد إرسال الطلب بنجاح
         applyCooldowns.set(interaction.user.id, Date.now());
         
-        await interaction.reply({
-            content: 'تم إرسال طلبك بنجاح، سيتم الرد عليك قريباً',
-            ephemeral: true
+        await interaction.editReply({
+            content: 'تم إرسال طلبك بنجاح، سيتم الرد عليك قريباً'
         });
     } catch (error) {
         console.error('Error in handleApplyRespModal:', error);
