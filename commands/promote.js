@@ -1496,17 +1496,13 @@ async function handlePromoteInteractions(interaction, context) {
             
         const updatedRow = new ActionRowBuilder().addComponents(updatedSelect);
         
-        // Use followUp or separate update if needed, but first process the logic
+        // Use update to reset the menu immediately and then handle the logic
+        await interaction.update({
+            components: [updatedRow, ...interaction.message.components.slice(1)]
+        });
+
+        // Process the logic after updating the interaction
         await handleMainMenu(interaction, context);
-        
-        // Then ensure the original menu is reset
-        try {
-            await interaction.message.edit({
-                components: [updatedRow, ...interaction.message.components.slice(1)]
-            });
-        } catch (error) {
-            console.log('فشل في إعادة ضبط القائمة الرئيسية:', error.message);
-        }
         return;
     }
 
@@ -1915,7 +1911,7 @@ async function handlePromoteInteractions(interaction, context) {
 
         await interaction.update({
             content: `**الرول الحالي:** <@&${sourceRoleId}>\n**النوع المختار:** ${type === 'type_phenomena' ? 'ظواهر' : 'حرف'}\nاختر الرول المستهدف:`,
-            components: [updatedRow, ...components]
+            components: components
         });
         return;
     }
@@ -2241,22 +2237,14 @@ async function handlePromoteInteractions(interaction, context) {
             });
         }
 
-        const roleOptions = await Promise.all(filteredRoles.map(async roleId => {
-            try {
-                const role = await guild.roles.fetch(roleId);
-                return {
-                    label: role ? role.name : `رول غير معروف (${roleId})`,
-                    value: roleId,
-                    description: `ID: ${roleId}`
-                };
-            } catch (error) {
-                return {
-                    label: `رول غير موجود (${roleId})`,
-                    value: roleId,
-                    description: `ID: ${roleId}`
-                };
-            }
-        }));
+        const roleOptions = filteredRoles.map(roleId => {
+            const role = guild.roles.cache.get(roleId);
+            return {
+                label: role ? role.name : `رول غير معروف (${roleId})`,
+                value: roleId,
+                description: `ID: ${roleId}`
+            };
+        });
 
         // Use pagination for individual role selection
         const { createPaginatedResponsibilityArray } = require('../utils/responsibilityPagination');
@@ -2269,7 +2257,7 @@ async function handlePromoteInteractions(interaction, context) {
 
         await interaction.update({
             content: `**العضو المحدد:** <@${targetId}>\nتمت تصفية الرولات بناءً على اختيارك (${type === 'type_phenomena' ? 'ظواهر' : 'حرف'}):`,
-            components: [updatedRow, ...components]
+            components: components
         });
         return;
     }
