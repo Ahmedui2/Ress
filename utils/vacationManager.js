@@ -716,6 +716,21 @@ async function endVacation(guild, client, userId, reason = 'انتهت فترة 
         }
 
         console.log(`🎉 تم إنهاء إجازة المستخدم ${userId} بنجاح`);
+        const vacationsToClean = readJson(vacationsPath);
+
+        if (vacationsToClean.active && vacationsToClean.active[userId]) {
+
+            delete vacationsToClean.active[userId];
+
+        }
+
+        if (vacationsToClean.pendingTermination && vacationsToClean.pendingTermination[userId]) {
+
+            delete vacationsToClean.pendingTermination[userId];
+
+        }
+
+        saveVacations(vacationsToClean);
         return { success: true, vacation, rolesRestored };
 
     } catch (error) {
