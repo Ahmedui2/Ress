@@ -305,6 +305,7 @@ async function execute(message, args, context) {
 async function handleInteraction(interaction, context) {
     try {
         const { client, BOT_OWNERS } = context;
+        const customId = interaction.customId;
 
         // Check interaction validity
         if (interaction.replied || interaction.deferred) {
@@ -312,25 +313,43 @@ async function handleInteraction(interaction, context) {
             return;
         }
 
-        const customId = interaction.customId;
+    // Defer immediately if not a modal OR certain select menus that lead to modals
+    const isModalTrigger = 
+        (interaction.isStringSelectMenu() && (customId === 'down_role_selection' || customId === 'down_select_down_to_modify' || customId === 'down_select_down_to_end')) ||
+        (interaction.isModalSubmit());
+
+    if (!isModalTrigger) {
+        // Already deferred/replied check
+        if (interaction.replied || interaction.deferred) return;
+        // Check if the interaction is a StringSelectMenu and if it's one of the setup ones that might need to update the message
+        const isSetupSelect = customId.startsWith('down_setup_');
+        // Also exclude the main menu if it leads to a user select
+        const isMainMenu = customId === 'down_main_menu';
+        // Also exclude user selection for duration modify since it leads to down_select_down_to_modify
+        const isDurationUserSelect = customId === 'down_select_user_for_duration_modify';
+        
+        if (!isSetupSelect && !isMainMenu && !isDurationUserSelect) {
+            await interaction.deferReply({ ephemeral: true }).catch(() => {});
+        }
+    }
         console.log(`معالجة تفاعل down: ${customId}`);
 
         // Handle quick admin actions
         if (customId === 'down_quick_actions') {
-            await interaction.deferReply({ ephemeral: true }).catch(() => {});
             await handleQuickActions(interaction, context);
             return;
         }
 
         // Handle main menu interactions
         if (customId === 'down_main_menu') {
-            await interaction.deferReply({ ephemeral: true }).catch(() => {});
             const hasPermission = await downManager.hasPermission(interaction, BOT_OWNERS);
             if (!hasPermission) {
-                return await interaction.editReply({
-                    content: ' **لا تسوي خوي!**'
-                });
+                const response = { content: ' **لا تسوي خوي!**', ephemeral: true };
+                if (interaction.deferred) await interaction.editReply(response);
+                else await interaction.reply(response);
+                return;
             }
+            // If it's the main menu, we should use update or reply, not editReply if we didn't defer
             await handleMainMenu(interaction, context);
             return;
         }
@@ -339,18 +358,13 @@ async function handleInteraction(interaction, context) {
         if (customId === 'down_settings_button') {
             const hasPermission = await downManager.hasPermission(interaction, BOT_OWNERS);
             if (!hasPermission) {
-                return interaction.reply({
-                    content: ' **لا تسوي خوي!**',
-                    ephemeral: true
-                });
+                const response = { content: ' **لا تسوي خوي!**', ephemeral: true };
+                if (interaction.deferred) await interaction.editReply(response);
+                else await interaction.reply(response);
+                return;
             }
             await handleSettingsButton(interaction, context);
             return;
-        }
-
-        // Defer immediately for other interactions if not a modal
-        if (!interaction.isModalSubmit()) {
-            await interaction.deferReply({ ephemeral: true }).catch(() => {});
         }
 
         // Handle setup interactions
@@ -410,16 +424,22 @@ async function handleSetupStep(interaction, context) {
 
             const channelSelect = new ChannelSelectMenuBuilder()
                 .setCustomId('down_setup_log_channel')
-                .setPlaceholder(' اختر روم السجلات...')
+                .setPlaceholder(' اختر قناة السجلات...')
                 .setChannelTypes([ChannelType.GuildText]);
 
             const channelRow = new ActionRowBuilder().addComponents(channelSelect);
 
-            await interaction.update({
-                embeds: [setupEmbed],
-                components: [channelRow]
-            });
-
+            if (interaction.replied || interaction.deferred) {
+                await interaction.editReply({
+                    embeds: [setupEmbed],
+                    components: [channelRow]
+                });
+            } else {
+                await interaction.update({
+                    embeds: [setupEmbed],
+                    components: [channelRow]
+                });
+            }
         } else if (selectedType === 'roles') {
             // Roles selected - show role selector
             settings.allowedUsers.targets = []; // Reset targets for new selection
@@ -435,10 +455,17 @@ async function handleSetupStep(interaction, context) {
 
             const roleRow = new ActionRowBuilder().addComponents(roleSelect);
 
-            await interaction.update({
-                embeds: [setupEmbed],
-                components: [roleRow]
-            });
+            if (interaction.replied || interaction.deferred) {
+                await interaction.editReply({
+                    embeds: [setupEmbed],
+                    components: [roleRow]
+                });
+            } else {
+                await interaction.update({
+                    embeds: [setupEmbed],
+                    components: [roleRow]
+                });
+            }
 
         } else if (selectedType === 'responsibility') {
             // Responsibility selected - show available responsibilities
@@ -474,10 +501,17 @@ async function handleSetupStep(interaction, context) {
 
                 const backRow = new ActionRowBuilder().addComponents(backSelect);
 
-                await interaction.update({
-                    embeds: [noRespEmbed],
-                    components: [backRow]
-                });
+                if (interaction.replied || interaction.deferred) {
+                    await interaction.editReply({
+                        embeds: [noRespEmbed],
+                        components: [backRow]
+                    });
+                } else {
+                    await interaction.update({
+                        embeds: [noRespEmbed],
+                        components: [backRow]
+                    });
+                }
                 return;
             }
 
@@ -487,7 +521,7 @@ async function handleSetupStep(interaction, context) {
             const setupEmbed = createSetupEmbed(1, settings, client);
             setupEmbed.setDescription('اختر المسؤوليات المعتمدة لاستخدام نظام الداون');
 
-            const respOptions = Object.keys(responsibilities).slice(0, 25).map(name => ({
+            const respOptions = Object.entries(responsibilities).slice(0, 25).map(([name, data]) => ({
                 label: name,
                 value: name,
                 description: `السماح للمسؤولين عن ${name}`
@@ -501,10 +535,17 @@ async function handleSetupStep(interaction, context) {
 
             const respRow = new ActionRowBuilder().addComponents(respSelect);
 
-            await interaction.update({
-                embeds: [setupEmbed],
-                components: [respRow]
-            });
+            if (interaction.replied || interaction.deferred) {
+                await interaction.editReply({
+                    embeds: [setupEmbed],
+                    components: [respRow]
+                });
+            } else {
+                await interaction.update({
+                    embeds: [setupEmbed],
+                    components: [respRow]
+                });
+            }
         }
         return;
     }
@@ -524,10 +565,17 @@ async function handleSetupStep(interaction, context) {
 
         const channelRow = new ActionRowBuilder().addComponents(channelSelect);
 
-        await interaction.update({
-            embeds: [setupEmbed],
-            components: [channelRow]
-        });
+        if (interaction.replied || interaction.deferred) {
+            await interaction.editReply({
+                embeds: [setupEmbed],
+                components: [channelRow]
+            });
+        } else {
+            await interaction.update({
+                embeds: [setupEmbed],
+                components: [channelRow]
+            });
+        }
         return;
     }
 
@@ -541,15 +589,22 @@ async function handleSetupStep(interaction, context) {
 
         const channelSelect = new ChannelSelectMenuBuilder()
             .setCustomId('down_setup_log_channel')
-            .setPlaceholder(' اختر روم السجلات...')
+            .setPlaceholder(' اختر قناة السجلات...')
             .setChannelTypes([ChannelType.GuildText]);
 
         const channelRow = new ActionRowBuilder().addComponents(channelSelect);
 
-        await interaction.update({
-            embeds: [setupEmbed],
-            components: [channelRow]
-        });
+        if (interaction.replied || interaction.deferred) {
+            await interaction.editReply({
+                embeds: [setupEmbed],
+                components: [channelRow]
+            });
+        } else {
+            await interaction.update({
+                embeds: [setupEmbed],
+                components: [channelRow]
+            });
+        }
         return;
     }
 
@@ -564,15 +619,22 @@ async function handleSetupStep(interaction, context) {
 
         const channelSelect = new ChannelSelectMenuBuilder()
             .setCustomId('down_setup_menu_channel')
-            .setPlaceholder(' اختر روم المنيو التفاعلي...')
+            .setPlaceholder(' اختر قناة المنيو...')
             .setChannelTypes([ChannelType.GuildText]);
 
         const channelRow = new ActionRowBuilder().addComponents(channelSelect);
 
-        await interaction.update({
-            embeds: [setupEmbed],
-            components: [channelRow]
-        });
+        if (interaction.replied || interaction.deferred) {
+            await interaction.editReply({
+                embeds: [setupEmbed],
+                components: [channelRow]
+            });
+        } else {
+            await interaction.update({
+                embeds: [setupEmbed],
+                components: [channelRow]
+            });
+        }
         return;
     }
 
@@ -604,10 +666,17 @@ async function handleSetupStep(interaction, context) {
             ]);
         }
 
-        await interaction.update({
-            embeds: [completeEmbed],
-            components: []
-        });
+        if (interaction.replied || interaction.deferred) {
+            await interaction.editReply({
+                embeds: [completeEmbed],
+                components: []
+            });
+        } else {
+            await interaction.update({
+                embeds: [completeEmbed],
+                components: []
+            });
+        }
         return;
     }
 }
@@ -707,21 +776,29 @@ async function handleMainMenu(interaction, context) {
     const selectedValue = interaction.values[0];
     const { client } = context;
 
+    const respond = async (data) => {
+        if (interaction.deferred || interaction.replied) {
+            return await interaction.editReply(data);
+        } else {
+            return await interaction.reply({ ...data, ephemeral: true });
+        }
+    };
+
     switch (selectedValue) {
         case 'remove_role':
-            await handleRemoveRole(interaction, context);
+            await handleRemoveRole(interaction, context, respond);
             break;
         case 'user_records':
-            await handleUserRecords(interaction, context);
+            await handleUserRecords(interaction, context, respond);
             break;
         case 'modify_duration':
-            await handleModifyDuration(interaction, context);
+            await handleModifyDuration(interaction, context, respond);
             break;
         case 'active_downs':
-            await handleActiveDowns(interaction, context);
+            await handleActiveDowns(interaction, context, respond);
             break;
         case 'user_downs':
-            await handleUserDowns(interaction, context);
+            await handleUserDowns(interaction, context, respond);
             break;
     }
 
@@ -797,35 +874,33 @@ async function handleSettingsButton(interaction, context) {
 }
 
 // Import existing handlers from the previous version
-async function handleRemoveRole(interaction, context) {
+async function handleRemoveRole(interaction, context, respond) {
     const userSelect = new UserSelectMenuBuilder()
         .setCustomId('down_selected_user')
         .setPlaceholder(' اختر العضو المراد سحب الرول منه...');
 
     const selectRow = new ActionRowBuilder().addComponents(userSelect);
 
-    await interaction.reply({
-        content: ' **اختر العضو المراد سحب الرول منه:**',
-        components: [selectRow],
-        ephemeral: true
+    await respond({
+        content: ' **اختر العضو المطلوب:**',
+        components: [selectRow]
     });
 }
 
-async function handleUserRecords(interaction, context) {
+async function handleUserRecords(interaction, context, respond) {
     const userSelect = new UserSelectMenuBuilder()
         .setCustomId('down_show_user_records')
         .setPlaceholder(' اختر العضو لعرض سجلاته...');
 
     const selectRow = new ActionRowBuilder().addComponents(userSelect);
 
-    await interaction.reply({
+    await respond({
         content: ' **اختر العضو لعرض سجلات الداون الخاصة به:**',
-        components: [selectRow],
-        ephemeral: true
+        components: [selectRow]
     });
 }
 
-async function handleModifyDuration(interaction, context) {
+async function handleModifyDuration(interaction, context, respond) {
     const activeDownsPath = path.join(__dirname, '..', 'data', 'activeDowns.json');
     const activeDowns = readJson(activeDownsPath, {});
 
@@ -833,13 +908,14 @@ async function handleModifyDuration(interaction, context) {
         const noDownsEmbed = colorManager.createEmbed()
             .setDescription(' **لا توجد داونات نشطة حالياً للتعديل!**');
 
-        await interaction.reply({ embeds: [noDownsEmbed], ephemeral: true });
+        await respond({ embeds: [noDownsEmbed] });
         return;
     }
 
     // Create a list of users who have active downs
     const usersWithDowns = {};
     for (const [downId, downData] of Object.entries(activeDowns)) {
+        if (downData.roleId === null) continue; // Skip verbal downs from duration modify
         if (!usersWithDowns[downData.userId]) {
             usersWithDowns[downData.userId] = [];
         }
@@ -866,7 +942,7 @@ async function handleModifyDuration(interaction, context) {
         const noValidDownsEmbed = colorManager.createEmbed()
             .setDescription(' **لا توجد داونات صالحة للتعديل!**');
 
-        await interaction.reply({ embeds: [noValidDownsEmbed], ephemeral: true });
+        await respond({ embeds: [noValidDownsEmbed] });
         return;
     }
 
@@ -877,14 +953,13 @@ async function handleModifyDuration(interaction, context) {
 
     const selectRow = new ActionRowBuilder().addComponents(userSelect);
 
-    await interaction.reply({
+    await respond({
         content: ' **اختر العضو لتعديل مدة الداون الخاص به:**',
-        components: [selectRow],
-        ephemeral: true
+        components: [selectRow]
     });
 }
 
-async function handleActiveDowns(interaction, context) {
+async function handleActiveDowns(interaction, context, respond) {
     const activeDownsPath = path.join(__dirname, '..', 'data', 'activeDowns.json');
     const activeDowns = readJson(activeDownsPath, {});
 
@@ -892,7 +967,7 @@ async function handleActiveDowns(interaction, context) {
         const noDownsEmbed = colorManager.createEmbed()
             .setDescription(' **لا توجد داونات نشطة حالياً!**');
 
-        await interaction.reply({ embeds: [noDownsEmbed], ephemeral: true });
+        await respond({ embeds: [noDownsEmbed] });
         return;
     }
 
@@ -918,9 +993,9 @@ async function handleActiveDowns(interaction, context) {
         const endTime = downData.endTime ? `<t:${Math.floor(downData.endTime / 1000)}:R>` : 'نهائي';
 
         downsList += `**${count}.** ${memberMention}\n`;
-        downsList += `└ **الرول:** ${roleMention}\n`;
-        downsList += `└ **ينتهي:** ${endTime}\n`;
-        downsList += `└ **السبب:** ${downData.reason.substring(0, 50)}${downData.reason.length > 50 ? '...' : ''}\n\n`;
+        downsList += `└ **الرول :** ${roleMention}\n`;
+        downsList += `└ **ينتهي :** ${endTime}\n`;
+        downsList += `└ **السبب :** ${downData.reason.substring(0, 50)}${downData.reason.length > 50 ? '...' : ''}\n\n`;
     }
 
     if (downsList.length > 4000) {
@@ -929,20 +1004,19 @@ async function handleActiveDowns(interaction, context) {
 
     embed.setDescription(downsList || 'لا توجد داونات نشطة');
 
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await respond({ embeds: [embed] });
 }
 
-async function handleUserDowns(interaction, context) {
+async function handleUserDowns(interaction, context, respond) {
     const userSelect = new UserSelectMenuBuilder()
         .setCustomId('down_select_user_for_end_down')
         .setPlaceholder(' اختر العضو لإدارة داوناته...');
 
     const selectRow = new ActionRowBuilder().addComponents(userSelect);
 
-    await interaction.reply({
+    await respond({
         content: ' **اختر العضو لإدارة الداونات الخاصة به:**',
-        components: [selectRow],
-        ephemeral: true
+        components: [selectRow]
     });
 }
 
@@ -969,7 +1043,7 @@ async function handleDownInteractions(interaction, context) {
                     `• هل العضو لديه رولات مُضافة في \`adminroles\`؟\n` +
                     `• هل الرولات غير محمية (ليست رولات بوت أو نيترو)؟`);
 
-            await interaction.reply({ embeds: [noRolesEmbed], ephemeral: true });
+            await interaction.editReply({ embeds: [noRolesEmbed] });
             return;
         }
 
@@ -982,38 +1056,40 @@ async function handleDownInteractions(interaction, context) {
 
         const roleSelect = new StringSelectMenuBuilder()
             .setCustomId('down_role_selection')
-            .setPlaceholder('اختر الرول المراد سحبه...')
+            .setPlaceholder('اختر رول واحد أو أكثر لسحبه...')
+            .setMinValues(1)
+            .setMaxValues(roleOptions.length)
             .addOptions(roleOptions);
 
         const selectRow = new ActionRowBuilder().addComponents(roleSelect);
 
-        await interaction.reply({
-            content: ` **اختر الرول المراد سحبه من** <@${selectedUserId}>**:**`,
-            components: [selectRow],
-            ephemeral: true
-        });
-        return;
+    const response = {
+        content: ` **اختر الرول المراد سحبه من** <@${selectedUserId}>**:**`,
+        components: [selectRow],
+        ephemeral: true
+    };
+
+    await interaction.editReply(response);
+    return;
     }
 
-    // Handle role selection for down
     if (interaction.isStringSelectMenu() && customId === 'down_role_selection') {
-        const [userId, roleId] = interaction.values[0].split('_');
+        const selectedValues = interaction.values;
+        const userId = selectedValues[0].split('_')[0];
+        const roleIds = selectedValues.map(v => v.split('_')[1]);
 
         // Create modal for duration and reason
         const modal = new ModalBuilder()
-            .setCustomId(`down_modal_${userId}_${roleId}`)
+            .setCustomId(`down_modal_${userId}_${roleIds.join(',')}`)
             .setTitle('تفاصيل الداون');
 
         const durationInput = new TextInputBuilder()
-    .setCustomId('down_duration')
+            .setCustomId('down_duration')
+            .setLabel('المدة (مثل: 7d أو 12h أو نهائي أو شفوي)')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setPlaceholder('7d, 12h, نهائي, شفوي');
 
-    .setLabel('المدة (مثل: 7d أو 12h أو permanent أو شفوي)')
-
-    .setStyle(TextInputStyle.Short)
-
-    .setRequired(true)
-
-    .setPlaceholder('7d, 12h, permanent, شفوي');
         const reasonInput = new TextInputBuilder()
             .setCustomId('down_reason')
             .setLabel('السبب')
@@ -1026,60 +1102,71 @@ async function handleDownInteractions(interaction, context) {
             new ActionRowBuilder().addComponents(reasonInput)
         );
 
-        await interaction.showModal(modal);
-        return;
+        return await interaction.showModal(modal);
     }
 
-    // Handle user selection for duration modification (changed to StringSelectMenu)
     if (interaction.isStringSelectMenu() && customId === 'down_select_user_for_duration_modify') {
         const selectedUserId = interaction.values[0];
-        const member = await interaction.guild.members.fetch(selectedUserId);
         const activeDownsPath = path.join(__dirname, '..', 'data', 'activeDowns.json');
         const activeDowns = readJson(activeDownsPath, {});
 
-        // Find this user's downs from the flat structure
-        const userDowns = [];
-        for (const [downId, downData] of Object.entries(activeDowns)) {
-            if (downData.userId === selectedUserId) {
-                userDowns.push({ downId, ...downData });
+        // Find this user's downs and group by batchId
+        const batchMap = new Map();
+        for (const [id, data] of Object.entries(activeDowns)) {
+            if (data.userId === selectedUserId && data.roleId !== null) {
+                const key = data.batchId || id;
+                if (!batchMap.has(key)) {
+                    batchMap.set(key, []);
+                }
+                batchMap.get(key).push({ id, ...data });
             }
         }
 
-        if (userDowns.length === 0) {
-            await interaction.reply({
-                content: ` **العضو** <@${selectedUserId}> **ليس لديه أي داونات نشطة حالياً!**`,
-                ephemeral: true
+        const respond = async (data) => {
+            if (interaction.deferred || interaction.replied) {
+                return await interaction.editReply(data);
+            } else {
+                return await interaction.reply({ ...data, ephemeral: true });
+            }
+        };
+
+        if (batchMap.size === 0) {
+            await respond({
+                content: ` **العضو** <@${selectedUserId}> **ليس لديه أي داونات نشطة حالياً!**`
             });
             return;
         }
 
-        const roleOptions = userDowns.map((downData) => {
-            const role = interaction.guild.roles.cache.get(downData.roleId);
-            const roleName = role ? role.name : `Role ID: ${downData.roleId}`;
+        const roleOptions = [];
+        for (const [key, items] of batchMap.entries()) {
+            const roleNames = [];
+            for (const item of items) {
+                const role = interaction.guild.roles.cache.get(item.roleId);
+                roleNames.push(role ? role.name : `رول ${item.roleId}`);
+            }
 
-            return {
-                label: `تعديل داون: ${roleName}`,
-                value: downData.id,
-                description: `الداون ينتهي ${downData.endTime ? `<t:${Math.floor(downData.endTime / 1000)}:R>` : 'نهائي'}`,
-            };
-        }).slice(0, 25); // Limit to 25 options
+            const mainItem = items[0];
+            roleOptions.push({
+                label: `تعديل : ${roleNames.join(' , ').substring(0, 50)}`,
+                value: mainItem.id, // We use the first ID, manager will find the batch
+                description: `المدة: ${mainItem.duration || 'نهائي'}`,
+            });
+        }
 
         const roleSelect = new StringSelectMenuBuilder()
             .setCustomId('down_select_down_to_modify')
             .setPlaceholder('اختر الداون لتعديل مدته...')
-            .addOptions(roleOptions);
+            .addOptions(roleOptions.slice(0, 25));
 
         const selectRow = new ActionRowBuilder().addComponents(roleSelect);
 
-        await interaction.reply({
+        await respond({
             content: ` **اختر الداون الذي تريد تعديل مدته للعضو** <@${selectedUserId}>:`,
-            components: [selectRow],
-            ephemeral: true
+            components: [selectRow]
         });
         return;
     }
 
-    // Handle role selection for duration modification
     if (interaction.isStringSelectMenu() && customId === 'down_select_down_to_modify') {
         const downId = interaction.values[0];
 
@@ -1089,15 +1176,14 @@ async function handleDownInteractions(interaction, context) {
 
         const newDurationInput = new TextInputBuilder()
             .setCustomId('new_duration')
-            .setLabel('المدة الجديدة (مثل: 7d أو 12h أو permanent)')
+            .setLabel('المدة الجديدة (مثل: 7d أو 12h أو نهائي)')
             .setStyle(TextInputStyle.Short)
             .setRequired(true)
-            .setPlaceholder('7d, 12h, 30m, permanent');
+            .setPlaceholder('7d, 12h, 30m, نهائي');
 
         modal.addComponents(new ActionRowBuilder().addComponents(newDurationInput));
 
-        await interaction.showModal(modal);
-        return;
+        return await interaction.showModal(modal);
     }
 
     // Handle user selection for ending a down
@@ -1110,13 +1196,13 @@ async function handleDownInteractions(interaction, context) {
         // Find user downs from flat structure
         const userDowns = [];
         for (const [downId, downData] of Object.entries(activeDowns)) {
-            if (downData.userId === selectedUserId && downData.guildId === interaction.guild.id) {
+            if (downData.userId === selectedUserId && downData.guildId === interaction.guild.id && downData.roleId !== null) {
                 userDowns.push({ downId, ...downData });
             }
         }
 
         if (userDowns.length === 0) {
-            await interaction.reply({
+            await interaction.editReply({
                 content: ` **العضو** <@${selectedUserId}> **ليس لديه أي داونات نشطة حالياً لإنهاءها!**`,
                 ephemeral: true
             });
@@ -1131,9 +1217,9 @@ async function handleDownInteractions(interaction, context) {
                 'نهائي';
 
             return {
-                label: `إنهاء داون: ${roleName}`,
+                label: `إنهاء داون : ${roleName}`,
                 value: downData.id,
-                description: `الداون ينتهي ${endTimeText}`,
+                description: `الداون ينتهيء : ${endTimeText}`,
             };
         }).slice(0, 25); // Limit to 25 options
 
@@ -1144,113 +1230,128 @@ async function handleDownInteractions(interaction, context) {
 
         const selectRow = new ActionRowBuilder().addComponents(roleSelect);
 
-        await interaction.reply({
-            content: ` **اختر الداون الذي تريد إنهاءه للعضو** <@${selectedUserId}>:`,
-            components: [selectRow],
-            ephemeral: true
-        });
-        return;
+    const response = {
+        content: ` **اختر الداون الذي تريد إنهاءه للعضو** <@${selectedUserId}>:`,
+        components: [selectRow],
+        ephemeral: true
+    };
+
+    await interaction.editReply(response);
+    return;
     }
 
     // This code is now handled above in the corrected section
 
     // Handle modal submission for down
     if (interaction.isModalSubmit() && customId.startsWith('down_modal_')) {
-        const [, , userId, roleId] = customId.split('_');
+        const parts = customId.split('_');
+        const userId = parts[2];
+        const roleIdsString = parts[3];
+        const roleIds = roleIdsString.split(',');
         const duration = interaction.fields.getTextInputValue('down_duration');
         const reason = interaction.fields.getTextInputValue('down_reason');
 
         try {
             const isVerbal = duration === 'شفوي' || duration === 'verbal';
-            let result;
-
+            
             if (isVerbal) {
-                // For verbal down, use createDown directly via downManager
-                result = await downManager.createDown(interaction.guild, client, userId, null, duration, reason, interaction.user.id);
-            } else {
-                const member = await interaction.guild.members.fetch(userId);
-                const role = await interaction.guild.roles.fetch(roleId);
+                const result = await downManager.createDown(interaction.guild, client, userId, null, duration, reason, interaction.user.id);
+                if (result.success) {
+                    const successEmbed = colorManager.createEmbed()
+                        .setTitle('✅ تم تسجيل تنبيه شفوي')
+                        .setDescription(`تم تسجيل تنبيه شفوي للعضو كما هو مطلوب`)
+                        .addFields([
+                            { name: ' العضو', value: `<@${userId}>`, inline: true },
+                            { name: 'الرول', value: 'شفوي', inline: true },
+                            { name: ' المدة', value: result.duration || 'شفوي', inline: true },
+                            { name: ' السبب', value: reason, inline: false },
+                            { name: ' بواسطة', value: `<@${interaction.user.id}>`, inline: true }
+                        ])
+                        .setTimestamp();
+                    await interaction.reply({ embeds: [successEmbed], ephemeral: true });
 
-                if (!member || !role) {
-                    await interaction.reply({
-                        content: ' **لم يتم العثور على العضو أو الرول!**',
-                        ephemeral: true
-                    });
-                    return;
-                }
-                // Process the normal down
-                result = await downManager.createDown(interaction.guild, client, userId, roleId, duration, reason, interaction.user.id);
-            }
-
-            if (result.success) {
-                const successEmbed = colorManager.createEmbed()
-                    .setTitle(isVerbal ? '✅ تم تسجيل تنبيه شفوي' : '✅ تم تطبيق الداون بنجاح')
-                    .setDescription(isVerbal ? `تم تسجيل تنبيه شفوي للعضو كما هو مطلوب` : `تم سحب الرول من العضو كما هو مطلوب`)
-                    .addFields([
-                        { name: ' العضو', value: `<@${userId}>`, inline: true },
-                        { name: 'الرول', value: isVerbal ? 'شفوي' : `<@&${roleId}>`, inline: true },
-                        { name: ' المدة', value: result.duration || (isVerbal ? 'شفوي' : 'نهائي'), inline: true },
-                        { name: ' السبب', value: reason, inline: false },
-                        { name: ' بواسطة', value: `<@${interaction.user.id}>`, inline: true },
-                        { name: ' ينتهي في', value: result.endTime ? `<t:${Math.floor(result.endTime / 1000)}:F>` : (isVerbal ? 'شفوي' : 'نهائي'), inline: true }
-                    ])
-                    .setTimestamp();
-
-                await interaction.reply({ embeds: [successEmbed], ephemeral: true });
-
-                if (isVerbal) {
-                    // Send notification to the affected member for verbal down
+                    // Send DM notification for verbal down
                     try {
-                        const member = await interaction.guild.members.fetch(userId);
+                        const targetMember = await interaction.guild.members.fetch(userId);
                         const dmEmbed = colorManager.createEmbed()
                             .setTitle('تنبيه شفوي')
                             .setDescription(`لقد تلقيت تنبيهاً شفوياً من قبل الإدارة.`)
                             .addFields([
                                 { name: 'النوع', value: 'شفوي', inline: true },
                                 { name: 'السبب', value: reason, inline: false },
-                                { name: 'بواسطة', value: `${interaction.user.username}`, inline: true },
+                                { name: 'بواسطة', value: `<@${interaction.user.id}>`, inline: true },
                                 { name: 'التاريخ', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: false }
                             ])
                             .setTimestamp();
 
-                        await member.send({ embeds: [dmEmbed] });
-                    } catch (dmError) {
-                        console.log(`لا يمكن إرسال رسالة خاصة إلى العضو - قد تكون الرسائل الخاصة مغلقة`);
-                    }
-                } else {
-                    // Send notification to the affected member for normal down
-                    try {
-                        const member = await interaction.guild.members.fetch(userId);
-                        const role = await interaction.guild.roles.fetch(roleId);
-                        const dmEmbed = colorManager.createEmbed()
-                            .setTitle('Role Removed')
-                            .setDescription(`تم سحب رول **${role.name}** منك من قبل الإدارة.`)
-                            .addFields([
-                                { name: ' الرول المسحوب', value: `${role.name}`, inline: true },
-                                { name: ' سحب الرول', value: `${interaction.user.username}`, inline: true },
-                                { name: ' المدة', value: result.duration || 'نهائي', inline: true },
-                                { name: ' السبب', value: reason, inline: false },
-                                { name: ' ينتهي في', value: result.endTime ? `<t:${Math.floor(result.endTime / 1000)}:F>` : 'نهائي', inline: false }
-                            ])
-                            .setTimestamp();
-
-                        await member.send({ embeds: [dmEmbed] });
+                        await targetMember.send({ embeds: [dmEmbed] });
                     } catch (dmError) {
                         console.log(`لا يمكن إرسال رسالة خاصة إلى العضو - قد تكون الرسائل الخاصة مغلقة`);
                     }
                 }
             } else {
-                const errorEmbed = colorManager.createEmbed()
-                    .setDescription(` **فشل في تطبيق الإجراء:** ${result.error}`);
+                const results = [];
+                const batchId = Date.now().toString();
+                for (const roleId of roleIds) {
+                    const res = await downManager.createDown(interaction.guild, client, userId, roleId, duration, reason, interaction.user.id);
+                    if (res.success) {
+                        // Mark as batch in activeDowns
+                        const activeDownsPath = path.join(__dirname, '..', 'data', 'activeDowns.json');
+                        const activeDowns = readJson(activeDownsPath, {});
+                        if (activeDowns[res.downId]) {
+                            activeDowns[res.downId].batchId = batchId;
+                            saveJson(activeDownsPath, activeDowns);
+                        }
+                    }
+                    results.push({ roleId, ...res });
+                }
 
-                await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+                const allSuccess = results.every(r => r.success);
+                const successRoles = results.filter(r => r.success).map(r => `<@&${r.roleId}>`);
+                const failedRoles = results.filter(r => !r.success);
+
+                const resultEmbed = colorManager.createEmbed()
+                    .setTitle(allSuccess ? '✅ تم تطبيق الداون بنجاح' : '⚠️ تم تطبيق الداون جزئياً')
+                    .setDescription(`تمت معالجة سحب الرولات للعضو <@${userId}>`)
+                    .addFields([
+                        { name: 'الرولات التي سُحبت', value: successRoles.length > 0 ? successRoles.join(' , ') : 'لا يوجد', inline: false },
+                        { name: ' المدة', value: duration, inline: true },
+                        { name: ' السبب', value: reason, inline: false },
+                        { name: ' بواسطة', value: `<@${interaction.user.id}>`, inline: true }
+                    ]);
+
+                if (failedRoles.length > 0) {
+                    resultEmbed.addFields({
+                        name: '❌ فشل في سحب رولات:',
+                        value: failedRoles.map(r => `<@&${r.roleId}>: ${r.error}`).join('\n'),
+                        inline: false
+                    });
+                }
+
+                await interaction.reply({ embeds: [resultEmbed], ephemeral: true });
+
+                // Send DM notification for normal down
+                try {
+                    const targetMember = await interaction.guild.members.fetch(userId);
+                    const dmEmbed = colorManager.createEmbed()
+                        .setTitle('Role(s) Down')
+                        .setDescription(`تم اعطائك داون من قبل الإدارة.`)
+                        .addFields([
+                            { name: ' الرولات المسحوبة', value: successRoles.join(' , ') || 'لا يوجد', inline: false },
+                            { name: ' سحب الرول', value: `<@${interaction.user.id}>`, inline: true },
+                            { name: ' المدة', value: duration || 'نهائي', inline: true },
+                            { name: ' السبب', value: reason, inline: false }
+                        ])
+                        .setTimestamp();
+
+                    await targetMember.send({ embeds: [dmEmbed] });
+                } catch (dmError) {
+                    console.log(`لا يمكن إرسال رسالة خاصة إلى العضو - قد تكون الرسائل الخاصة مغلقة`);
+                }
             }
         } catch (error) {
-            console.error('خطأ في معالجة الداون:', error);
-            await interaction.reply({
-                content: ' **حدث خطأ أثناء معالجة الداون!**',
-                ephemeral: true
-            });
+            console.error('Error processing down modal:', error);
+            await interaction.reply({ content: '❌ حدث خطأ غير متوقع أثناء معالجة الداون.', ephemeral: true });
         }
         return;
     }
@@ -1278,17 +1379,30 @@ async function handleDownInteractions(interaction, context) {
 
         try {
             const member = await interaction.guild.members.fetch(userId);
-            const role = await interaction.guild.roles.fetch(roleId);
+            const activeDownsPath = path.join(__dirname, '..', 'data', 'activeDowns.json');
+            const activeDowns = readJson(activeDownsPath, {});
+            const downData = activeDowns[downId];
 
-            if (!member || !role) {
-                await interaction.reply({
-                    content: ' **العضو أو الرول غير موجود!**',
-                    ephemeral: true
-                });
+            if (!downData) {
+                await interaction.reply({ content: ' **الداون غير موجود!**', ephemeral: true });
                 return;
             }
 
-            // Modify duration using downManager with the correct downId
+            // Find all related roles in batch
+            const batchRoles = [];
+            if (downData.batchId) {
+                for (const d of Object.values(activeDowns)) {
+                    if (d.batchId === downData.batchId && d.userId === userId && d.roleId) {
+                        const r = await interaction.guild.roles.fetch(d.roleId).catch(() => null);
+                        if (r) batchRoles.push(r.name);
+                    }
+                }
+            } else if (downData.roleId) {
+                const r = await interaction.guild.roles.fetch(downData.roleId).catch(() => null);
+                if (r) batchRoles.push(r.name);
+            }
+
+            // Modify duration using downManager
             const result = await downManager.modifyDownDuration(
                 interaction.guild,
                 context.client,
@@ -1299,12 +1413,11 @@ async function handleDownInteractions(interaction, context) {
 
             if (result.success) {
                 const successEmbed = colorManager.createEmbed()
-                    .setTitle('Down Duration Modified Successfully')
+                    .setTitle('✅ تم تعديل مدة الداون')
                     .addFields([
                         { name: ' العضو', value: `<@${userId}>`, inline: true },
-                        { name: ' الرول', value: `<@&${roleId}>`, inline: true },
+                        { name: ' الرولات', value: batchRoles.join(' , ') || 'شفوي', inline: false },
                         { name: ' المدة الجديدة', value: result.newDuration || 'نهائي', inline: true },
-                        { name: 'ينتهي في', value: result.newEndTime || 'نهائي', inline: true },
                         { name: ' تم التعديل بواسطة', value: `<@${interaction.user.id}>`, inline: true }
                     ])
                     .setTimestamp();
@@ -1314,28 +1427,21 @@ async function handleDownInteractions(interaction, context) {
                 // Notify the user
                 try {
                     const notifyEmbed = colorManager.createEmbed()
-                        .setTitle('Down Duration Modified')
-                        .setDescription(`تم تعديل مدة الداون الخاص بك للرول **${role.name}**.`)
+                        .setTitle('تعديل مدة الداون')
+                        .setDescription(`تم تعديل مدة الداون الخاص بك للرولات: **${batchRoles.join(' , ')}**.`)
                         .addFields([
-                            { name: ' الرول', value: role.name, inline: true },
                             { name: ' المدة الجديدة', value: result.newDuration || 'نهائي', inline: true },
-                            { name: ' ينتهي في', value: result.newEndTime || 'نهائي', inline: true },
-                            { name: ' تم التعديل بواسطة', value: interaction.user.username, inline: true }
+                            { name: ' تم التعديل بواسطة', value: `<@${interaction.user.id}>`, inline: true }
                         ])
                         .setTimestamp();
 
                     await member.send({ embeds: [notifyEmbed] });
                 } catch (dmError) {
-                    console.log(`لا يمكن إرسال رسالة للمستخدم ${userId}: ${dmError.message}`);
+                    console.log(`لا يمكن إرسال رسالة للمستخدم ${userId}`);
                 }
-
             } else {
-                await interaction.reply({
-                    content: ` **فشل في تعديل المدة:** ${result.error}`,
-                    ephemeral: true
-                });
+                await interaction.reply({ content: ` **فشل في تعديل المدة:** ${result.error}`, ephemeral: true });
             }
-
         } catch (error) {
             console.error('خطأ في تعديل مدة الداون:', error);
             await interaction.reply({
@@ -1346,7 +1452,6 @@ async function handleDownInteractions(interaction, context) {
         return;
     }
 
-    // Handle role selection for ending a down
     if (interaction.isStringSelectMenu() && customId === 'down_select_down_to_end') {
         const downId = interaction.values[0];
 
@@ -1363,8 +1468,7 @@ async function handleDownInteractions(interaction, context) {
 
         modal.addComponents(new ActionRowBuilder().addComponents(endReasonInput));
 
-        await interaction.showModal(modal);
-        return;
+        return await interaction.showModal(modal);
     }
 
     // Handle down end modal submission
@@ -1683,23 +1787,29 @@ async function handleDownInteractions(interaction, context) {
 
         // احصل على الداونات النشطة والسجلات من downManager
         const activeDowns = downManager.getUserDowns(selectedUserId);
+        // Filter out verbal downs from active downs for modification/ending purposes
+        const nonVerbalActiveDowns = activeDowns.filter(d => d.roleId !== null);
         const allLogs = downManager.getUserDownHistory(selectedUserId);
         const userHistory = [];
 
         // تحويل السجلات إلى تنسيق يمكن عرضه
         allLogs.forEach(log => {
-            if (log.type === 'DOWN_APPLIED') {
+            const isVerbalAction = log.type === 'DOWN_VERBAL';
+            const isVerbalData = log.data.roleId === null || log.data.duration === 'شفوي' || log.data.duration === 'verbal';
+            const isVerbal = isVerbalAction || isVerbalData;
+            
+            if (log.type === 'DOWN_APPLIED' || log.type === 'DOWN_VERBAL') {
                 userHistory.push({
                     userId: log.data.targetUserId,
                     roleId: log.data.roleId,
-                    roleName: `رول (ID: ${log.data.roleId})`,
-                    duration: log.data.duration || 'نهائي',
+                    roleName: isVerbal ? 'تنبيه شفوي' : `رول (ID: ${log.data.roleId})`,
+                    duration: isVerbal ? 'بدون مدة' : (log.data.duration || 'نهائي'),
                     reason: log.data.reason,
                     moderatorId: log.data.byUserId,
                     timestamp: log.timestamp,
-                    action: 'تم سحب الرول'
+                    action: isVerbal ? 'تم تسجيل تنبيه شفوي' : 'تم سحب الرول'
                 });
-            } else if (log.type === 'DOWN_ENDED') {
+            } else if (log.type === 'DOWN_ENDED' && !isVerbal) {
                 userHistory.push({
                     userId: log.data.targetUserId,
                     roleId: log.data.roleId,
@@ -1714,7 +1824,7 @@ async function handleDownInteractions(interaction, context) {
         });
 
         // إضافة الداونات النشطة الحالية
-        for (const activeDown of activeDowns) {
+        for (const activeDown of nonVerbalActiveDowns) {
             try {
                 const role = await interaction.guild.roles.fetch(activeDown.roleId);
                 userHistory.unshift({ // إضافة في المقدمة لعرضها أولاً
@@ -1738,7 +1848,11 @@ async function handleDownInteractions(interaction, context) {
             const noRecordsEmbed = colorManager.createEmbed()
                 .setDescription(` **العضو** <@${selectedUserId}> **ليس لديه أي سجلات داون.**`);
 
-            await interaction.reply({ embeds: [noRecordsEmbed], ephemeral: true });
+            if (interaction.deferred || interaction.replied) {
+                await interaction.editReply({ embeds: [noRecordsEmbed] });
+            } else {
+                await interaction.reply({ embeds: [noRecordsEmbed], ephemeral: true });
+            }
             return;
         }
 
@@ -1813,18 +1927,22 @@ async function handleDownInteractions(interaction, context) {
 
         // تحويل السجلات إلى تنسيق يمكن عرضه
         allLogs.forEach(log => {
-            if (log.type === 'DOWN_APPLIED') {
+            const isVerbalAction = log.type === 'DOWN_VERBAL';
+            const isVerbalData = log.data.roleId === null || log.data.duration === 'شفوي' || log.data.duration === 'verbal';
+            const isVerbal = isVerbalAction || isVerbalData;
+            
+            if (log.type === 'DOWN_APPLIED' || log.type === 'DOWN_VERBAL') {
                 userHistory.push({
                     userId: log.data.targetUserId,
                     roleId: log.data.roleId,
-                    roleName: `رول (ID: ${log.data.roleId})`,
-                    duration: log.data.duration || 'نهائي',
+                    roleName: isVerbal ? 'تنبيه شفوي' : `رول (ID: ${log.data.roleId})`,
+                    duration: isVerbal ? 'بدون مدة' : (log.data.duration || 'نهائي'),
                     reason: log.data.reason,
                     moderatorId: log.data.byUserId,
                     timestamp: log.timestamp,
-                    action: 'تم سحب الرول'
+                    action: isVerbal ? 'تم تسجيل تنبيه شفوي' : 'تم سحب الرول'
                 });
-            } else if (log.type === 'DOWN_ENDED') {
+            } else if (log.type === 'DOWN_ENDED' && !isVerbal) {
                 userHistory.push({
                     userId: log.data.targetUserId,
                     roleId: log.data.roleId,

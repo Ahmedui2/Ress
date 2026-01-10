@@ -286,8 +286,10 @@ async function handleInteraction(interaction, context) {
 
     // Handle regular vacation approvals and rejections
     if (interaction.isButton() && (interaction.customId.startsWith('vac_approve_') || interaction.customId.startsWith('vac_reject_'))) {
-        // تأجيل الرد فوراً لتجنب خطأ Unknown interaction
-        await interaction.deferUpdate().catch(() => {});
+        // تأجيل الرد فقط للموافقة، أما الرفض فيحتاج لإظهار نافذة Modal
+        if (interaction.customId.startsWith('vac_approve_')) {
+            await interaction.deferUpdate().catch(() => {});
+        }
 
         const parts = interaction.customId.split('_');
         const action = parts[1]; // approve or reject
@@ -324,19 +326,13 @@ async function handleInteraction(interaction, context) {
 
         // Update vacation status and save
         if (action === 'approve') {
-            if (!vacationsData.approved) vacationsData.approved = {};
-            vacationsData.approved[userId] = {
-                reason: pendingRequest.reason,
-                startDate: pendingRequest.startDate,
-                endDate: pendingRequest.endDate,
-                approvedBy: approverMember.user.tag,
-                approvedAt: new Date().toISOString(),
-            };
-            delete vacationsData.pending[userId];
-            vacationManager.saveVacations(vacationsData);
-
-            // Assign role for approved vacation (optional, based on future implementation)
-            // e.g., vacationManager.assignVacationRole(member);
+            const approveResult = await vacationManager.approveVacation(interaction, userId, interaction.user.id);
+            
+            if (!approveResult.success) {
+                return interaction.editReply({ 
+                    embeds: [new EmbedBuilder().setColor('#FF0000').setDescription(`❌ **فشل في قبول الإجازة:** ${approveResult.message}`)] 
+                });
+            }
 
             const successEmbed = new EmbedBuilder()
                 .setColor(colorManager.getColor('approved') || '#2ECC71')
@@ -358,7 +354,7 @@ async function handleInteraction(interaction, context) {
             try {
                 const dmEmbed = new EmbedBuilder()
                     .setTitle('✅ تمت الموافقة على إجازتك')
-                    .setColor('#2ECC71')
+                    .setColor(colorManager.getColor('approved') || '#2ECC71')
                     .setDescription(`أهلاً بك، لقد تمت الموافقة على طلب الإجازة الخاص بك في **${interaction.guild.name}**`)
                     .addFields(
                         { name: " المسؤول", value: `${approverMember.user.tag}`, inline: true },
@@ -393,7 +389,10 @@ async function handleInteraction(interaction, context) {
     }
 
     if (interaction.isModalSubmit() && customId.startsWith('vac_reject_modal_')) {
-        await interaction.deferUpdate().catch(() => {});
+        // Only defer if not already replied or deferred
+        if (!interaction.replied && !interaction.deferred) {
+            await interaction.deferUpdate().catch(() => {});
+        }
         const userId = customId.split('_').pop();
         const rejectReason = interaction.fields.getTextInputValue('reject_reason');
 
@@ -430,11 +429,12 @@ async function handleInteraction(interaction, context) {
             .setAuthor({ name: member?.user.tag || 'User', iconURL: member?.user.displayAvatarURL() })
             .addFields(
                 { name: " العضو", value: `<@${userId}>`, inline: true },
-                { name: " المرفوض من قبل", value: `${approverMember}`, inline: true },
+                { name: " المسؤول", value: `${approverMember}`, inline: true },
                 { name: " سبب الرفض", value: rejectReason, inline: false },
-                { name: " السبب الأصلي", value: pendingRequest.reason, inline: false }
+                { name: " السبب الأصلي", value: pendingRequest.reason, inline: false },
+                { name: " الكولداون", value: "12 ساعة", inline: true }
             )
-            .setFooter({ text: 'تم تطبيق كولداون 12 ساعة تلقائياً' })
+            .setFooter({ text: 'Space' })
             .setTimestamp();
 
         await interaction.editReply({ embeds: [rejectEmbed], components: [] });
@@ -444,7 +444,7 @@ async function handleInteraction(interaction, context) {
             try {
                 const dmEmbed = new EmbedBuilder()
                     .setTitle('❌ تم رفض طلب إجازتك')
-                    .setColor('#E74C3C')
+                    .setColor(colorManager.getColor('rejected') || '#E74C3C')
                     .setDescription(`نعتذر، لقد تم رفض طلب الإجازة الخاص بك في **${interaction.guild.name}**`)
                     .addFields(
                         { name: " المسؤول", value: `${approverMember.user.tag}`, inline: true },

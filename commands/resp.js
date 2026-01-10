@@ -637,6 +637,15 @@ async function handleApplyRespSelect(interaction, client) {
         }
 
         const selectedResp = interaction.values[0];
+        const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
+
+        // التحقق من أن العضو ليس مسؤولاً بالفعل في هذه المسؤولية
+        if (currentResps[selectedResp] && currentResps[selectedResp].responsibles && currentResps[selectedResp].responsibles.includes(interaction.user.id)) {
+            return await interaction.reply({
+                content: `❌ **أنت بالفعل مسؤول في "${selectedResp}" ولا يمكنك التقديم عليها مرة أخرى.**`,
+                ephemeral: true
+            });
+        }
         
         const modal = new ModalBuilder()
             .setCustomId(`apply_resp_modal_${selectedResp}`)
@@ -683,15 +692,41 @@ async function handleApplyRespModal(interaction, client) {
         const reason = interaction.fields.getTextInputValue('apply_reason');
         const guildId = interaction.guild.id;
       
-        const config = readJSONFile(DATA_FILES.respConfig, { guilds: {} });
-        const applyChannelId = config.guilds[guildId]?.applyChannel;
+        const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
         
         // التحقق من أن العضو ليس مسؤولاً بالفعل في هذه المسؤولية
-        const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
         if (currentResps[respName] && currentResps[respName].responsibles && currentResps[respName].responsibles.includes(interaction.user.id)) {
             return await interaction.editReply({
                 content: `❌ **أنت بالفعل مسؤول في "${respName}" ولا يمكنك التقديم عليها مرة أخرى.**`
             });
+        }
+
+        // التحقق من وجود طلب معلق لنفس المسؤولية
+        const config = readJSONFile(DATA_FILES.respConfig, { guilds: {} });
+        const applyChannelId = config.guilds[guildId]?.applyChannel;
+        
+        if (applyChannelId) {
+            try {
+                const channel = await client.channels.fetch(applyChannelId).catch(() => null);
+                if (channel) {
+                    const messages = await channel.messages.fetch({ limit: 50 });
+                    const pendingApply = messages.find(m => 
+                        m.embeds.length > 0 && 
+                        m.embeds[0].title === 'طلب مسؤولية جديد' &&
+                        m.embeds[0].fields.some(f => f.name === 'المقدم' && f.value.includes(interaction.user.id)) &&
+                        m.embeds[0].fields.some(f => f.name === 'المسؤولية' && f.value === respName) &&
+                        m.components.length > 0 // الطلب لا يزال يحتاج قرار (أزرار موجودة)
+                    );
+
+                    if (pendingApply) {
+                        return await interaction.editReply({
+                            content: `⚠️ **لديك طلب معلق بالفعل لمسؤولية "${respName}"، يرجى انتظار رد الإدارة.**`
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error('Error checking for pending applications:', error);
+            }
         }
 
         if (!applyChannelId) {
@@ -816,6 +851,13 @@ async function handleApplyAction(interaction, client) {
                     files: [],
                     components: [] 
                 });
+
+                // تحديث رسالة المسؤوليات (resp setup) بجميع الأحوال
+                try {
+                    await updateEmbedMessage(client);
+                } catch (updateError) {
+                    console.error('Error updating embed message after approval:', updateError);
+                }
             } else {
                 await interaction.editReply({
                     content: `**⚠️ <@${userId}> مسؤول بالفعل في مسؤولية ال${respName}**`,
