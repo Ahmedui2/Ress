@@ -127,25 +127,26 @@ function streakGetQuery(sql, params = []) {
     });
 }
 
-function formatDuration(milliseconds, showSeconds = false) {
-    if (!milliseconds || milliseconds <= 0) return 'لا يوجد';
+function formatDuration(value, showSeconds = false) {
+    if (!value || value <= 0) return '0m';
 
-    const totalSeconds = Math.floor(milliseconds / 1000);
-    const totalMinutes = Math.floor(totalSeconds / 60);
-    const totalHours = Math.floor(totalMinutes / 60);
-    const days = Math.floor(totalHours / 24);
+    let totalMinutes;
+    if (value > 525600) {
+        totalMinutes = Math.floor(value / 60000);
+    } else {
+        totalMinutes = Math.floor(value);
+    }
 
-    const hours = totalHours % 24;
-    const minutes = totalMinutes % 60;
-    const seconds = totalSeconds % 60;
+    const days = Math.floor(totalMinutes / 1440);
+    const hours = Math.floor((totalMinutes % 1440) / 60);
+    const mins = totalMinutes % 60;
 
     const parts = [];
     if (days > 0) parts.push(`${days}d`);
     if (hours > 0) parts.push(`${hours}h`);
-    if (minutes > 0 || showSeconds) parts.push(`${minutes}m`);
-    if (showSeconds && seconds > 0) parts.push(`${seconds}s`);
+    if (mins > 0 || parts.length === 0) parts.push(`${mins}m`);
 
-    return parts.length > 0 ? parts.join(' and ') : 'أقل من دقيقة';
+    return parts.join(' and ');
 }
 
 function shouldShowSeconds(users) {
