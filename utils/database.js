@@ -253,11 +253,71 @@ class DatabaseManager {
                 voice_level INTEGER DEFAULT 0,
                 chat_level INTEGER DEFAULT 0,
                 last_notified INTEGER DEFAULT 0
+            )`,
+            // جدول الدعوات
+            `CREATE TABLE IF NOT EXISTS user_invites (
+                user_id TEXT PRIMARY KEY,
+                total_invites INTEGER DEFAULT 0,
+                fake_invites INTEGER DEFAULT 0,
+                leave_invites INTEGER DEFAULT 0,
+                bonus_invites INTEGER DEFAULT 0,
+                updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+            )`,
+            // جدول سجل المنضمين
+            `CREATE TABLE IF NOT EXISTS members_history (
+                user_id TEXT PRIMARY KEY,
+                inviter_id TEXT,
+                join_method TEXT, -- 'invite', 'vanity', 'unknown'
+                join_time INTEGER DEFAULT (strftime('%s', 'now'))
             )`
         ];
 
         for (const sql of tables) {
             await this.run(sql);
+        }
+    }
+
+    // إضافة وظائف الدعوات
+    async addInvite(userId, inviterId, method = 'invite') {
+        try {
+            // تحديث سجل المنضم
+            await this.run(`
+                INSERT OR REPLACE INTO members_history (user_id, inviter_id, join_method)
+                VALUES (?, ?, ?)
+            `, [userId, inviterId, method]);
+
+            if (inviterId) {
+                // تحديث عداد الداعي
+                await this.run(`
+                    INSERT INTO user_invites (user_id, total_invites)
+                    VALUES (?, 1)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        total_invites = total_invites + 1,
+                        updated_at = strftime('%s', 'now')
+                `, [inviterId]);
+            }
+        } catch (error) {
+            console.error('❌ خطأ في إضافة دعوة:', error);
+        }
+    }
+
+    async getInviteStats(userId) {
+        try {
+            const stats = await this.get('SELECT * FROM user_invites WHERE user_id = ?', [userId]);
+            return stats || { total_invites: 0, fake_invites: 0, leave_invites: 0, bonus_invites: 0 };
+        } catch (error) {
+            console.error('❌ خطأ في جلب إحصائيات الدعوات:', error);
+            return { total_invites: 0, fake_invites: 0, leave_invites: 0, bonus_invites: 0 };
+        }
+    }
+
+    async getInviter(userId) {
+        try {
+            const result = await this.get('SELECT inviter_id, join_method FROM members_history WHERE user_id = ?', [userId]);
+            return result;
+        } catch (error) {
+            console.error('❌ خطأ في جلب الداعي:', error);
+            return null;
         }
     }
 
