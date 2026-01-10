@@ -717,33 +717,62 @@ client.on(Events.GuildMemberAdd, async (member) => {
     }
 });
 
+// دالة لمزامنة الرولات لجميع المسؤوليات عند التشغيل
+async function syncAllResponsibilityRoles(client) {
+    console.log('🔄 جاري بدء فحص ومزامنة رولات المسؤوليات...');
+    try {
+        const responsibilities = global.responsibilities || {};
+        for (const guild of client.guilds.cache.values()) {
+            console.log(`📡 جاري فحص سيرفر: ${guild.name}`);
+            const allMembers = await guild.members.fetch();
+            
+            // تجميع الرولات ومن يملكها
+            const roleToResponsibles = new Map();
+            for (const config of Object.values(responsibilities)) {
+                const roles = Array.isArray(config.roles) ? config.roles : (config.roleId ? [config.roleId] : []);
+                const members = config.responsibles || config.members || [];
+                for (const roleId of roles) {
+                    if (!roleToResponsibles.has(roleId)) roleToResponsibles.set(roleId, new Set());
+                    members.forEach(id => roleToResponsibles.get(roleId).add(id));
+                }
+            }
+
+            for (const [roleId, allowedUsers] of roleToResponsibles) {
+                const role = guild.roles.cache.get(roleId);
+                if (!role) continue;
+                for (const member of allMembers.values()) {
+                    const hasRole = member.roles.cache.has(roleId);
+                    const isResponsible = allowedUsers.has(member.id);
+                    if (isResponsible && !hasRole) await member.roles.add(roleId, 'مزامنة: مسؤول بدون رول').catch(() => {});
+                    else if (!isResponsible && hasRole) await member.roles.remove(roleId, 'مزامنة: رول بدون مسؤولية').catch(() => {});
+                }
+            }
+        }
+        console.log('✅ انتهت عملية مزامنة الرولات بنجاح.');
+    } catch (error) {
+        console.error('❌ خطأ في مزامنة رولات المسؤوليات:', error);
+    }
+}
+
 client.once(Events.ClientReady, async () => {
-
   try {
-
     // تهيئة كاش الدعوات
-
     for (const guild of client.guilds.cache.values()) {
-
         try {
-
             const invites = await guild.invites.fetch();
-
             const inviteMap = new Map();
-
             invites.forEach(inv => inviteMap.set(inv.code, inv.uses));
-
             guildInvites.set(guild.id, inviteMap);
-
-        } catch (err) {}
-
+        } catch (err) {
+            console.error(`❌ خطأ في جلب دعوات سيرفر ${guild.name}:`, err.message);
+        }
     }
 
-    if (!dbManager.isInitialized) {
- 
-        await dbManager.initialize();
-    }
+    if (!dbManager.isInitialized) await dbManager.initialize();
     global.responsibilities = await dbManager.getResponsibilities();
+    
+    // تشغيل المزامنة فور الجاهزية
+    await syncAllResponsibilityRoles(client);
   } catch (dbError) {
     console.error('❌ Error initializing database/responsibilities:', dbError);
   }
@@ -2714,6 +2743,20 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
+    // --- Responsibility System Interaction Router ---
+    if (interaction.customId === 'resp_delete_all_confirm') {
+        const respCommand = client.commands.get('resp');
+        if (respCommand && respCommand.handleDeleteAllConfirm) {
+            await respCommand.handleDeleteAllConfirm(interaction, client);
+        }
+        return;
+    }
+
+    if (interaction.customId === 'resp_delete_all_cancel') {
+        await interaction.update({ content: '❌ تم إلغاء عملية الحذف.', embeds: [], components: [] });
+        return;
+    }
+
     // --- Admin Application System Interaction Router ---
     if (interaction.customId && (
         interaction.customId.startsWith('admin_approve_') ||
@@ -2875,7 +2918,7 @@ if (interaction.customId.startsWith('vac_list_') ||
         }
 
         // Route to vacation (ajaza) command
-        if (interaction.customId.startsWith('vac_request_')) {
+        if (interaction.customId.startsWith('vac_request_') || interaction.customId.startsWith('vac_approve_') || interaction.customId.startsWith('vac_reject_')) {
             const vacationCommand = client.commands.get('اجازه');
             if (vacationCommand && vacationCommand.handleInteraction) {
                 await vacationCommand.handleInteraction(interaction, vacationContext);
@@ -2886,7 +2929,9 @@ if (interaction.customId.startsWith('vac_list_') ||
         // Route to my-vacation (ajazati) command for all vacation ending interactions
         if (interaction.customId.startsWith('vac_end_request_') ||
             interaction.customId.startsWith('vac_end_confirm_') ||
-            interaction.customId === 'vac_end_cancel') {
+            interaction.customId === 'vac_end_cancel' ||
+            interaction.customId.startsWith('vac_approve_termination_') ||
+            interaction.customId.startsWith('vac_reject_termination_')) {
             const myVacationCommand = client.commands.get('اجازتي');
             if (myVacationCommand && myVacationCommand.handleInteraction) {
                 await myVacationCommand.handleInteraction(interaction, vacationContext);
@@ -2894,217 +2939,9 @@ if (interaction.customId.startsWith('vac_list_') ||
             return;
         }
 
-        // Handle vacation termination requests first
-        if (interaction.customId.startsWith('vac_approve_termination_') || interaction.customId.startsWith('vac_reject_termination_')) {
-            const parts = interaction.customId.split('_');
-            const action = parts[1]; // approve or reject
-            const userId = parts[3];
-
-            // فحص الصلاحيات قبل السماح بالموافقة/الرفض على الإنهاء
-            const vacationSettings = vacationManager.getSettings();
-            const isAuthorizedApprover = await vacationManager.isUserAuthorizedApprover(
-                interaction.user.id,
-                interaction.guild,
-                vacationSettings,
-                BOT_OWNERS
-            );
-
-            if (!isAuthorizedApprover) {
-                const errorEmbed = new EmbedBuilder()
-                    .setColor('#FF0000')
-                    .setDescription('❌ **يعني محد شاف لا تسوي خوي بس**')
-                return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
-            }
-
-            const vacations = require('./utils/vacationManager').readJson(path.join(__dirname, 'data', 'vacations.json'));
-            const pendingTermination = vacations.pendingTermination?.[userId];
-
-            if (!pendingTermination) {
-                return interaction.reply({ content: 'لا يوجد طلب إنهاء إجازة معلق لهذا المستخدم.', flags: MessageFlags.Ephemeral });
-            }
-
-            if (action === 'approve') {
-                // الموافقة على إنهاء الإجازة
-                const result = await require('./utils/vacationManager').endVacation(
-                    interaction.guild,
-                    client,
-                    userId,
-                    'تم إنهاء الإجازة مبكراً بناءً على طلب المستخدم'
-                );
-
-                if (result.success) {
-                    const removedRolesText = result.vacation.removedRoles && result.vacation.removedRoles.length > 0
-                        ? result.vacation.removedRoles.map(id => `<@&${id}>`).join(', ')
-                        : 'لا توجد رولات إدارية تم سحبها';
-
-                    const updatedEmbed = new EmbedBuilder()
-                        .setColor(colorManager.getColor('approved') || '#00FF00')
-                        .setTitle('✅️Vacation Accepted')
-                        .setDescription(`**تم إنهاء إجازة <@${userId}>**`)
-                        .addFields(
-                            { name: 'الرولات التي تم سحبها فعلياً', value: removedRolesText, inline: false },
-                            { name: 'عدد الرولان المسحوبة', value: `${result.vacation.removedRoles?.length || 0} دور`, inline: true },
-                            { name: ' مدة الإجازة', value: `من <t:${Math.floor(new Date(result.vacation.startDate).getTime() / 1000)}:f> إلى <t:${Math.floor(new Date(result.vacation.endDate).getTime() / 1000)}:f>`, inline: false }
-                        )
-                        .setTimestamp();
-
-                    await interaction.update({ embeds: [updatedEmbed], components: [] });
-
-                    // إرسال إشعار للمستخدم
-                    try {
-                        const user = await client.users.fetch(userId);
-                        const notificationEmbed = new EmbedBuilder()
-                            .setTitle('✅️ Ended')
-                            .setColor(colorManager.getColor('approved') || '#00FF00')
-                            .setDescription('تم الموافقة على طلبك لإنهاء الإجازة مبكراً')
-                            .addFields(
-                                { name: 'موافق من قبل', value: `<@${interaction.user.id}>`, inline: true },
-                                { name: 'وقت الموافقة', value: new Date().toLocaleString('en-US', {
-                                    timeZone: 'Asia/Riyadh',
-                                    year: 'numeric',
-                                    month: '2-digit',
-                                    day: '2-digit',
-                                    hour: '2-digit',
-                                    minute: '2-digit'
-                                }), inline: true }
-                            )
-                            .setTimestamp();
-
-                        await user.send({ embeds: [notificationEmbed] });
-                    } catch (error) {
-                        console.error(`فشل في إرسال إشعار للمستخدم ${userId}:`, error);
-                    }
-                } else {
-                    const errorEmbed = new EmbedBuilder()
-                        .setColor('#FF0000')
-                        .setDescription(`❌ **فشل في إنهاء الإجازة:** ${result.message}`);
-
-                    await interaction.update({ embeds: [errorEmbed], components: [] });
-                }
-                return;
-            } else if (action === 'reject') {
-                // رفض طلب إنهاء الإجازة
-                const vacations = require('./utils/vacationManager').readJson(path.join(__dirname, 'data', 'vacations.json'));
-
-                if (vacations.pendingTermination && vacations.pendingTermination[userId]) {
-                    delete vacations.pendingTermination[userId];
-                    require('./utils/vacationManager').saveVacations(vacations);
-                }
-
-                const rejectionEmbed = new EmbedBuilder()
-                    .setColor('#FF0000')
-                    .setDescription(`❌ **تم رفض إجازة <@${userId}>**`);
-
-                await interaction.update({ embeds: [rejectionEmbed], components: [] });
-
-                // إرسال إشعار للمستخدم بالرفض
-                try {
-                    const user = await client.users.fetch(userId);
-                    const notificationEmbed = new EmbedBuilder()
-                        .setTitle('تم رفض طلب إنهاء الإجازة')
-                        .setColor('#FF0000')
-                        .setDescription('تم رفض طلبك لإنهاء الإجازة مبكراً')
-                        .addFields(
-                            { name: 'مرفوض من قبل', value: `<@${interaction.user.id}>`, inline: true },
-                            { name: 'وقت الرفض', value: new Date().toLocaleString('ar-SA'), inline: true }
-                        )
-                        .setTimestamp();
-
-                    await user.send({ embeds: [notificationEmbed] });
-                } catch (error) {
-                    console.error(`فشل في إرسال إشعار للمستخدم ${userId}:`, error);
-                }
-            }
+        // Handle regular vacation approvals and rejections (REMOVED: Delegated to vacation.js)
+        if (interaction.customId && (interaction.customId.startsWith('vac_approve_') || interaction.customId.startsWith('vac_reject_'))) {
             return;
-        }
-
-        // Handle regular vacation approvals and rejections
-        if (interaction.customId.startsWith('vac_approve_') || interaction.customId.startsWith('vac_reject_')) {
-            const parts = interaction.customId.split('_');
-            const action = parts[1]; // approve or reject
-            const userId = parts[2];
-
-            // فحص الصلاحيات قبل السماح بالموافقة/الرفض
-            const vacationSettings = vacationManager.getSettings();
-            const isAuthorizedApprover = await vacationManager.isUserAuthorizedApprover(
-                interaction.user.id,
-                interaction.guild,
-                vacationSettings,
-                BOT_OWNERS
-            );
-
-            if (!isAuthorizedApprover) {
-                const errorEmbed = new EmbedBuilder()
-                    .setColor('#FF0000')
-                    .setDescription('❌ ** خوي ها؟.**');
-                return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
-            }
-
-            if (action === 'approve') {
-                const result = await vacationManager.approveVacation(interaction, userId, interaction.user.id);
-                if (result.success) {
-                    const removedRolesText = result.vacation.removedRoles && result.vacation.removedRoles.length > 0
-                        ? result.vacation.removedRoles.map(id => `<@&${id}>`).join(', ')
-                        : 'لا توجد رولات إدارية تم سحبها';
-
-                    const updatedEmbed = new EmbedBuilder()
-                        .setColor(colorManager.getColor('approved') || '#2ECC71')
-                        .setTitle('✅ Accepted')
-                        .setDescription(`**تم قبول إجازة <@${userId}>**`)
-                        .addFields(
-                            { name: ' الرولات التي تم سحبها فعلياً', value: removedRolesText, inline: false },
-                            { name: ' عدد الرولات المسحوبة', value: `${result.vacation.removedRoles?.length || 0} دور`, inline: true },
-                            { name: ' مدة الإجازة', value: `من <t:${Math.floor(new Date(result.vacation.startDate).getTime() / 1000)}:f> إلى <t:${Math.floor(new Date(result.vacation.endDate).getTime() / 1000)}:f>`, inline: false }
-                        )
-                        .setTimestamp();
-
-                    await interaction.update({ embeds: [updatedEmbed], components: [] });
-
-                    const user = await client.users.fetch(userId).catch(() => null);
-                    if (user) {
-                        const dmEmbed = new EmbedBuilder()
-                            .setTitle('✅️Accepted')
-                            .setColor(colorManager.getColor('approved') || '#2ECC71')
-                            .setDescription('تم الموافقة على طلب اجازتك حاول ان تأفك بالرومات عالاقل.')
-                            .setFooter({ text: ' اكتب اجازتي لمعرفه التفاصيل!' });
-                        await user.send({ embeds: [dmEmbed] }).catch(err => console.log(`فشل في إرسال رسالة للمستخدم ${userId}: ${err}`));
-                    }
-                } else {
-                    const errorEmbed = new EmbedBuilder()
-                        .setColor('#FF0000')
-                        .setDescription(`❌ **فشل في الموافقة:** ${result.message}`);
-                    await interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
-                }
-                return;
-            }
-
-            if (action === 'reject') {
-                const vacations = vacationManager.readJson(path.join(__dirname, 'data', 'vacations.json'));
-                if (vacations.pending) {
-                    delete vacations.pending[userId];
-                }
-                vacationManager.saveVacations(vacations);
-
-                const rejectEmbed = new EmbedBuilder()
-                    .setColor(colorManager.getColor('rejected') || '#E74C3C')
-                    .setDescription(`❌ **تم رفض إجازة <@${userId}>**`);
-
-                await interaction.update({ embeds: [rejectEmbed], components: [] });
-
-                const user = await client.users.fetch(userId).catch(() => null);
-                if (user) {
-                    const dmEmbed = new EmbedBuilder()
-                        .setTitle('Rejected')
-                        .setColor(colorManager.getColor('rejected') || '#E74C3C')
-                        .setDescription('تم رفض طلب إجازتك.')
-                        .addFields(
-                            { name: 'مرفوض من', value: `<@${interaction.user.id}>` }
-                        )
-                        .setTimestamp();
-                    await user.send({ embeds: [dmEmbed] }).catch(err => console.log(`فشل في إرسال رسالة للمستخدم ${userId}: ${err}`));
-                }
-                return;
-            }
         }
 }
       if (interaction.customId && interaction.customId.startsWith('myprofile_')) {
