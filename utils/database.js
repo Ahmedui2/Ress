@@ -527,9 +527,8 @@ class DatabaseManager {
     // حساب أيام النشاط الفعلية من قاعدة البيانات
     async getActiveDaysCount(userId, daysBack = 30) {
         try {
-            const cutoffDate = new Date();
-            cutoffDate.setDate(cutoffDate.getDate() - daysBack);
-            const cutoffDateString = cutoffDate.toISOString().split('T')[0];
+            const now = moment().tz('Asia/Riyadh');
+            const cutoffDate = now.clone().subtract(daysBack, 'days').format('YYYY-MM-DD');
 
             const result = await this.get(`
                 SELECT COUNT(DISTINCT date) as activeDays
@@ -537,11 +536,31 @@ class DatabaseManager {
                 WHERE user_id = ? 
                 AND date >= ?
                 AND (voice_time > 0 OR messages > 0 OR reactions > 0 OR voice_joins > 0)
-            `, [userId, cutoffDateString]);
+            `, [userId, cutoffDate]);
 
             return result ? result.activeDays : 0;
         } catch (error) {
             console.error('❌ خطأ في حساب أيام النشاط:', error);
+            return 0;
+        }
+    }
+
+    async getWeeklyActiveDays(userId) {
+        try {
+            const now = moment().tz('Asia/Riyadh');
+            const weekStart = now.clone().startOf('week').format('YYYY-MM-DD');
+
+            const result = await this.get(`
+                SELECT COUNT(DISTINCT date) as activeDays
+                FROM daily_activity 
+                WHERE user_id = ? 
+                AND date >= ?
+                AND (voice_time > 0 OR messages > 0 OR reactions > 0 OR voice_joins > 0)
+            `, [userId, weekStart]);
+
+            return result ? result.activeDays : 0;
+        } catch (error) {
+            console.error('❌ خطأ في حساب أيام النشاط الأسبوعية:', error);
             return 0;
         }
     }
