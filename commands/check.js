@@ -198,6 +198,36 @@ async function getColorIndicator(userId, client, dbManager) {
     }
 }
 
+function formatDuration(minutes) {
+    if (!minutes || minutes <= 0) return '0m';
+    
+    const days = Math.floor(minutes / 1440);
+    const hours = Math.floor((minutes % 1440) / 60);
+    const mins = Math.floor(minutes % 60);
+    
+    const parts = [];
+    if (days > 0) parts.push(`${days}d`);
+    if (hours > 0) parts.push(`${hours}h`);
+    if (mins > 0 || parts.length === 0) parts.push(`${mins}m`);
+    
+    return parts.join(' ');
+}
+
+function formatDuration(minutes) {
+    if (!minutes || minutes <= 0) return '0m';
+    
+    const days = Math.floor(minutes / 1440);
+    const hours = Math.floor((minutes % 1440) / 60);
+    const mins = Math.floor(minutes % 60);
+    
+    const parts = [];
+    if (days > 0) parts.push(`${days}d`);
+    if (hours > 0) parts.push(`${hours}h`);
+    if (mins > 0 || parts.length === 0) parts.push(`${mins}m`);
+    
+    return parts.join(' ');
+}
+
 async function showRoleActivityStats(message, role, client) {
     let dbManager;
     try {
@@ -642,19 +672,19 @@ async function showUserActivityStats(message, user, client) {
     }
 }
 
-function formatDuration(milliseconds) {
-    const seconds = Math.floor(milliseconds / 1000);
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-
-    if (hours > 0) {
-        return `${hours}h ${minutes}m`;
-    } else if (minutes > 0) {
-        return `${minutes}m ${secs}s`;
-    } else {
-        return `${secs}s`;
-    }
+function formatDuration(minutes) {
+    if (!minutes || minutes <= 0) return '0m';
+    
+    const days = Math.floor(minutes / 1440);
+    const hours = Math.floor((minutes % 1440) / 60);
+    const mins = Math.floor(minutes % 60);
+    
+    const parts = [];
+    if (days > 0) parts.push(`${days}d`);
+    if (hours > 0) parts.push(`${hours}h`);
+    if (mins > 0 || parts.length === 0) parts.push(`${mins}m`);
+    
+    return parts.join(' ');
 }
 
 module.exports = { name, execute };

@@ -66,8 +66,8 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
 
         if (period === 'daily') {
             stats = await dbManager.getDailyStats(user.id);
-            periodLabel = 'Daily Acrive';
-            activeDays = stats.activeDays;
+            periodLabel = 'Daily Active';
+            activeDays = stats.activeDays || (stats.voiceTime > 0 || stats.messages > 0 ? 1 : 0);
         } else if (period === 'weekly') {
             stats = await dbManager.getWeeklyStats(user.id);
             const weeklyActiveDays = await dbManager.getWeeklyActiveDays(user.id);
@@ -80,8 +80,9 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
             stats.voiceJoins = stats.weeklyVoiceJoins;
         } else if (period === 'monthly') {
             stats = await dbManager.getMonthlyStats(user.id);
+            const monthlyActiveDays = await dbManager.getActiveDaysCount(user.id, 30);
             periodLabel = 'Monthly Active';
-            activeDays = stats.activeDays;
+            activeDays = monthlyActiveDays;
             // إضافة تعويض للبيانات الشهرية
             stats.voiceTime = stats.voiceTime || 0;
             stats.messages = stats.messages || 0;
@@ -202,7 +203,7 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
                 if (newPeriod === 'daily') {
                     stats = await dbManager.getDailyStats(user.id);
                     periodLabel = 'Daily Active';
-                    activeDays = stats.activeDays;
+                    activeDays = stats.activeDays || (stats.voiceTime > 0 || stats.messages > 0 ? 1 : 0);
                 } else if (newPeriod === 'weekly') {
                     stats = await dbManager.getWeeklyStats(user.id);
                     const weeklyActiveDays = await dbManager.getWeeklyActiveDays(user.id);
@@ -214,8 +215,9 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
                     stats.voiceJoins = stats.weeklyVoiceJoins;
                 } else if (newPeriod === 'monthly') {
                     stats = await dbManager.getMonthlyStats(user.id);
+                    const monthlyActiveDays = await dbManager.getActiveDaysCount(user.id, 30);
                     periodLabel = 'Monthly Active';
-                    activeDays = stats.activeDays;
+                    activeDays = monthlyActiveDays;
                     stats.voiceTime = stats.voiceTime || 0;
                     stats.messages = stats.messages || 0;
                     stats.reactions = stats.reactions || 0;
