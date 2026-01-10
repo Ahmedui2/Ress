@@ -2880,10 +2880,25 @@ client.on('interactionCreate', async (interaction) => {
     // --- Vacation System Interaction Router ---
     if (interaction.customId && interaction.customId.startsWith('vac_')) {
         const vacationContext = { client, BOT_OWNERS };
-if (interaction.customId.startsWith('vac_list_') || 
 
+        // Handle Rejection buttons SPECIFICALLY before deferUpdate
+        if (interaction.isButton() && (interaction.customId.startsWith('vac_reject_') || interaction.customId.startsWith('vac_reject_termination_'))) {
+            if (interaction.customId.startsWith('vac_reject_termination_')) {
+                const myVacationCommand = client.commands.get('اجازتي');
+                if (myVacationCommand && myVacationCommand.handleInteraction) {
+                    await myVacationCommand.handleInteraction(interaction, vacationContext);
+                }
+            } else {
+                const vacationCommand = client.commands.get('اجازه');
+                if (vacationCommand && vacationCommand.handleInteraction) {
+                    await vacationCommand.handleInteraction(interaction, vacationContext);
+                }
+            }
+            return;
+        }
+
+        if (interaction.customId.startsWith('vac_list_') || 
             interaction.customId.startsWith('vac_pending_') || 
-
             interaction.customId.startsWith('vac_terminate_')) {
 
             const vacationsCommand = client.commands.get('اجازات');
@@ -2931,7 +2946,8 @@ if (interaction.customId.startsWith('vac_list_') ||
             interaction.customId.startsWith('vac_end_confirm_') ||
             interaction.customId === 'vac_end_cancel' ||
             interaction.customId.startsWith('vac_approve_termination_') ||
-            interaction.customId.startsWith('vac_reject_termination_')) {
+            interaction.customId.startsWith('vac_reject_termination_') ||
+            interaction.customId.startsWith('vac_reject_termination_modal_')) {
             const myVacationCommand = client.commands.get('اجازتي');
             if (myVacationCommand && myVacationCommand.handleInteraction) {
                 await myVacationCommand.handleInteraction(interaction, vacationContext);
@@ -2940,7 +2956,11 @@ if (interaction.customId.startsWith('vac_list_') ||
         }
 
         // Handle regular vacation approvals and rejections (REMOVED: Delegated to vacation.js)
-        if (interaction.customId && (interaction.customId.startsWith('vac_approve_') || interaction.customId.startsWith('vac_reject_'))) {
+        if (interaction.customId && (interaction.customId.startsWith('vac_approve_') || interaction.customId.startsWith('vac_reject_') || interaction.customId.startsWith('vac_reject_modal_'))) {
+            const vacationCommand = client.commands.get('اجازه');
+            if (vacationCommand && vacationCommand.handleInteraction) {
+                await vacationCommand.handleInteraction(interaction, vacationContext);
+            }
             return;
         }
 }
@@ -3208,13 +3228,18 @@ if (interaction.customId.startsWith('vac_list_') ||
       // جلب البيانات المحفوظة
       const callData = client.shortcutCallData?.get(interaction.customId);
       if (!callData) {
-        await interaction.reply({ content: '**انتهت صلاحية هذا الزر. يرجى استخدام الاختصار مرة أخرى.**', flags: 64 });
+        // الرد بـ ephemeral فقط إذا لم يتم الرد مسبقاً
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({ content: '**انتهت صلاحية هذا الزر. يرجى استخدام الاختصار مرة أخرى.**', flags: 64 }).catch(() => {});
+        }
         return;
       }
       
       // التحقق من أن الضاغط هو نفس الشخص اللي استخدم الاختصار
       if (interaction.user.id !== callData.requesterId) {
-        await interaction.reply({ content: '**هذا الزر مخصص فقط للشخص الذي استخدم الاختصار.**', flags: 64 });
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({ content: '**هذا الزر مخصص فقط للشخص الذي استخدم الاختصار.**', flags: 64 }).catch(() => {});
+        }
         return;
       }
       
@@ -3222,10 +3247,12 @@ if (interaction.customId.startsWith('vac_list_') ||
       const { checkCooldown } = require('./commands/cooldown.js');
       const cooldownTime = checkCooldown(interaction.user.id, callData.responsibilityName);
       if (cooldownTime > 0) {
-        await interaction.reply({
-          content: `**لقد استخدمت هذا الأمر مؤخرًا. يرجى الانتظار ${Math.ceil(cooldownTime / 1000)} ثانية أخرى.**`,
-          flags: 64
-        });
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({
+            content: `**لقد استخدمت هذا الأمر مؤخرًا. يرجى الانتظار ${Math.ceil(cooldownTime / 1000)} ثانية أخرى.**`,
+            flags: 64
+          }).catch(() => {});
+        }
         return;
       }
       
@@ -3245,7 +3272,14 @@ if (interaction.customId.startsWith('vac_list_') ||
       const actionRow = new ActionRowBuilder().addComponents(reasonInput);
       modal.addComponents(actionRow);
       
-      await interaction.showModal(modal);
+      try {
+        await interaction.showModal(modal);
+      } catch (err) {
+        console.error(`[CATCH] error showing modal: ${err.message}`);
+        if (!interaction.replied && !interaction.deferred) {
+           await interaction.reply({ content: '❌ حدث خطأ أثناء محاولة فتح النافذة، يرجى المحاولة مرة أخرى.', flags: 64 }).catch(() => {});
+        }
+      }
       return;
     }
     
@@ -3253,6 +3287,9 @@ if (interaction.customId.startsWith('vac_list_') ||
     if (interaction.isModalSubmit() && interaction.customId.startsWith('shortcut_call_modal_')) {
       console.log(`[SHORTCUT_CALL_MODAL] نموذج استدعاء: ${interaction.customId}`);
       
+      // منع التفاعلات المكررة
+      if (interaction.replied || interaction.deferred) return;
+
       const { isUserBlocked } = require('./commands/block.js');
       if (isUserBlocked(interaction.user.id)) return;
       
@@ -3260,12 +3297,15 @@ if (interaction.customId.startsWith('vac_list_') ||
       const callData = client.shortcutCallData?.get(buttonCustomId);
       
       if (!callData) {
-        await interaction.reply({ content: '**انتهت صلاحية هذا النموذج. يرجى استخدام الاختصار مرة أخرى.**', flags: 64 });
+        await interaction.reply({ content: '**انتهت صلاحية هذا النموذج. يرجى استخدام الاختصار مرة أخرى.**', flags: 64 }).catch(() => {});
         return;
       }
       
       const reason = interaction.fields.getTextInputValue('call_reason').trim() || 'غير محدد';
       const { responsibilityName, responsibles, channelId, messageId, guildId } = callData;
+      
+      // تأجيل الرد فوراً لتجنب انتهاء الوقت
+      await interaction.deferReply({ ephemeral: true }).catch(() => {});
       
       // بدء الكولداون
       const { startCooldown } = require('./commands/cooldown.js');
@@ -3320,7 +3360,7 @@ if (interaction.customId.startsWith('vac_list_') ||
         ]
       });
       
-      await interaction.reply({ content: `**✅ تم استدعاء مسؤولي "${responsibilityName}" عبر الخاص!**`, flags: 64 });
+      await interaction.editReply({ content: `**✅ تم استدعاء مسؤولي "${responsibilityName}" عبر الخاص!**` }).catch(() => {});
       client.shortcutCallData.delete(buttonCustomId);
       return;
     }
