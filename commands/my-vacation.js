@@ -167,7 +167,7 @@ async function handleInteraction(interaction, context) {
         // التحقق من وجود طلب إنهاء معلق مسبقاً
         const vacations = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
         
-        // التحقق من الكولداون (12 ساعة)
+        // التحقق من الكولداون (12 ساعة) للرفض السابق
         if (vacations.cooldowns?.[userId]) {
             const cooldownTime = vacations.cooldowns[userId];
             if (Date.now() < cooldownTime) {
@@ -176,7 +176,7 @@ async function handleInteraction(interaction, context) {
                 const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
                 
                 return interaction.reply({
-                    content: `❌ **عليك كولداون حالياً.**\nالمتبقي: ${hours} ساعة و ${minutes} دقيقة.`,
+                    content: `❌ **عليك كولداون حالياً بسبب رفض سابق.**\nالمتبقي: ${hours} ساعة و ${minutes} دقيقة.`,
                     ephemeral: true
                 });
             }
@@ -385,7 +385,9 @@ async function handleInteraction(interaction, context) {
 
                 const disabledRowOriginal = new ActionRowBuilder().addComponents(disabledButton);
                 const originalEmbed = interaction.message.embeds[0];
-                await interaction.message.edit({ embeds: [originalEmbed], components: [disabledRowOriginal] });
+                if (interaction.message && interaction.message.editable) {
+                    await interaction.message.edit({ embeds: [originalEmbed], components: [disabledRowOriginal] }).catch(err => console.error('Failed to edit original message:', err));
+                }
             } catch (error) {
                 console.error('خطأ في تعطيل الزر الأصلي:', error);
             }
@@ -481,9 +483,6 @@ async function handleInteraction(interaction, context) {
 
     // معالجة تفاعلات الموافقة والرفض على طلب إنهاء الإجازة
     if (interaction.customId.startsWith('vac_approve_termination_') || interaction.customId.startsWith('vac_reject_termination_')) {
-        // تأجيل الرد فوراً لتجنب خطأ Unknown interaction
-        await interaction.deferUpdate().catch(() => {});
-
         const parts = interaction.customId.split('_');
         const action = parts[1]; // approve or reject
         const userId = parts[3];
@@ -501,8 +500,31 @@ async function handleInteraction(interaction, context) {
             const errorEmbed = new EmbedBuilder()
                 .setColor('#FF0000')
                 .setDescription('❌ **يعني محد شاف لا تسوي خوي بس**')
-            return interaction.editReply({ embeds: [errorEmbed] });
+            return interaction.reply({ embeds: [errorEmbed], ephemeral: true });
         }
+
+        // تأجيل الرد فوراً لتجنب خطأ Unknown interaction
+        await interaction.deferUpdate().catch(() => {});
+
+        if (action === 'reject') {
+            const modal = new ModalBuilder()
+                .setCustomId(`vac_reject_term_modal_${userId}`)
+                .setTitle('سبب رفض إنهاء الإجازة');
+
+            const reasonInput = new TextInputBuilder()
+                .setCustomId('reject_reason')
+                .setLabel("اذكر سبب رفض إنهاء الإجازة")
+                .setStyle(TextInputStyle.Paragraph)
+                .setRequired(true)
+                .setMinLength(5)
+                .setMaxLength(500);
+
+            modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
+            return interaction.showModal(modal);
+        }
+
+        // تأجيل الرد للموافقة على الإنهاء
+        await interaction.deferUpdate().catch(() => {});
 
         const vacations = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
         const terminationRequest = vacations.pendingTermination?.[userId];
@@ -532,13 +554,15 @@ async function handleInteraction(interaction, context) {
 
                 // إرسال رسالة تأكيد للمستخدم
                 const successEmbed = new EmbedBuilder()
-                    .setTitle('✅ Accepted')
+                    .setTitle('✅ تم قبول إنهاء الإجازة')
                     .setColor('#2ECC71')
-                    .setDescription(`**تمت الموافقة على طلب إنهاء إجازتك مبكراً.**`)
+                    .setDescription(`**تمت الموافقة على طلب إنهاء إجازتك مبكراً بنجاح.**`)
                     .addFields([
+                        { name: 'العضو', value: `<@${userId}>`, inline: true },
                         { name: 'المسؤول', value: `<@${interaction.user.id}>`, inline: true },
-                        { name: 'العضو', value: `<@${userId}>`, inline: true }
+                        { name: 'تاريخ الإنهاء', value: `<t:${Math.floor(Date.now() / 1000)}:f>`, inline: true }
                     ])
+                    .setFooter({ text: 'يمكنك الآن العودة لممارسة مهامك' })
                     .setTimestamp();
 
                 try {
@@ -600,6 +624,66 @@ async function handleInteraction(interaction, context) {
                     components: []
                 });
             }
+        }
+    }
+
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('vac_reject_term_modal_')) {
+        await interaction.deferUpdate().catch(() => {});
+        const userId = interaction.customId.split('_').pop();
+        const rejectReason = interaction.fields.getTextInputValue('reject_reason');
+
+        const vacations = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
+        const terminationRequest = vacations.pendingTermination?.[userId];
+
+        if (!terminationRequest) {
+            return interaction.editReply({ content: '❌ **لم يتم العثور على طلب إنهاء إجازة معلق لهذا المستخدم.**', components: [] });
+        }
+
+        const requestedUser = await client.users.fetch(userId).catch(() => null);
+        const approverMember = interaction.member;
+
+        try {
+            // إضافة كولداون 12 ساعة
+            if (!vacations.cooldowns) vacations.cooldowns = {};
+            vacations.cooldowns[userId] = Date.now() + (12 * 60 * 60 * 1000);
+
+            // إزالة الطلب من قائمة الانتظار
+            delete vacations.pendingTermination[userId];
+            vacationManager.saveVacations(vacations);
+
+            // إرسال رسالة رفض للمستخدم
+            const rejectEmbed = new EmbedBuilder()
+                .setTitle('❌ Rejected (Early Termination)')
+                .setColor('#E74C3C')
+                .setDescription(`**تم رفض طلب إنهاء إجازتك مبكراً.**`)
+                .addFields([
+                    { name: 'العضو', value: `<@${userId}>`, inline: true },
+                    { name: 'المسؤول', value: `${approverMember}`, inline: true },
+                    { name: 'سبب الرفض', value: rejectReason, inline: false },
+                    { name: 'الكولداون', value: '12 ساعة', inline: true }
+                ])
+                .setTimestamp();
+
+            if (requestedUser) {
+                try {
+                    await requestedUser.send({ embeds: [rejectEmbed] });
+                } catch (dmError) {
+                    console.error(`فشل في إرسال رسالة رفض إنهاء الإجازة لـ ${requestedUser.tag}:`, dmError.message);
+                }
+            }
+
+            // تحديث الرسالة الحالية
+            await interaction.editReply({
+                embeds: [rejectEmbed],
+                components: []
+            });
+
+        } catch (error) {
+            console.error('خطأ في رفض إنهاء الإجازة:', error);
+            await interaction.editReply({
+                content: `❌ **حدث خطأ أثناء رفض إنهاء الإجازة:**\n\`\`\`${error.message}\`\`\``,
+                components: []
+            });
         }
     }
 }

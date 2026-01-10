@@ -87,8 +87,9 @@ async function execute(message, args, { BOT_OWNERS }) {
     replyEmbed.setDescription("** اضغط عالزر وقدم اجازتك للمسؤولين **.");
     const requestButton = new ButtonBuilder()
         .setCustomId(`vac_request_start_${member.id}`)
-        .setLabel("Request Vacation")
-        .setStyle(ButtonStyle.Primary);
+        .setLabel("Vacation")
+    .setEmoji("<:emoji_20:1457509216443957431>")
+        .setStyle(ButtonStyle.Secondary);
 
     const row = new ActionRowBuilder().addComponents(requestButton);
     const sentMessage = await message.reply({ embeds: [replyEmbed], components: [row] });
@@ -339,56 +340,121 @@ async function handleInteraction(interaction, context) {
 
             const successEmbed = new EmbedBuilder()
                 .setColor(colorManager.getColor('approved') || '#2ECC71')
-                .setTitle('✅ Accepted')
+                .setTitle('✅ تم قبول طلب الإجازة')
                 .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
                 .addFields(
-                    { name: "___المعتمد___", value: `${approverMember}`, inline: true },
-                    { name: "___التاريخ___", value: `<t:${Math.floor(new Date(pendingRequest.startDate).getTime() / 1000)}:R>`, inline: true },
-                    { name: "___السبب___", value: pendingRequest.reason, inline: false }
+                    { name: " العضو", value: `${member}`, inline: true },
+                    { name: " لمسؤول", value: `${approverMember}`, inline: true },
+                    { name: " تاريخ البدء", value: `<t:${Math.floor(new Date(pendingRequest.startDate).getTime() / 1000)}:f>`, inline: true },
+                    { name: " تاريخ الانتهاء", value: `<t:${Math.floor(new Date(pendingRequest.endDate).getTime() / 1000)}:f>`, inline: true },
+                    { name: " السبب", value: pendingRequest.reason || 'غير محدد', inline: false }
                 )
+                .setFooter({ text: '🟢' })
                 .setTimestamp();
 
             await interaction.editReply({ embeds: [successEmbed], components: [] });
 
-        } else if (action === 'reject') {
-            // إضافة كولداون 12 ساعة
-            if (!vacationsData.cooldowns) vacationsData.cooldowns = {};
-            vacationsData.cooldowns[userId] = Date.now() + (12 * 60 * 60 * 1000);
-
-            if (!vacationsData.rejected) vacationsData.rejected = {};
-            vacationsData.rejected[userId] = {
-                reason: pendingRequest.reason,
-                startDate: pendingRequest.startDate,
-                endDate: pendingRequest.endDate,
-                rejectedBy: approverMember.user.tag,
-                rejectedAt: new Date().toISOString(),
-            };
-            delete vacationsData.pending[userId];
-            vacationManager.saveVacations(vacationsData);
-
-            const rejectEmbed = new EmbedBuilder()
-                .setColor(colorManager.getColor('rejected') || '#E74C3C')
-                .setTitle('❌ Rejected')
-                .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
-                .addFields(
-                    { name: "___العضو___", value: `${member}`, inline: true },
-                    { name: "___الكولداون___", value: '12 ساعة', inline: true },
-                    { name: "___السبب الأصلي___", value: pendingRequest.reason, inline: false }
-                )
-                .setTimestamp();
-
-            await interaction.editReply({ embeds: [rejectEmbed], components: [] });
-
-            // إشعار خاص للعضو
+            // DM user
             try {
                 const dmEmbed = new EmbedBuilder()
-                    .setTitle('تم رفض طلب إجازتك')
-                    .setColor('#E74C3C')
-                    .setDescription(`**تم رفض طلب إجازتك من قبل الإدارة.**\n**عليك كولداون 12 ساعة لتقديم طلب جديد.**`)
+                    .setTitle('✅ تمت الموافقة على إجازتك')
+                    .setColor('#2ECC71')
+                    .setDescription(`أهلاً بك، لقد تمت الموافقة على طلب الإجازة الخاص بك في **${interaction.guild.name}**`)
+                    .addFields(
+                        { name: " المسؤول", value: `${approverMember.user.tag}`, inline: true },
+                        { name: " تنتهي في", value: `<t:${Math.floor(new Date(pendingRequest.endDate).getTime() / 1000)}:f>`, inline: true },
+                        { name: " ملاحظة", value: '"يمكنك الانهاء عن طريق كتابة "اجازتي ', inline: false }
+                    )
                     .setTimestamp();
                 await member.user.send({ embeds: [dmEmbed] });
             } catch (dmErr) {
-                console.log('تعذر إرسال DM للرفض');
+                console.log('Could not DM user for approval');
+            }
+
+        } else if (action === 'reject') {
+            const modal = new ModalBuilder()
+                .setCustomId(`vac_reject_modal_${userId}`)
+                .setTitle('Reject Vacation Request');
+
+            const reasonInput = new TextInputBuilder()
+                .setCustomId('reject_reason')
+                .setLabel("Reason for Rejection")
+                .setPlaceholder("Enter the reason why this vacation is being rejected...")
+                .setStyle(TextInputStyle.Paragraph)
+                .setRequired(true)
+                .setMinLength(5)
+                .setMaxLength(500);
+
+            const row = new ActionRowBuilder().addComponents(reasonInput);
+            modal.addComponents(row);
+
+            return interaction.showModal(modal);
+        }
+    }
+
+    if (interaction.isModalSubmit() && customId.startsWith('vac_reject_modal_')) {
+        await interaction.deferUpdate().catch(() => {});
+        const userId = customId.split('_').pop();
+        const rejectReason = interaction.fields.getTextInputValue('reject_reason');
+
+        const vacationsData = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
+        const pendingRequest = vacationsData.pending?.[userId];
+
+        if (!pendingRequest) {
+            return interaction.followUp({ content: '❌ **No pending request found.**', ephemeral: true });
+        }
+
+        const member = await interaction.guild.members.fetch(userId).catch(() => null);
+        const approverMember = interaction.member;
+
+        // Add 12h cooldown
+        if (!vacationsData.cooldowns) vacationsData.cooldowns = {};
+        vacationsData.cooldowns[userId] = Date.now() + (12 * 60 * 60 * 1000);
+
+        if (!vacationsData.rejected) vacationsData.rejected = {};
+        vacationsData.rejected[userId] = {
+            reason: pendingRequest.reason,
+            rejectReason: rejectReason,
+            startDate: pendingRequest.startDate,
+            endDate: pendingRequest.endDate,
+            rejectedBy: approverMember.user.tag,
+            rejectedById: approverMember.id,
+            rejectedAt: new Date().toISOString(),
+        };
+        delete vacationsData.pending[userId];
+        vacationManager.saveVacations(vacationsData);
+
+        const rejectEmbed = new EmbedBuilder()
+            .setColor(colorManager.getColor('rejected') || '#E74C3C')
+            .setTitle('❌ Request Rejected')
+            .setAuthor({ name: member?.user.tag || 'User', iconURL: member?.user.displayAvatarURL() })
+            .addFields(
+                { name: " العضو", value: `<@${userId}>`, inline: true },
+                { name: " المرفوض من قبل", value: `${approverMember}`, inline: true },
+                { name: " سبب الرفض", value: rejectReason, inline: false },
+                { name: " السبب الأصلي", value: pendingRequest.reason, inline: false }
+            )
+            .setFooter({ text: 'تم تطبيق كولداون 12 ساعة تلقائياً' })
+            .setTimestamp();
+
+        await interaction.editReply({ embeds: [rejectEmbed], components: [] });
+
+        // DM user
+        if (member) {
+            try {
+                const dmEmbed = new EmbedBuilder()
+                    .setTitle('❌ تم رفض طلب إجازتك')
+                    .setColor('#E74C3C')
+                    .setDescription(`نعتذر، لقد تم رفض طلب الإجازة الخاص بك في **${interaction.guild.name}**`)
+                    .addFields(
+                        { name: " المسؤول", value: `${approverMember.user.tag}`, inline: true },
+                        { name: " سبب الرفض", value: rejectReason, inline: false },
+                        { name: " الكولداون", value: '12 ساعة (لا يمكنك التقديم مجدداً خلال هذه الفترة)', inline: false }
+                    )
+                    .setTimestamp();
+                await member.user.send({ embeds: [dmEmbed] });
+            } catch (dmErr) {
+                console.log('Could not DM user for rejection');
             }
         }
     }
