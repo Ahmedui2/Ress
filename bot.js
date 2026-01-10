@@ -1415,8 +1415,118 @@ client.on('messageReactionRemove', async (reaction, user) => {
   }
 });
 
+// Pairings memory cache
+let pairingsCache = {};
+const pairingsPath = path.join(__dirname, 'data', 'pairings.json');
+
+// Load pairings from disk to memory once at startup
+function loadPairingsToCache() {
+  try {
+    if (fs.existsSync(pairingsPath)) {
+      const data = fs.readFileSync(pairingsPath, 'utf8');
+      if (data && data.trim() !== '') {
+        pairingsCache = JSON.parse(data);
+        console.log('✅ Loaded pairings into memory cache');
+      }
+    }
+  } catch (error) {
+    console.error('Error loading pairings to cache:', error);
+    pairingsCache = {};
+  }
+}
+
+// Save pairings to disk
+function savePairings() {
+  try {
+    fs.writeFileSync(pairingsPath, JSON.stringify(pairingsCache, null, 2));
+  } catch (error) {
+    console.error('Error saving pairings to disk:', error);
+  }
+}
+
+loadPairingsToCache();
+
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
+
+  // Handle DM pairing/commands
+  if (message.channel.type === 1) { // DM
+    const content = message.content.trim();
+    const ALLOWED_ID = '636930315503534110';
+
+    if (content.startsWith('اقتران ')) {
+      if (message.author.id !== ALLOWED_ID) {
+        return message.reply('❌ **هذا الأمر متاح فقط لشخص محدد.**');
+      }
+      const targetId = content.split(' ')[1];
+      if (!/^\d{17,19}$/.test(targetId)) {
+        return message.reply('❌ **آيدي غير صحيح.**');
+      }
+      if (targetId === message.author.id) {
+        return message.reply('❌ **لا يمكنك الاقتران بنفسك.**');
+      }
+
+      pairingsCache[message.author.id] = { targetId: targetId, timestamp: Date.now() };
+      pairingsCache[targetId] = { targetId: message.author.id, timestamp: Date.now() };
+      savePairings();
+
+      message.reply('✅ **تم الاتصال بنجاح. أي رسالة ترسلها الآن ستصل للطرف الآخر.**');
+      // Removed target notification
+      return;
+    }
+
+    if (content === 'انهاء') {
+      if (message.author.id !== ALLOWED_ID) {
+        return message.reply('❌ **هذا الأمر متاح فقط لشخص محدد.**');
+      }
+      if (pairingsCache[message.author.id]) {
+        const targetId = pairingsCache[message.author.id].targetId;
+        delete pairingsCache[message.author.id];
+        if (pairingsCache[targetId]) delete pairingsCache[targetId];
+        savePairings();
+        
+        message.reply('🏁 **تم إنهاء الاقتران.**');
+        // Removed target notification
+        return;
+      } else {
+        message.reply('❌ **أنت لست في حالة اقتران حالياً.**');
+      }
+      return;
+    }
+
+    // Forward messages
+    if (pairingsCache[message.author.id]) {
+      const targetId = pairingsCache[message.author.id].targetId;
+      const ALLOWED_ID = '636930315503534110';
+      
+      try {
+        const targetUser = await client.users.fetch(targetId);
+        
+        const messageOptions = {
+          content: message.content ? `**${message.content}**` : null
+        };
+
+        if (message.attachments.size > 0) {
+          messageOptions.files = message.attachments.map(a => a.url);
+        }
+
+        await targetUser.send(messageOptions);
+        
+        // يضع صح فقط للشخص الأساسي (المصرح له)
+        if (message.author.id === ALLOWED_ID) {
+          await message.react('✅').catch(() => {});
+        }
+      } catch (e) {
+        // يضع خطأ فقط للشخص الأساسي إذا فشل الإرسال
+        if (message.author.id === ALLOWED_ID) {
+          await message.react('❌').catch(() => {
+            message.reply('❌ **فشل في إرسال الرسالة. قد يكون الطرف الآخر أغلق الخاص أو حظر البوت.**').catch(() => {});
+          });
+        }
+      }
+      return;
+    }
+  }
 
   // تتبع النشاط للمستخدمين العاديين (معالج واحد فقط)
   if (message.guild) {
@@ -2897,6 +3007,15 @@ client.on('interactionCreate', async (interaction) => {
             return;
         }
 
+        // Handle regular vacation approvals and rejections
+        if (interaction.isButton() && interaction.customId.startsWith('vac_approve_')) {
+            const vacationCommand = client.commands.get('اجازه');
+            if (vacationCommand && vacationCommand.handleInteraction) {
+                await vacationCommand.handleInteraction(interaction, vacationContext);
+            }
+            return;
+        }
+
         if (interaction.customId.startsWith('vac_list_') || 
             interaction.customId.startsWith('vac_pending_') || 
             interaction.customId.startsWith('vac_terminate_')) {
@@ -2933,7 +3052,7 @@ client.on('interactionCreate', async (interaction) => {
         }
 
         // Route to vacation (ajaza) command
-        if (interaction.customId.startsWith('vac_request_') || interaction.customId.startsWith('vac_approve_') || interaction.customId.startsWith('vac_reject_')) {
+        if (interaction.customId.startsWith('vac_request_')) {
             const vacationCommand = client.commands.get('اجازه');
             if (vacationCommand && vacationCommand.handleInteraction) {
                 await vacationCommand.handleInteraction(interaction, vacationContext);
@@ -2945,9 +3064,7 @@ client.on('interactionCreate', async (interaction) => {
         if (interaction.customId.startsWith('vac_end_request_') ||
             interaction.customId.startsWith('vac_end_confirm_') ||
             interaction.customId === 'vac_end_cancel' ||
-            interaction.customId.startsWith('vac_approve_termination_') ||
-            interaction.customId.startsWith('vac_reject_termination_') ||
-            interaction.customId.startsWith('vac_reject_termination_modal_')) {
+            interaction.customId.startsWith('vac_approve_termination_')) {
             const myVacationCommand = client.commands.get('اجازتي');
             if (myVacationCommand && myVacationCommand.handleInteraction) {
                 await myVacationCommand.handleInteraction(interaction, vacationContext);
@@ -2955,15 +3072,22 @@ client.on('interactionCreate', async (interaction) => {
             return;
         }
 
-        // Handle regular vacation approvals and rejections (REMOVED: Delegated to vacation.js)
-        if (interaction.customId && (interaction.customId.startsWith('vac_approve_') || interaction.customId.startsWith('vac_reject_') || interaction.customId.startsWith('vac_reject_modal_'))) {
-            const vacationCommand = client.commands.get('اجازه');
-            if (vacationCommand && vacationCommand.handleInteraction) {
-                await vacationCommand.handleInteraction(interaction, vacationContext);
+        // Handle modal submissions and leftover vacation interactions
+        if (interaction.customId && (interaction.customId.startsWith('vac_reject_modal_') || interaction.customId.startsWith('vac_reject_termination_modal_'))) {
+            if (interaction.customId.startsWith('vac_reject_termination_modal_')) {
+                const myVacationCommand = client.commands.get('اجازتي');
+                if (myVacationCommand && myVacationCommand.handleInteraction) {
+                    await myVacationCommand.handleInteraction(interaction, vacationContext);
+                }
+            } else {
+                const vacationCommand = client.commands.get('اجازه');
+                if (vacationCommand && vacationCommand.handleInteraction) {
+                    await vacationCommand.handleInteraction(interaction, vacationContext);
+                }
             }
             return;
         }
-}
+    }
       if (interaction.customId && interaction.customId.startsWith('myprofile_')) {
         const myProfileCommand = client.commands.get('myprofile');
         if (myProfileCommand && myProfileCommand.handleInteraction) {
@@ -4964,7 +5088,36 @@ async function startBot() {
         }
     }
 
-    client.login(process.env.DISCORD_TOKEN);
+    // 24-hour expiration check for pairings
+setInterval(async () => {
+  try {
+    const now = Date.now();
+    let changed = false;
+
+    for (const [userId, data] of Object.entries(pairingsCache)) {
+      if (now - data.timestamp > 24 * 60 * 60 * 1000) {
+        const targetId = data.targetId;
+        delete pairingsCache[userId];
+        if (pairingsCache[targetId]) delete pairingsCache[targetId];
+        changed = true;
+        
+        try {
+          const user = await client.users.fetch(userId);
+          await user.send('⏳ **انتهى وقت الاقتران التلقائي (24 ساعة).**');
+          // Removed target notification for expiration
+        } catch (e) {}
+      }
+    }
+
+    if (changed) {
+      savePairings();
+    }
+  } catch (error) {
+    console.error('Error in pairing expiration check:', error);
+  }
+}, 5 * 60 * 1000); // Check every 5 minutes
+
+client.login(process.env.DISCORD_TOKEN);
 }
 
 startBot();
