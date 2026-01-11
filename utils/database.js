@@ -50,9 +50,9 @@ class DatabaseManager {
             // تهيئة الجداول
             await this.createTables();
 
-            // تصحيح الأرقام القديمة تلقائياً عند كل تشغيل (حل ديناميكي)
-            await this.run("UPDATE daily_activity SET voice_time = voice_time / 60000 WHERE voice_time > 1440");
-            await this.run("UPDATE user_totals SET total_voice_time = total_voice_time / 60000 WHERE total_voice_time > 525600");
+            // تم إيقاف تصحيح الأرقام التلقائي لضمان بقاء البيانات بالميلي ثانية كما هي
+            // await this.run("UPDATE daily_activity SET voice_time = voice_time / 60000 WHERE voice_time > 1440");
+            // await this.run("UPDATE user_totals SET total_voice_time = total_voice_time / 60000 WHERE total_voice_time > 525600");
 
             // Check if column exists, if not add it (Migration)
             try {
@@ -513,22 +513,12 @@ class DatabaseManager {
                 await this.run(`UPDATE daily_activity SET messages = messages + ? WHERE date = ? AND user_id = ?`, [messages, date, userId]);
             }
             if (voiceTime > 0) {
-                // تصحيح تلقائي وديناميكي: إذا كان الوقت المضاف أو الإجمالي أكبر من 24 ساعة (1440 دقيقة)
-                // فهذا يعني يقيناً أنه بالملي ثانية ويجب تحويله.
-                let correctedVoiceTime = voiceTime;
-                if (voiceTime > 1440) {
-                    correctedVoiceTime = Math.floor(voiceTime / 60000);
-                }
-                
-                // تحديث القيمة مع التأكد من أن المجموع لا ينفجر مستقبلاً
+                // تحديث القيمة بالميلي ثانية مباشرة دون تصحيح
                 await this.run(`
                     UPDATE daily_activity 
-                    SET voice_time = CASE 
-                        WHEN (voice_time + ?) > 1000000 THEN (voice_time + ?) / 60000 
-                        ELSE voice_time + ? 
-                    END 
+                    SET voice_time = voice_time + ?
                     WHERE date = ? AND user_id = ?
-                `, [correctedVoiceTime, correctedVoiceTime, correctedVoiceTime, date, userId]);
+                `, [voiceTime, date, userId]);
             }
             if (voiceJoins > 0) {
                 await this.run(`UPDATE daily_activity SET voice_joins = voice_joins + ? WHERE date = ? AND user_id = ?`, [voiceJoins, date, userId]);
