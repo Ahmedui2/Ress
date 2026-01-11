@@ -893,26 +893,23 @@ class DatabaseManager {
             const cutoffDate = moment().tz('Asia/Riyadh').subtract(daysToKeep, 'days').format('YYYY-MM-DD');
             const cutoffTime = Date.now() - (daysToKeep * 24 * 60 * 60 * 1000);
 
-            // تم تعطيل حذف الجلسات التفصيلية القديمة للحفاظ على البيانات
-            /*
+            // حذف الجلسات التفصيلية القديمة فقط (voice_sessions)
             const sessionsResult = await this.run(`
                 DELETE FROM voice_sessions WHERE start_time < ?
             `, [cutoffTime]);
-            */
-            const sessionsResult = { changes: 0 };
 
-            // تم تعطيل الحذف التلقائي للحفاظ على البيانات بناءً على طلب المستخدم
-            /*
+            // حذف بيانات النشاط اليومي القديمة (أقدم من 90 يوماً بدلاً من 6 أشهر)
             const ninetyDaysAgo = moment().tz('Asia/Riyadh').subtract(90, 'days').format('YYYY-MM-DD');
             const dailyResult = await this.run(`
                 DELETE FROM daily_activity WHERE date < ?
             `, [ninetyDaysAgo]);
 
+            // حذف بيانات القنوات غير النشطة (آخر رسالة أقدم من 90 يوماً)
             const channelCleanup = await this.run(`
                 DELETE FROM message_channels WHERE last_message < ?
             `, [Date.now() - (90 * 24 * 60 * 60 * 1000)]);
-            */
-            console.log(`🧹 تنظيف تلقائي: تم تخطي الحذف للحفاظ على البيانات`);
+
+            console.log(`🧹 تنظيف تلقائي: ${sessionsResult.changes || 0} جلسة، ${dailyResult.changes || 0} نشاط يومي، ${channelCleanup.changes || 0} قناة`);
             console.log(`📊 الإحصائيات الإجمالية محفوظة - البيانات التفصيلية لآخر ${daysToKeep} يوم محفوظة`);
             
             // ضغط تلقائي قوي بعد التنظيف
@@ -931,15 +928,19 @@ class DatabaseManager {
         }
     }
 
-    // إعادة حساب الإحصائيات من البيانات الموجودة بدلاً من التصفير
+    // تصفير جميع إحصائيات التفاعل (إجمالي وأسبوعي)
     async resetAllStats() {
         try {
-            console.log('🔄 بدء إعادة مزامنة الإحصائيات من البيانات الموجودة...');
+            console.log('🔄 بدء تصفير جميع الإحصائيات...');
             
-            // بدلاً من الحذف، سنقوم بإعادة حساب الإجماليات من جدول النشاط اليومي والجلسات
+            // حذف جميع الجلسات الصوتية
+            const sessionsResult = await this.run(`DELETE FROM voice_sessions`);
             
-            // 1. تصفير الإجماليات أولاً قبل إعادة الحساب
-            await this.run(`
+            // حذف جميع النشاطات اليومية
+            const dailyResult = await this.run(`DELETE FROM daily_activity`);
+            
+            // إعادة تعيين إجماليات المستخدمين
+            const totalsResult = await this.run(`
                 UPDATE user_totals SET 
                     total_voice_time = 0,
                     total_sessions = 0,
@@ -948,78 +949,46 @@ class DatabaseManager {
                     total_voice_joins = 0,
                     active_days = 0
             `);
-
-            // 2. تحديث إجماليات الرسائل والتفاعلات من جدول النشاط اليومي
-            const dailyStats = await this.all(`
-                SELECT user_id, 
-                       SUM(messages) as total_messages, 
-                       SUM(reactions) as total_reactions,
-                       SUM(voice_joins) as total_voice_joins,
-                       COUNT(DISTINCT date) as active_days
-                FROM daily_activity
-                GROUP BY user_id
+            
+            // إعادة تعيين إجماليات القنوات
+            const channelResult = await this.run(`
+                UPDATE channel_totals SET 
+                    total_time = 0,
+                    total_sessions = 0,
+                    unique_users = 0
             `);
+            
+            // حذف مستخدمي القنوات
+            const channelUsersResult = await this.run(`DELETE FROM channel_users`);
 
-            for (const stat of dailyStats) {
-                await this.run(`
-                    INSERT INTO user_totals (user_id, total_messages, total_reactions, total_voice_joins, active_days)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(user_id) DO UPDATE SET
-                        total_messages = excluded.total_messages,
-                        total_reactions = excluded.total_reactions,
-                        total_voice_joins = excluded.total_voice_joins,
-                        active_days = excluded.active_days
-                `, [stat.user_id, stat.total_messages, stat.total_reactions, stat.total_voice_joins, stat.active_days]);
-            }
+            const totalDeleted = (sessionsResult.changes || 0) + 
+                                (dailyResult.changes || 0) + 
+                                (channelUsersResult.changes || 0);
+            const totalUpdated = (totalsResult.changes || 0) + 
+                                (channelResult.changes || 0);
 
-            // 3. تحديث وقت الفويس من جدول الجلسات
-            const voiceStats = await this.all(`
-                SELECT user_id, SUM(duration) as total_time, COUNT(*) as session_count
-                FROM voice_sessions
-                GROUP BY user_id
-            `);
-
-            for (const stat of voiceStats) {
-                await this.run(`
-                    UPDATE user_totals SET 
-                        total_voice_time = ?,
-                        total_sessions = ?
-                    WHERE user_id = ?
-                `, [stat.total_time, stat.session_count, stat.user_id]);
-            }
-
-            // 4. تحديث إجماليات القنوات
-            await this.run(`UPDATE channel_totals SET total_time = 0, total_sessions = 0`);
-            const channelStats = await this.all(`
-                SELECT channel_id, channel_name, SUM(duration) as total_time, COUNT(*) as session_count
-                FROM voice_sessions
-                GROUP BY channel_id
-            `);
-
-            for (const stat of channelStats) {
-                await this.run(`
-                    INSERT INTO channel_totals (channel_id, channel_name, total_time, total_sessions)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(channel_id) DO UPDATE SET
-                        total_time = excluded.total_time,
-                        total_sessions = excluded.total_sessions
-                `, [stat.channel_id, stat.channel_name, stat.total_time, stat.session_count]);
-            }
-
-            console.log(`✅ تم إعادة مزامنة الإحصائيات بنجاح من البيانات الموجودة`);
+            console.log(`✅ تم تصفير الإحصائيات: حذف ${totalDeleted} سجل، تحديث ${totalUpdated} سجل`);
             
             return {
                 success: true,
-                message: "تمت إعادة المزامنة بدلاً من التصفير",
-                updatedUsers: dailyStats.length,
-                updatedChannels: channelStats.length
+                deletedRecords: totalDeleted,
+                updatedRecords: totalUpdated,
+                details: {
+                    voiceSessions: sessionsResult.changes || 0,
+                    dailyActivity: dailyResult.changes || 0,
+                    userTotals: totalsResult.changes || 0,
+                    channelTotals: channelResult.changes || 0,
+                    channelUsers: channelUsersResult.changes || 0
+                }
             };
 
         } catch (error) {
-            console.error('❌ خطأ في إعادة مزامنة الإحصائيات:', error);
+            console.error('❌ خطأ في تصفير الإحصائيات:', error);
             return {
                 success: false,
-                error: error.message
+                error: error.message,
+                deletedRecords: 0,
+                updatedRecords: 0
             };
         }
     }
