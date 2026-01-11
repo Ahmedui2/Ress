@@ -198,25 +198,21 @@ async function getColorIndicator(userId, client, dbManager) {
     }
 }
 
-function formatDuration(value) {
-    if (!value || value <= 0) return '0m';
-
-    let totalMinutes;
-    if (value > 525600) {
-        totalMinutes = Math.floor(value / 60000);
-    } else {
-        totalMinutes = Math.floor(value);
-    }
-
+function formatDuration(minutes) {
+    if (typeof minutes !== 'number' || isNaN(minutes) || minutes <= 0) return '0m';
+    
+    // Ensure we are working with minutes (the database might store ms or minutes depending on context, 
+    // but daily_activity.voice_time is usually minutes in this codebase)
+    const totalMinutes = Math.floor(minutes);
     const days = Math.floor(totalMinutes / 1440);
     const hours = Math.floor((totalMinutes % 1440) / 60);
     const mins = totalMinutes % 60;
-
+    
     const parts = [];
     if (days > 0) parts.push(`${days}d`);
     if (hours > 0) parts.push(`${hours}h`);
     if (mins > 0 || parts.length === 0) parts.push(`${mins}m`);
-
+    
     return parts.join(' ');
 }
 

@@ -88,26 +88,25 @@ function writeJsonFile(filePath, data) {
 }
 
 // دالة لتنسيق الوقت
-function formatDuration(value) {
-    if (!value || value <= 0) return '0m';
+function formatDuration(milliseconds) {
+    if (!milliseconds || milliseconds <= 0) return 'لا يوجد';
 
-    let totalMinutes;
-    if (value > 525600) {
-        totalMinutes = Math.floor(value / 60000);
-    } else {
-        totalMinutes = Math.floor(value);
-    }
+    const totalSeconds = Math.floor(milliseconds / 1000);
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    const totalHours = Math.floor(totalMinutes / 60);
+    const days = Math.floor(totalHours / 24);
 
-    const days = Math.floor(totalMinutes / 1440);
-    const hours = Math.floor((totalMinutes % 1440) / 60);
-    const mins = totalMinutes % 60;
+    const hours = totalHours % 24;
+    const minutes = totalMinutes % 60;
+    const seconds = totalSeconds % 60;
 
     const parts = [];
-    if (days > 0) parts.push(`${days}d`);
-    if (hours > 0) parts.push(`${hours}h`);
-    if (mins > 0 || parts.length === 0) parts.push(`${mins}m`);
+    if (days > 0) parts.push(`${days} يوم`);
+    if (hours > 0) parts.push(`${hours} ساعة`);
+    if (minutes > 0) parts.push(`${minutes} دقيقة`);
+    if (seconds > 0 && days === 0) parts.push(`${seconds} ثانية`);
 
-    return parts.join(' and ');
+    return parts.length > 0 ? parts.join(' و ') : 'أقل من ثانية';
 }
 
 // دالة لحفظ جلسة صوتية

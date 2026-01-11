@@ -194,20 +194,14 @@ function calculateChatLevel(messages) {
 }
 
 // Format voice time
-function formatVoiceTime(value) {
-    if (!value || value <= 0) return '0m';
-
-    let totalMinutes;
-    if (value > 525600) {
-        totalMinutes = Math.floor(value / 60000);
-    } else {
-        totalMinutes = Math.floor(value);
-    }
-
-    const days = Math.floor(totalMinutes / 1440);
-    const hours = Math.floor((totalMinutes % 1440) / 60);
-    const mins = totalMinutes % 60;
-
+function formatVoiceTime(minutes) {
+    // التأكد من أن القيمة رقمية وموجبة
+    if (!minutes || minutes <= 0) return '0m';
+    
+    const days = Math.floor(minutes / 1440);
+    const hours = Math.floor((minutes % 1440) / 60);
+    const mins = Math.floor(minutes % 60);
+    
     if (days > 0) {
         return `${days.toLocaleString()}d ${hours}h`;
     } else if (hours > 0) {
