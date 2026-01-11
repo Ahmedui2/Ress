@@ -44,11 +44,10 @@ class DatabaseArchiver {
                 `SELECT COUNT(*) as count FROM voice_sessions WHERE date < ?`, [twoWeeksAgo]);
             
             if (oldSessions && oldSessions.count > 0) {
-                console.log(`🗑️ حذف ${oldSessions.count} جلسة صوتية تفصيلية (أكثر من أسبوعين)...`);
-                await this.run(mainDb, `DELETE FROM voice_sessions WHERE date < ?`, [twoWeeksAgo]);
-                await this.run(mainDb, 'VACUUM');
-                console.log('✅ تم حذف الجلسات التفصيلية فقط');
-                console.log('✅ تم الحفاظ على daily_activity و user_totals للإحصائيات الشهرية');
+                console.log(`⚠️ تم تخطي حذف ${oldSessions.count} جلسة صوتية تفصيلية للحفاظ على البيانات`);
+                // تم تعطيل الحذف التلقائي بناءً على طلب المستخدم
+                // await this.run(mainDb, `DELETE FROM voice_sessions WHERE date < ?`, [twoWeeksAgo]);
+                // await this.run(mainDb, 'VACUUM');
             }
             
             mainDb.close();
@@ -266,17 +265,23 @@ class DatabaseArchiver {
 
             const mainDb = new sqlite3.Database(this.mainDbPath);
             
+            const deletedDaily = { count: 0 };
+            /*
             const deletedDaily = await this.get(mainDb,
                 `SELECT COUNT(*) as count FROM daily_activity WHERE date < ?`, [cutoffDate]);
             
             await this.run(mainDb, 
                 `DELETE FROM daily_activity WHERE date < ?`, [cutoffDate]);
+            */
 
+            const deletedSessions = { count: 0 };
+            /*
             const deletedSessions = await this.get(mainDb,
                 `SELECT COUNT(*) as count FROM voice_sessions WHERE date < ?`, [cutoffDate]);
             
             await this.run(mainDb,
                 `DELETE FROM voice_sessions WHERE date < ?`, [cutoffDate]);
+            */
 
             await this.run(mainDb, 'VACUUM');
             
