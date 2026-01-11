@@ -198,12 +198,17 @@ async function getColorIndicator(userId, client, dbManager) {
     }
 }
 
-function formatDuration(minutes) {
-    if (typeof minutes !== 'number' || isNaN(minutes) || minutes <= 0) return '0m';
+function formatDuration(value) {
+    if (typeof value !== 'number' || isNaN(value) || value <= 0) return '0m';
     
-    // Ensure we are working with minutes (the database might store ms or minutes depending on context, 
-    // but daily_activity.voice_time is usually minutes in this codebase)
-    const totalMinutes = Math.floor(minutes);
+    let totalMinutes;
+    // منطق ذكي: إذا كان الرقم أكبر من دقائق سنة كاملة، فهو ميلي ثانية
+    if (value > 525600) {
+        totalMinutes = Math.floor(value / 60000);
+    } else {
+        totalMinutes = Math.floor(value);
+    }
+
     const days = Math.floor(totalMinutes / 1440);
     const hours = Math.floor((totalMinutes % 1440) / 60);
     const mins = totalMinutes % 60;
