@@ -711,11 +711,15 @@ async function handleSetupStep(interaction, context) {
         const roleOptions = adminRoles.map(roleId => {
             const role = interaction.guild.roles.cache.get(roleId);
             return role ? {
-                name: role.name,
+                label: role.name.substring(0, 100),
                 value: roleId,
                 description: `أعضاء: ${role.members.size}`
-            } : null;
-        }).filter(Boolean);
+            } : {
+                label: `رول غير معروف (${roleId})`,
+                value: roleId,
+                description: `رول غير موجود في السيرفر`
+            };
+        });
 
         let currentPage = parseInt(interaction.message.components[1].components[1].label.match(/\d+/)[0]) - 1;
         if (interaction.customId.includes('prev')) currentPage--;
@@ -748,11 +752,15 @@ async function handleSetupStep(interaction, context) {
         const availableRoles = adminRoles.map(roleId => {
             const role = interaction.guild.roles.cache.get(roleId);
             return role ? {
-                name: role.name,
+                label: role.name.substring(0, 100),
                 value: roleId,
                 description: `ترقية جميع أعضاء ${role.name}`
-            } : null;
-        }).filter(Boolean);
+            } : {
+                label: `رول غير معروف (${roleId})`,
+                value: roleId,
+                description: `رول غير موجود في السيرفر`
+            };
+        });
 
         let currentPage = parseInt(interaction.message.components[1].components[1].label.match(/\d+/)[0]) - 1;
         if (interaction.customId.includes('prev')) currentPage--;
@@ -848,7 +856,7 @@ async function handleSetupStep(interaction, context) {
             const roleOptions = await Promise.all(filteredRoles.map(async roleId => {
                 const role = await guild.roles.fetch(roleId);
                 return {
-                    name: role.name,
+                    label: role ? role.name.substring(0, 100) : `رول غير معروف (${roleId})`,
                     value: roleId,
                     description: `ID: ${roleId}`
                 };
@@ -2120,7 +2128,7 @@ async function handlePromoteInteractions(interaction, context) {
 
         const members = sourceRole.members.filter(m => !m.user.bot);
         const memberOptions = members.map(m => ({
-            name_role: m.displayName,
+            label: m.displayName.substring(0, 100),
             value: m.id,
             description: `استبعاد ${m.displayName} من الترقية`
         }));
@@ -2157,7 +2165,7 @@ async function handlePromoteInteractions(interaction, context) {
         const targetRole = interaction.guild.roles.cache.get(targetRoleId);
         const members = sourceRole.members.filter(m => !m.user.bot);
         const memberOptions = members.map(m => ({
-            name_role: m.displayName,
+            label: m.displayName.substring(0, 100),
             value: m.id,
             description: `استبعاد ${m.displayName} من الترقية`
         }));
