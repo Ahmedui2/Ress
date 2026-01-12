@@ -6,6 +6,7 @@ const moment = require('moment-timezone');
 const colorManager = require('../utils/colorManager');
 const promoteManager = require('../utils/promoteManager');
 const { collectUserStats, formatDuration } = require('../utils/userStatsCollector');
+const { createPaginatedResponsibilityMenu, createPaginatedResponsibilityArray, handlePaginationInteraction } = require('../utils/responsibilityPagination');
 
 const name = 'promote';
 
@@ -240,6 +241,52 @@ async function createPermanentMenu(client, channelId) {
     }
 }
 
+// دالة مضافة لتحديث المنيو الدائم
+async function updatePermanentMenu(client, message) {
+    try {
+        const menuEmbed = colorManager.createEmbed()
+            .setTitle('Promote Management System')
+            .setDescription('** منيو الترقية للمسؤولين **\n\n')
+            .addFields([
+                { name: 'Up', value: 'ترقية اداري ', inline: false },
+                { name: 'Up log', value: 'عرض الترقيات لإداري معين',  inline: false },
+                { name: 'Block', value: 'منع عضو من الحصول على ترقيات',  inline: false },
+                { name: 'Unblock', value: 'إزالة منع الترقية عن إداري', inline: false },
+                { name: 'Admins active', value: 'فحص إحصائيات تفاعل الادارة قبل الترقية', inline: false }
+            ])
+            .setThumbnail(client?.user?.displayAvatarURL({ size: 128 }) || 'https://cdn.discordapp.com/attachments/1373799493111386243/1400677612304470086/images__5_-removebg-preview.png?ex=688d822e&is=688c30ae&hm=1ea7a63bb89b38bcd76c0f5668984d7fc919214096a3d3ee92f5d948497fcb51&')
+            .setFooter({text :' يتم التحديث تلقائياً كل 30 ثانية | By Ahmed'})  
+            .setTimestamp();
+
+        const menuSelect = new StringSelectMenuBuilder()
+            .setCustomId('promote_main_menu')
+            .setPlaceholder(' اختر الإجراء المطلوب...')
+            .addOptions([
+                { label: 'Up', value: 'promote_user_or_role', emoji: '<:emoji_65:1442588059890614383>' },
+                { label: 'Record', value: 'promotion_records', emoji: '<:emoji_73:1442588719201648811>' },
+                { label: 'Block', value: 'ban_from_promotion', emoji: '<:emoji_74:1442588785266262228>' },
+                { label: 'Unblock', value: 'unban_promotion', emoji: '<:emoji_76:1442588839121260756>' },
+                { label: 'Check Admin', value: 'check_admin_activity', emoji: '<:emoji_78:1442588950274510988>' }
+            ]);
+
+        const settingsButton = new ButtonBuilder()
+            .setCustomId('promote_settings_button')
+            .setLabel(' Settings')
+            .setEmoji('<:emoji_81:1442589104914305176>')
+            .setStyle(ButtonStyle.Secondary);
+
+        const menuRow = new ActionRowBuilder().addComponents(menuSelect);
+        const buttonRow = new ActionRowBuilder().addComponents(settingsButton);
+
+        await message.edit({
+            embeds: [menuEmbed],
+            components: [menuRow, buttonRow]
+        }).catch(err => console.error('Error editing permanent menu:', err));
+    } catch (error) {
+        console.error('Error updating permanent menu:', error);
+    }
+}
+
 async function execute(message, args, context) {
     const { client, BOT_OWNERS } = context;
 
@@ -260,30 +307,36 @@ async function execute(message, args, context) {
         return message.reply({ embeds: [noPermEmbed] });
     }
 
-    // Check if setup is needed
+    // Check if initial setup is required
+    const needsSetup = () => {
+        const settingsPath = path.join(__dirname, '..', 'data', 'promoteSettings.json');
+        const settings = readJson(settingsPath, {});
+        return !settings.menuChannel || !settings.logChannel || !settings.allowedUsers?.type;
+    };
+
     if (needsSetup()) {
-        const setupEmbed = createSetupEmbed(1, {}, client);
+        const settingsPath = path.join(__dirname, '..', 'data', 'promoteSettings.json');
+        const settings = readJson(settingsPath, {});
+        const setupEmbed = createSetupEmbed(1, settings, client);
 
         const setupSelect = new StringSelectMenuBuilder()
             .setCustomId('promote_setup_permission')
-            .setPlaceholder('اختر نوع المعتمدين...')
+            .setPlaceholder('اختر نوع المعتمدين لنظام الترقيات...')
             .addOptions([
                 {
                     label: 'المالكين فقط',
                     value: 'owners',
-                    description: 'السماح للمالكين فقط باستخدام النظام',
-
+                    description: 'السماح للمالكين فقط باستخدام نظام الترقيات',
                 },
                 {
                     label: 'رولات محددة',
                     value: 'roles',
-                    description: 'السماح لحاملي رولات معينة',
-
+                    description: 'السماح لحاملي رولات معينة باستخدام نظام الترقيات',
                 },
                 {
                     label: 'مسؤوليات محددة',
                     value: 'responsibility',
-                    description: 'السماح للمسؤولين عن مسؤوليات معينة',
+                    description: 'السماح للمسؤولين عن مسؤوليات معينة باستخدام نظام الترقيات',
                 }
             ]);
 
@@ -292,7 +345,7 @@ async function execute(message, args, context) {
         return message.reply({
             embeds: [setupEmbed],
             components: [setupRow],
-            content: '**مرحباً بك في إعداد نظام الترقيات!**\n\nيرجى اتباع الخطوات التالية لإكمال الإعداد:'
+            content: '**مرحباً بك في إعداد نظام الترقيات المستقل!**\n\nهذا الإعداد خاص بنظام الترقيات فقط ولا يؤثر على الأنظمة الأخرى.'
         });
     }
 
@@ -349,7 +402,56 @@ async function execute(message, args, context) {
 
     const actionRow = new ActionRowBuilder().addComponents(quickActionsSelect);
 
-    await message.reply({ embeds: [adminEmbed], components: [actionRow] });
+    const sentMessage = await message.reply({ embeds: [adminEmbed], components: [actionRow] });
+
+    // Auto-refresh interval (every 30 seconds)
+    if (!client.promoteIntervals) client.promoteIntervals = new Map();
+    if (client.promoteIntervals.has(message.channel.id)) {
+        clearInterval(client.promoteIntervals.get(message.channel.id));
+    }
+
+    const intervalId = setInterval(async () => {
+        try {
+            const currentSettings = promoteManager.getSettings();
+            if (sentMessage.id === currentSettings.menuMessageId) {
+                await updatePermanentMenu(client, sentMessage);
+            } else {
+                const refreshedEmbed = colorManager.createEmbed()
+                    .setTitle('Promote System Management (Auto-refreshed)')
+                    .setDescription('النظام مُعد ويعمل! يتم التحديث تلقائياً كل 30 ثانية.')
+                    .addFields([
+                        {
+                            name: 'المنيو التفاعلي',
+                            value: currentSettings.menuChannel ? `<#${currentSettings.menuChannel}>` : 'غير محدد',
+                            inline: true
+                        },
+                        {
+                            name: 'روم السجلات',
+                            value: currentSettings.logChannel ? `<#${currentSettings.logChannel}>` : 'غير محدد',
+                            inline: true
+                        },
+                        {
+                            name: 'المعتمدين',
+                            value: currentSettings.allowedUsers?.type ?
+                                `${getPermissionTypeText(currentSettings.allowedUsers.type)} (${currentSettings.allowedUsers.targets?.length || 0})` :
+                                'غير محدد',
+                            inline: true
+                        }
+                    ])
+                    .setThumbnail(client?.user?.displayAvatarURL() || 'https://cdn.discordapp.com/attachments/1373799493111386243/1400677612304470086/images__5_-removebg-preview.png?ex=688d822e&is=688c30ae&hm=1ea7a63bb89b38bcd76c0f5668984d7fc919214096a3d3ee92f5d948497fcb51&')
+                    .setTimestamp();
+
+                await sentMessage.edit({ embeds: [refreshedEmbed], components: [actionRow] }).catch(() => {
+                    clearInterval(intervalId);
+                    client.promoteIntervals.delete(message.channel.id);
+                });
+            }
+        } catch (error) {
+            console.error('Error refreshing promote menu:', error);
+        }
+    }, 30000);
+
+    client.promoteIntervals.set(message.channel.id, intervalId);
 }
 
 async function handleInteraction(interaction, context) {
@@ -368,6 +470,16 @@ async function handleInteraction(interaction, context) {
         // Handle setup interactions
         if (customId.startsWith('promote_setup_')) {
             await handleSetupStep(interaction, context);
+            // Refresh embed after setup step
+            try {
+                const settingsPath = path.join(__dirname, '..', 'data', 'promoteSettings.json');
+                const settings = readJson(settingsPath, {});
+                const currentEmbed = interaction.message.embeds[0];
+                if (currentEmbed && currentEmbed.title === 'Promote System Setup') {
+                    const updatedEmbed = createSetupEmbed(1, settings, client); // Approximate step
+                    await interaction.editReply({ embeds: [updatedEmbed] }).catch(() => {});
+                }
+            } catch (e) {}
             return;
         }
 
@@ -395,7 +507,36 @@ async function handleInteraction(interaction, context) {
         // Handle settings button
         if (customId === 'promote_settings_button') {
             await handleSettingsButton(interaction, context);
+            // تحديث المنيو بعد تغيير الإعدادات
+            const settings = promoteManager.getSettings();
+            if (interaction.message.id === settings.menuMessageId) {
+                await updatePermanentMenu(client, interaction.message);
+            }
             return;
+        }
+
+        const settings = promoteManager.getSettings();
+        if (interaction.message.id === settings.menuMessageId) {
+            if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate().catch(() => {});
+            await updatePermanentMenu(client, interaction.message);
+        } else {
+            // For other messages (like the one from /promote command)
+            try {
+                const currentEmbed = interaction.message.embeds[0];
+                if (currentEmbed) {
+                    const updatedEmbed = colorManager.createEmbed()
+                        .setTitle(currentEmbed.title)
+                        .setDescription(currentEmbed.description)
+                        .setThumbnail(currentEmbed.thumbnail?.url)
+                        .setFooter({ text: 'تم التحديث بعد التفاعل | By Ahmed' })
+                        .setTimestamp();
+
+                    if (currentEmbed.fields && currentEmbed.fields.length > 0) {
+                        updatedEmbed.addFields(currentEmbed.fields);
+                    }
+                    await interaction.editReply({ embeds: [updatedEmbed] }).catch(() => {});
+                }
+            } catch (e) {}
         }
 
         // Handle other promote interactions
@@ -513,7 +654,6 @@ async function handleSetupStep(interaction, context) {
             }
 
             // Use pagination for responsibilities
-            const { createPaginatedResponsibilityMenu } = require('../utils/responsibilityPagination');
             const { components } = createPaginatedResponsibilityMenu(
                 responsibilities, 
                 0, 
@@ -539,7 +679,7 @@ async function handleSetupStep(interaction, context) {
 
     // Handle pagination for promote setup select responsibilities
     if (interaction.isButton() && (interaction.customId.startsWith('promote_setup_select_responsibilities_prev_page') || interaction.customId.startsWith('promote_setup_select_responsibilities_next_page'))) {
-        const { createPaginatedResponsibilityMenu } = require('../utils/responsibilityPagination');
+        
         const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
         const responsibilities = readJson(responsibilitiesPath, {});
         
@@ -564,7 +704,7 @@ async function handleSetupStep(interaction, context) {
 
     // Handle pagination for promote_check_select_role
     if (interaction.isButton() && (interaction.customId.startsWith('promote_check_select_role_prev_page') || interaction.customId.startsWith('promote_check_select_role_next_page'))) {
-        const { createPaginatedResponsibilityArray } = require('../utils/responsibilityPagination');
+        
         const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
         const adminRoles = readJson(adminRolesPath, []);
         
@@ -601,7 +741,7 @@ async function handleSetupStep(interaction, context) {
 
     // Handle pagination for promote_select_source_role
     if (interaction.isButton() && (interaction.customId.startsWith('promote_select_source_role_prev_page') || interaction.customId.startsWith('promote_select_source_role_next_page'))) {
-        const { createPaginatedResponsibilityArray } = require('../utils/responsibilityPagination');
+        
         const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
         const adminRoles = readJson(adminRolesPath, []);
         
@@ -664,7 +804,7 @@ async function handleSetupStep(interaction, context) {
             }
         }));
 
-        const { createPaginatedResponsibilityArray } = require('../utils/responsibilityPagination');
+        
         let currentPage = parseInt(interaction.message.components[1].components[1].label.match(/\d+/)[0]) - 1;
         if (interaction.customId.includes('prev')) currentPage--;
         else currentPage++;
@@ -714,7 +854,7 @@ async function handleSetupStep(interaction, context) {
                 };
             }));
 
-            const { createPaginatedResponsibilityArray } = require('../utils/responsibilityPagination');
+            
             let currentPage = parseInt(interaction.message.components[1].components[1].label.match(/\d+/)[0]) - 1;
             if (interaction.customId.includes('prev')) currentPage--;
             else currentPage++;
@@ -1224,7 +1364,7 @@ async function handleUnbanPromotion(interaction, context) {
     }));
 
     // Use pagination for unban list
-    const { createPaginatedResponsibilityArray } = require('../utils/responsibilityPagination');
+    
     const { components } = createPaginatedResponsibilityArray(
         userOptions,
         0,
@@ -1391,7 +1531,7 @@ async function handleCheckAdminActivity(interaction, context) {
     }
 
     // Use pagination for roles if more than 25
-    const { createPaginatedResponsibilityArray } = require('../utils/responsibilityPagination');
+    
     const { components } = createPaginatedResponsibilityArray(
         roleOptions,
         0,
@@ -1496,13 +1636,17 @@ async function handlePromoteInteractions(interaction, context) {
             
         const updatedRow = new ActionRowBuilder().addComponents(updatedSelect);
         
-        // Use update to reset the menu immediately and then handle the logic
-        await interaction.update({
-            components: [updatedRow, ...interaction.message.components.slice(1)]
-        });
-
-        // Process the logic after updating the interaction
+        // Use followUp or separate update if needed, but first process the logic
         await handleMainMenu(interaction, context);
+        
+        // Then ensure the original menu is reset
+        try {
+            await interaction.message.edit({
+                components: [updatedRow, ...interaction.message.components.slice(1)]
+            });
+        } catch (error) {
+            console.log('فشل في إعادة ضبط القائمة الرئيسية:', error.message);
+        }
         return;
     }
 
@@ -1595,7 +1739,7 @@ async function handlePromoteInteractions(interaction, context) {
             });
 
             // Use pagination for roles if more than 25
-            const { createPaginatedResponsibilityArray } = require('../utils/responsibilityPagination');
+            
             const { components } = createPaginatedResponsibilityArray(
                 availableRoles,
                 0,
@@ -1901,7 +2045,7 @@ async function handlePromoteInteractions(interaction, context) {
         }
 
         // Use pagination for bulk roles
-        const { createPaginatedResponsibilityArray } = require('../utils/responsibilityPagination');
+        
         const { components } = createPaginatedResponsibilityArray(
             availableTargetRoles,
             0,
@@ -1911,14 +2055,14 @@ async function handlePromoteInteractions(interaction, context) {
 
         await interaction.update({
             content: `**الرول الحالي:** <@&${sourceRoleId}>\n**النوع المختار:** ${type === 'type_phenomena' ? 'ظواهر' : 'حرف'}\nاختر الرول المستهدف:`,
-            components: components
+            components: [updatedRow, ...components]
         });
         return;
     }
 
     // Handle pagination for promote_bulk_role_target
     if (interaction.isButton() && (interaction.customId.startsWith('promote_bulk_role_target_prev_page') || interaction.customId.startsWith('promote_bulk_role_target_next_page'))) {
-        const { createPaginatedResponsibilityArray } = require('../utils/responsibilityPagination');
+        
         const parts = interaction.message.content.match(/<@&(\d+)>/);
         const sourceRoleId = parts ? parts[1] : null;
         const type = interaction.message.content.includes('ظواهر') ? 'type_phenomena' : 'type_letter';
@@ -1976,98 +2120,59 @@ async function handlePromoteInteractions(interaction, context) {
 
         const members = sourceRole.members.filter(m => !m.user.bot);
         const memberOptions = members.map(m => ({
-            label: m.displayName,
+            name_role: m.displayName,
             value: m.id,
             description: `استبعاد ${m.displayName} من الترقية`
         }));
 
         // Pagination logic for member exclusion
-        let currentPage = 0;
-        const itemsPerPage = 25;
-        const totalPages = Math.ceil(memberOptions.length / itemsPerPage);
+        
+        const { components } = createPaginatedResponsibilityArray(
+            memberOptions,
+            0,
+            `promote_bulk_exclude_${sourceRoleId}_${targetRoleId}`,
+            'استبعاد أعضاء من الترقية الجماعية...',
+            memberOptions.length
+        );
 
-        async function sendExclusionMenu(page) {
-            const start = page * itemsPerPage;
-            const end = start + itemsPerPage;
-            const currentOptions = memberOptions.slice(start, end);
-
-            const row = new ActionRowBuilder().addComponents(
-                new StringSelectMenuBuilder()
-                    .setCustomId(`promote_bulk_exclude_${sourceRoleId}_${targetRoleId}_${page}`)
-                    .setPlaceholder(`استبعاد أعضاء (صفحة ${page + 1}/${totalPages})...`)
-                    .setMinValues(0)
-                    .setMaxValues(currentOptions.length)
-                    .addOptions(currentOptions)
-            );
-
-            const navRow = new ActionRowBuilder();
-            if (page > 0) {
-                navRow.addComponents(new ButtonBuilder().setCustomId(`promote_bulk_exclude_prev_${sourceRoleId}_${targetRoleId}_${page}`).setLabel('السابق').setStyle(ButtonStyle.Secondary));
-            }
-            if (page < totalPages - 1) {
-                navRow.addComponents(new ButtonBuilder().setCustomId(`promote_bulk_exclude_next_${sourceRoleId}_${targetRoleId}_${page}`).setLabel('التالي').setStyle(ButtonStyle.Secondary));
-            }
-            navRow.addComponents(new ButtonBuilder().setCustomId(`promote_bulk_skip_exclude_${sourceRoleId}_${targetRoleId}`).setLabel('متابعة الترقية').setStyle(ButtonStyle.Primary));
-
-            const components = [row];
-            if (navRow.components.length > 0) components.push(navRow);
-
+        if (memberOptions.length === 0) {
+            await showBulkModal(interaction, sourceRoleId, targetRoleId, []);
+        } else {
             await interaction.update({
                 content: `**الرول المستهدف:** ${targetRole.name}\n**حدد الأعضاء المراد استبعادهم من الترقية الجماعية:**`,
                 components: components
             });
         }
-
-        if (memberOptions.length === 0) {
-            await showBulkModal(interaction, sourceRoleId, targetRoleId, []);
-        } else {
-            await sendExclusionMenu(0);
-        }
         return;
     }
 
     // Handle navigation and exclusion selection
-    if (interaction.isButton() && (customId.startsWith('promote_bulk_exclude_prev_') || customId.startsWith('promote_bulk_exclude_next_'))) {
-        const parts = customId.split('_');
-        const sourceRoleId = parts[4];
-        const targetRoleId = parts[5];
-        let page = parseInt(parts[6]);
-        if (customId.includes('prev')) page--;
-        else page++;
+    if (interaction.isButton() && (customId.startsWith('promote_bulk_exclude_') && (customId.includes('_prev_page') || customId.includes('_next_page')))) {
         
-        // We need to re-fetch memberOptions or store it. For simplicity in this edit, we assume interaction state.
-        // Re-implementing logic for the button click
+        const parts = customId.split('_');
+        const sourceRoleId = parts[3];
+        const targetRoleId = parts[4];
+        
         const sourceRole = interaction.guild.roles.cache.get(sourceRoleId);
         const targetRole = interaction.guild.roles.cache.get(targetRoleId);
         const members = sourceRole.members.filter(m => !m.user.bot);
         const memberOptions = members.map(m => ({
-            label: m.displayName,
+            name_role: m.displayName,
             value: m.id,
             description: `استبعاد ${m.displayName} من الترقية`
         }));
-        const itemsPerPage = 25;
-        const totalPages = Math.ceil(memberOptions.length / itemsPerPage);
 
-        const start = page * itemsPerPage;
-        const end = start + itemsPerPage;
-        const currentOptions = memberOptions.slice(start, end);
+        let currentPage = parseInt(interaction.message.components[1].components[1].label.match(/\d+/)[0]) - 1;
+        if (customId.includes('prev')) currentPage--;
+        else currentPage++;
 
-        const row = new ActionRowBuilder().addComponents(
-            new StringSelectMenuBuilder()
-                .setCustomId(`promote_bulk_exclude_${sourceRoleId}_${targetRoleId}_${page}`)
-                .setPlaceholder(`استبعاد أعضاء (صفحة ${page + 1}/${totalPages})...`)
-                .setMinValues(0)
-                .setMaxValues(currentOptions.length)
-                .addOptions(currentOptions)
+        const { components } = createPaginatedResponsibilityArray(
+            memberOptions,
+            currentPage,
+            `promote_bulk_exclude_${sourceRoleId}_${targetRoleId}`,
+            'استبعاد أعضاء من الترقية الجماعية...',
+            memberOptions.length
         );
-
-        const navRow = new ActionRowBuilder();
-        if (page > 0) navRow.addComponents(new ButtonBuilder().setCustomId(`promote_bulk_exclude_prev_${sourceRoleId}_${targetRoleId}_${page}`).setLabel('السابق').setStyle(ButtonStyle.Secondary));
-        if (page < totalPages - 1) navRow.addComponents(new ButtonBuilder().setCustomId(`promote_bulk_exclude_next_${sourceRoleId}_${targetRoleId}_${page}`).setLabel('التالي').setStyle(ButtonStyle.Secondary));
-        navRow.addComponents(new ButtonBuilder().setCustomId(`promote_bulk_skip_exclude_${sourceRoleId}_${targetRoleId}`).setLabel('متابعة الترقية').setStyle(ButtonStyle.Primary));
-
-        const components = [row];
-        if (navRow.components.length > 0) components.push(navRow);
 
         await interaction.update({ components });
         return;
@@ -2170,7 +2275,22 @@ async function handlePromoteInteractions(interaction, context) {
 
     if (interaction.customId === 'promote_select_type') {
         const type = interaction.values[0];
-        const targetId = interaction.message.content.match(/<@(\d+)>/)[1];
+        
+        // Find targetId from message content or embed description
+        const contentMatch = interaction.message.content.match(/<@!?(\d+)>/);
+        const embedMatch = interaction.message.embeds[0]?.description?.match(/<@!?(\d+)>/);
+        const targetId = (contentMatch ? contentMatch[1] : null) || (embedMatch ? embedMatch[1] : null);
+        
+        if (!targetId) {
+            console.error('❌ Promote Error: targetId not found in message content or embed');
+            console.log('Message Content:', interaction.message.content);
+            if (interaction.message.embeds[0]) console.log('Embed Description:', interaction.message.embeds[0].description);
+            
+            return interaction.reply({
+                content: '❌ **حدث خطأ: لم يتم العثور على العضو المستهدف.**',
+                flags: MessageFlags.Ephemeral
+            });
+        }
         
         // Update selection in current message components to keep it visual
         const currentSelect = interaction.message.components[0].components[0];
@@ -2237,17 +2357,25 @@ async function handlePromoteInteractions(interaction, context) {
             });
         }
 
-        const roleOptions = filteredRoles.map(roleId => {
-            const role = guild.roles.cache.get(roleId);
-            return {
-                label: role ? role.name : `رول غير معروف (${roleId})`,
-                value: roleId,
-                description: `ID: ${roleId}`
-            };
-        });
+        const roleOptions = await Promise.all(filteredRoles.map(async roleId => {
+            try {
+                const role = await guild.roles.fetch(roleId);
+                return {
+                    name_role: role ? role.name : `رول غير معروف (${roleId})`,
+                    value: roleId,
+                    description: `ID: ${roleId}`
+                };
+            } catch (error) {
+                return {
+                    name_role: `رول غير موجود (${roleId})`,
+                    value: roleId,
+                    description: `ID: ${roleId}`
+                };
+            }
+        }));
 
         // Use pagination for individual role selection
-        const { createPaginatedResponsibilityArray } = require('../utils/responsibilityPagination');
+        
         const { components } = createPaginatedResponsibilityArray(
             roleOptions,
             0,
@@ -2257,7 +2385,7 @@ async function handlePromoteInteractions(interaction, context) {
 
         await interaction.update({
             content: `**العضو المحدد:** <@${targetId}>\nتمت تصفية الرولات بناءً على اختيارك (${type === 'type_phenomena' ? 'ظواهر' : 'حرف'}):`,
-            components: components
+            components: [updatedRow, ...components]
         });
         return;
     }
@@ -3113,7 +3241,7 @@ async function handlePromoteInteractions(interaction, context) {
                 value: roleId,
                 description: `أعضاء: ${role.members.size}`
             } : null;
-        }).filter(Boolean).slice(0, 25);
+        }).filter(Boolean);
 
         if (roleOptions.length === 0) {
             return interaction.update({
@@ -3123,12 +3251,13 @@ async function handlePromoteInteractions(interaction, context) {
             });
         }
 
-        const roleSelect = new StringSelectMenuBuilder()
-            .setCustomId('promote_check_select_role')
-            .setPlaceholder('اختر الرول لعرض إحصائيات أعضائه...')
-            .addOptions(roleOptions);
-
-        const roleRow = new ActionRowBuilder().addComponents(roleSelect);
+        
+        const { components } = createPaginatedResponsibilityArray(
+            roleOptions,
+            0,
+            'promote_check_select_role',
+            'اختر الرول لعرض إحصائيات أعضائه...'
+        );
 
         const checkEmbed = colorManager.createEmbed()
             .setTitle('📊 إحصائيات الأدوار الإدارية')
@@ -3145,8 +3274,37 @@ async function handlePromoteInteractions(interaction, context) {
 
         return interaction.update({
             embeds: [checkEmbed],
-            components: [roleRow, backRow]
+            components: [...components, backRow]
         });
+    }
+
+    // Handle navigation for roles list in check admin
+    if (interaction.isButton() && (customId.startsWith('promote_check_select_role') && (customId.includes('_prev_page') || customId.includes('_next_page')))) {
+        const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
+        const adminRoles = readJson(adminRolesPath, []);
+        const roleOptions = adminRoles.map(roleId => {
+            const role = interaction.guild.roles.cache.get(roleId);
+            return role ? {
+                label: role.name,
+                value: roleId,
+                description: `أعضاء: ${role.members.size}`
+            } : null;
+        }).filter(Boolean);
+
+        let currentPage = parseInt(interaction.message.components[1].components[1].label.match(/\d+/)[0]) - 1;
+        if (customId.includes('prev')) currentPage--;
+        else currentPage++;
+
+        
+        const { components } = createPaginatedResponsibilityArray(
+            roleOptions,
+            currentPage,
+            'promote_check_select_role',
+            'اختر الرول لعرض إحصائيات أعضائه...'
+        );
+
+        await interaction.update({ components: [...components, interaction.message.components[interaction.message.components.length - 1]] });
+        return;
     }
 
     // Handle back button from member search to role stats
@@ -5647,4 +5805,12 @@ async function handleDeleteAllUserRecords(interaction, userId) {
     }
 }
 
-module.exports = { name, execute, handleInteraction, handleDeleteSingleRecord, handleDeleteAllRecords };
+module.exports = { 
+    name, 
+    execute, 
+    handleInteraction, 
+    createPermanentMenu, 
+    updatePermanentMenu,
+    handleDeleteSingleRecord, 
+    handleDeleteAllUserRecords 
+};
