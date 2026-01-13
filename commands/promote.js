@@ -2153,7 +2153,6 @@ async function handlePromoteInteractions(interaction, context) {
         const targetRoleId = parts[4];
         
         const sourceRole = interaction.guild.roles.cache.get(sourceRoleId);
-        const targetRole = interaction.guild.roles.cache.get(targetRoleId);
         const members = sourceRole.members.filter(m => !m.user.bot);
         const memberOptions = members.map(m => ({
             name: m.displayName,
@@ -2161,9 +2160,12 @@ async function handlePromoteInteractions(interaction, context) {
             description: `استبعاد ${m.displayName} من الترقية`
         }));
 
-        let currentPage = parseInt(interaction.message.components[1].components[1].label.match(/\d+/)[0]) - 1;
-        if (customId.includes('prev')) currentPage--;
-        else currentPage++;
+        // Get current page from button label or info button
+        const pageInfoLabel = interaction.message.components[1].components[1].label;
+        let currentPage = parseInt(pageInfoLabel.match(/\d+/)[0]) - 1;
+        
+        if (customId.includes('prev_page')) currentPage--;
+        else if (customId.includes('next_page')) currentPage++;
 
         const { components } = createPaginatedResponsibilityArray(
             memberOptions,
@@ -2174,6 +2176,68 @@ async function handlePromoteInteractions(interaction, context) {
         );
 
         await interaction.update({ components });
+        return;
+    }
+
+    // Handle navigation for individual role selection
+    if (interaction.isButton() && (customId.startsWith('promote_role_') && (customId.includes('_prev_page') || customId.includes('_next_page')))) {
+        const userId = customId.split('_')[2];
+        
+        // We need to re-filter roles based on the type (phenomena or letter)
+        // Since we don't know the type here, we can try to infer it or just use all admin roles
+        // A better way is to check the current message content/embed
+        const isPhenomena = interaction.message.content.includes('ظواهر');
+        const adminRoles = promoteManager.getAdminRoles();
+        const guildRoles = await interaction.guild.roles.fetch();
+        const targetMember = await interaction.guild.members.fetch(userId);
+        const targetMemberAdminRoles = targetMember.roles.cache.filter(role => adminRoles.includes(role.id));
+
+        let filteredRoles = [];
+        if (isPhenomena) {
+            const highestPhenomenaRole = targetMemberAdminRoles
+                .filter(role => role.name.length >= 3)
+                .sort((a, b) => b.position - a.position)
+                .first();
+            const minPosition = highestPhenomenaRole ? highestPhenomenaRole.position : -1;
+            filteredRoles = adminRoles.filter(roleId => {
+                const role = guildRoles.get(roleId);
+                return role && role.name.length >= 3 && role.position > minPosition;
+            });
+        } else {
+            const highestLetterRole = targetMemberAdminRoles
+                .filter(role => role.name.length <= 2)
+                .sort((a, b) => b.position - a.position)
+                .first();
+            const minPosition = highestLetterRole ? highestLetterRole.position : -1;
+            filteredRoles = adminRoles.filter(roleId => {
+                const role = guildRoles.get(roleId);
+                return role && role.name.length <= 2 && role.position > minPosition;
+            });
+        }
+
+        const roleOptions = filteredRoles.map(roleId => {
+            const role = guildRoles.get(roleId);
+            return {
+                name: role ? role.name : `رول غير معروف (${roleId})`,
+                value: roleId,
+                description: `ID: ${roleId}`
+            };
+        });
+
+        const pageInfoLabel = interaction.message.components[1].components[1].label;
+        let currentPage = parseInt(pageInfoLabel.match(/\d+/)[0]) - 1;
+        
+        if (customId.includes('prev_page')) currentPage--;
+        else if (customId.includes('next_page')) currentPage++;
+
+        const { components } = createPaginatedResponsibilityArray(
+            roleOptions,
+            currentPage,
+            `promote_role_${userId}`,
+            'اختر الرول المطلوب للترقية...'
+        );
+
+        await interaction.update({ components: [interaction.message.components[0], ...components] });
         return;
     }
 
@@ -2195,8 +2259,17 @@ async function handlePromoteInteractions(interaction, context) {
     }
 
     async function showBulkModal(interaction, sourceRoleId, targetRoleId, excludedIds = []) {
+        // Use a temporary storage for excluded IDs if they are too many
+        let excludedKey = excludedIds.join(',');
+        if (excludedKey.length > 50) {
+            const tempKey = `bulk_${Date.now()}`;
+            if (!global.bulkPromoteCache) global.bulkPromoteCache = new Map();
+            global.bulkPromoteCache.set(tempKey, excludedIds);
+            excludedKey = `cache_${tempKey}`;
+        }
+
         const modal = new ModalBuilder()
-            .setCustomId(`promote_bulk_modal_${sourceRoleId}_${targetRoleId}_${excludedIds.join(',')}`)
+            .setCustomId(`promote_bulk_modal_${sourceRoleId}_${targetRoleId}_${excludedKey}`)
             .setTitle('تفاصيل الترقية الجماعية');
 
         const durationInput = new TextInputBuilder()
@@ -2419,7 +2492,13 @@ async function handlePromoteInteractions(interaction, context) {
             .setTimestamp();
 
         // Join roleIds with comma for modal customId
-        const roleIdsString = selectedRoleIds.join(',');
+        let roleIdsString = selectedRoleIds.join(',');
+        if (roleIdsString.length > 60) {
+            const tempKey = `roles_${Date.now()}`;
+            if (!global.promoteRolesCache) global.promoteRolesCache = new Map();
+            global.promoteRolesCache.set(tempKey, selectedRoleIds);
+            roleIdsString = `cache_${tempKey}`;
+        }
 
         // Create modal for duration and reason
         const modal = new ModalBuilder()
@@ -3880,8 +3959,16 @@ async function handlePromoteInteractions(interaction, context) {
         const parts = customId.split('_');
         const sourceRoleId = parts[3];
         const targetRoleId = parts[4];
-        const excludedIdsString = parts[5] || '';
-        const excludedIds = excludedIdsString ? excludedIdsString.split(',') : [];
+        let excludedIds = [];
+        
+        const excludedPart = parts.slice(5).join('_');
+        if (excludedPart.startsWith('cache_bulk_')) {
+            const tempKey = excludedPart.replace('cache_', '');
+            excludedIds = global.bulkPromoteCache?.get(tempKey) || [];
+            global.bulkPromoteCache?.delete(tempKey); // Clean up
+        } else {
+            excludedIds = excludedPart ? excludedPart.split(',') : [];
+        }
         const duration = interaction.fields.getTextInputValue('promote_duration');
         const reason = interaction.fields.getTextInputValue('promote_reason');
 
@@ -4123,8 +4210,17 @@ async function handlePromoteInteractions(interaction, context) {
     if (interaction.isModalSubmit() && customId.startsWith('promote_modal_')) {
         const parts = customId.split('_');
         const userId = parts[2];
-        const roleIds = parts[3].split(','); // Support multiple roles
-        let duration = interaction.fields.getTextInputValue('promote_duration').trim();
+        const roleIdsPart = parts.slice(3).join('_');
+        let roleIds = [];
+
+        if (roleIdsPart.startsWith('cache_roles_')) {
+            const tempKey = roleIdsPart.replace('cache_', '');
+            roleIds = global.promoteRolesCache?.get(tempKey) || [];
+            global.promoteRolesCache?.delete(tempKey);
+        } else {
+            roleIds = roleIdsPart.split(',');
+        }
+        const duration = interaction.fields.getTextInputValue('promote_duration').trim();
         const reason = interaction.fields.getTextInputValue('promote_reason').trim();
 
         // Normalize duration input - تحسين معالجة المدة
