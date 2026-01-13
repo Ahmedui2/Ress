@@ -848,7 +848,7 @@ async function handleSetupStep(interaction, context) {
             const roleOptions = await Promise.all(filteredRoles.map(async roleId => {
                 const role = await guild.roles.fetch(roleId);
                 return {
-                    name: role.name,
+                    name: role ? role.name : `رول غير معروف (${roleId})`,
                     value: roleId,
                     description: `ID: ${roleId}`
                 };
@@ -1364,9 +1364,8 @@ async function handleUnbanPromotion(interaction, context) {
     }));
 
     // Use pagination for unban list
-    
     const { components } = createPaginatedResponsibilityArray(
-        userOptions,
+        userOptions.map(opt => ({ name: opt.label, value: opt.value, description: opt.description })),
         0,
         'promote_unban_select_user_eligible',
         'اختر العضو المحظور لفك الحظر عنه...'
@@ -1383,7 +1382,7 @@ async function handleUnbanPromotion(interaction, context) {
 
     await interaction.reply({
         embeds: [eligibleEmbed],
-        components: [userRow],
+        components: components,
         flags: MessageFlags.Ephemeral
     });
 }
@@ -2026,11 +2025,11 @@ async function handlePromoteInteractions(interaction, context) {
         }).map(roleId => {
             const role = interaction.guild.roles.cache.get(roleId);
             return role ? {
-                label: role.name,
+                name: role.name,
                 value: `${sourceRoleId}_${roleId}`,
                 description: `ترقية إلى ${role.name} (${type === 'type_phenomena' ? 'ظواهر' : 'حرف'})`
             } : {
-                label: `رول غير معروف (${roleId})`,
+                name: `رول غير معروف (${roleId})`,
                 value: `${sourceRoleId}_${roleId}`,
                 description: `رول غير موجود في السيرفر`
             };
@@ -2079,11 +2078,11 @@ async function handlePromoteInteractions(interaction, context) {
         }).map(roleId => {
             const role = interaction.guild.roles.cache.get(roleId);
             return role ? {
-                label: role.name,
+                name: role.name,
                 value: `${sourceRoleId}_${roleId}`,
                 description: `ترقية إلى ${role.name}`
             } : {
-                label: `رول غير معروف (${roleId})`,
+                name: `رول غير معروف (${roleId})`,
                 value: `${sourceRoleId}_${roleId}`,
                 description: `رول غير موجود في السيرفر`
             };
@@ -2120,7 +2119,7 @@ async function handlePromoteInteractions(interaction, context) {
 
         const members = sourceRole.members.filter(m => !m.user.bot);
         const memberOptions = members.map(m => ({
-            name_role: m.displayName,
+            name: m.displayName,
             value: m.id,
             description: `استبعاد ${m.displayName} من الترقية`
         }));
@@ -2157,7 +2156,7 @@ async function handlePromoteInteractions(interaction, context) {
         const targetRole = interaction.guild.roles.cache.get(targetRoleId);
         const members = sourceRole.members.filter(m => !m.user.bot);
         const memberOptions = members.map(m => ({
-            name_role: m.displayName,
+            name: m.displayName,
             value: m.id,
             description: `استبعاد ${m.displayName} من الترقية`
         }));
@@ -2361,13 +2360,13 @@ async function handlePromoteInteractions(interaction, context) {
             try {
                 const role = await guild.roles.fetch(roleId);
                 return {
-                    name_role: role ? role.name : `رول غير معروف (${roleId})`,
+                    name: role ? role.name : `رول غير معروف (${roleId})`,
                     value: roleId,
                     description: `ID: ${roleId}`
                 };
             } catch (error) {
                 return {
-                    name_role: `رول غير موجود (${roleId})`,
+                    name: `رول غير موجود (${roleId})`,
                     value: roleId,
                     description: `ID: ${roleId}`
                 };
@@ -2515,28 +2514,61 @@ async function handlePromoteInteractions(interaction, context) {
         const availableRoles = adminRoles.map(roleId => {
             const role = interaction.guild.roles.cache.get(roleId);
             return role ? {
-                label: role.name,
+                name: role.name,
                 value: roleId,
                 description: `عرض سجلات ترقيات ${role.name}`
             } : {
-                label: `رول غير معروف (${roleId})`,
+                name: `رول غير معروف (${roleId})`,
                 value: roleId,
                 description: `رول غير موجود في السيرفر`
             };
-        }).slice(0, 25);
+        });
 
-            const roleSelect = new StringSelectMenuBuilder()
-                .setCustomId('promote_records_select_role')
-                .setPlaceholder('اختر الرول لعرض سجلات ترقياته...')
-                .addOptions(availableRoles);
-
-            const roleRow = new ActionRowBuilder().addComponents(roleSelect);
+            const { components } = createPaginatedResponsibilityArray(
+                availableRoles,
+                0,
+                'promote_records_select_role',
+                'اختر الرول لعرض سجلات ترقياته...'
+            );
 
             await interaction.update({
                 content: ' **اختر الرول لعرض سجلات ترقياته:**',
-                components: [updatedRow, roleRow]
+                components: [updatedRow, ...components]
             });
         }
+        return;
+    }
+
+    // Handle pagination for promote_records_select_role
+    if (interaction.isButton() && (customId.startsWith('promote_records_select_role_prev_page') || customId.startsWith('promote_records_select_role_next_page'))) {
+        const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
+        const adminRoles = readJson(adminRolesPath, []);
+        
+        const availableRoles = adminRoles.map(roleId => {
+            const role = interaction.guild.roles.cache.get(roleId);
+            return role ? {
+                name: role.name,
+                value: roleId,
+                description: `عرض سجلات ترقيات ${role.name}`
+            } : {
+                name: `رول غير معروف (${roleId})`,
+                value: roleId,
+                description: `رول غير موجود في السيرفر`
+            };
+        });
+
+        let currentPage = parseInt(interaction.message.components[1].components[1].label.match(/\d+/)[0]) - 1;
+        if (customId.includes('prev')) currentPage--;
+        else currentPage++;
+
+        const { components } = createPaginatedResponsibilityArray(
+            availableRoles,
+            currentPage,
+            'promote_records_select_role',
+            'اختر الرول لعرض سجلات ترقياته...'
+        );
+
+        await interaction.update({ components: [interaction.message.components[0], ...components] });
         return;
     }
 
