@@ -31,8 +31,30 @@ const DATA_FILES = {
     cooldowns: path.join(dataDir, 'cooldowns.json'),
     notifications: path.join(dataDir, 'notifications.json'),
     reports: path.join(dataDir, 'reports.json'),
-    adminApplications: path.join(dataDir, 'adminApplications.json')
+    adminApplications: path.join(dataDir, 'adminApplications.json'),
+    serverMapConfig: path.join(dataDir, 'serverMapConfig.json')
 };
+
+// نظام التحقق التلقائي من ملفات البيانات
+function ensureDataFiles() {
+    const defaults = {
+        serverMapConfig: {
+            enabled: false,
+            imageUrl: "https://i.imgur.com/Xv7XzXz.png",
+            welcomeMessage: "مرحباً بك في السيرفر! استكشف الخريطة أدناه:",
+            buttons: []
+        }
+    };
+
+    for (const [key, filePath] of Object.entries(DATA_FILES)) {
+        if (!fs.existsSync(filePath)) {
+            const defaultValue = defaults[key] || (filePath.endsWith('.json') ? (key === 'adminRoles' ? [] : {}) : '');
+            fs.writeFileSync(filePath, JSON.stringify(defaultValue, null, 2));
+            console.log(`✅ تم إنشاء ملف البيانات المفقود: ${path.basename(filePath)}`);
+        }
+    }
+}
+ensureDataFiles();
 
 // دالة لقراءة ملف JSON
 function readJSONFile(filePath, defaultValue = {}) {
@@ -5132,37 +5154,45 @@ setInterval(async () => {
   }
 }, 5 * 60 * 1000); // Check every 5 minutes
 
-// === نظام خريطة السيرفر التفاعلي ===
+// === نظام خريطة السيرفر التفاعلي (مطور ومضاد للأخطاء) ===
 client.on('guildMemberAdd', async member => {
-    const configPath = path.join(__dirname, 'data', 'serverMapConfig.json');
-    if (!fs.existsSync(configPath)) return;
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    if (!config.enabled) return;
+    try {
+        const configPath = DATA_FILES.serverMapConfig;
+        if (!fs.existsSync(configPath)) ensureDataFiles();
+        
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        if (!config.enabled) return;
 
-    const mapCommand = client.commands.get('map');
-    if (mapCommand) {
-        // محاكاة رسالة لتشغيل الأمر
-        const fakeMessage = {
-            guild: member.guild,
-            channel: member.guild.systemChannel || member.guild.channels.cache.find(c => c.type === 0),
-            author: member.user
-        };
-        if (fakeMessage.channel) {
-            mapCommand.execute(fakeMessage, [], { client });
+        const mapCommand = client.commands.get('map');
+        if (mapCommand) {
+            const channel = member.guild.systemChannel || member.guild.channels.cache.find(c => c.type === 0 && c.permissionsFor(client.user).has('SendMessages'));
+            if (channel) {
+                const fakeMessage = { guild: member.guild, channel: channel, author: member.user };
+                await mapCommand.execute(fakeMessage, [], { client }).catch(err => console.error('Error executing map on join:', err));
+            }
         }
+    } catch (error) {
+        console.error('❌ خطأ في نظام الترحيب بالخريطة:', error.message);
     }
 });
 
 client.on('interactionCreate', async interaction => {
-    if (!interaction.isButton()) return;
-    if (!interaction.customId.startsWith('map_btn_')) return;
+    try {
+        if (!interaction.isButton()) return;
+        if (!interaction.customId.startsWith('map_btn_')) return;
 
-    const configPath = path.join(__dirname, 'data', 'serverMapConfig.json');
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    const index = parseInt(interaction.customId.replace('map_btn_', ''));
-    const btn = config.buttons[index];
+        const configPath = DATA_FILES.serverMapConfig;
+        if (!fs.existsSync(configPath)) {
+            ensureDataFiles();
+            return interaction.reply({ content: '⚠️ حدث خطأ في الإعدادات، يرجى المحاولة مرة أخرى.', ephemeral: true });
+        }
 
-    if (btn) {
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        const index = parseInt(interaction.customId.replace('map_btn_', ''));
+        const btn = config.buttons[index];
+
+        if (!btn) return interaction.reply({ content: '❌ لم يتم العثور على بيانات لهذا الزر.', ephemeral: true });
+
         const row = new ActionRowBuilder();
         if (btn.link) {
             row.addComponents(
@@ -5174,10 +5204,21 @@ client.on('interactionCreate', async interaction => {
         }
 
         await interaction.reply({
-            content: btn.description,
+            content: btn.description || 'لا يوجد شرح متاح.',
             components: btn.link ? [row] : [],
             ephemeral: true
+        }).catch(async err => {
+            if (err.code === 50007) {
+                console.log(`🚫 لا يمكن الرد على ${interaction.user.tag} لأن الخاص مغلق أو لا يمكن الوصول إليه.`);
+            } else {
+                console.error('Interaction Reply Error:', err);
+            }
         });
+    } catch (error) {
+        console.error('❌ خطأ في معالج تفاعلات الخريطة:', error.message);
+        if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({ content: '❌ حدث خطأ داخلي أثناء معالجة الطلب.', ephemeral: true }).catch(() => {});
+        }
     }
 });
 // =================================
