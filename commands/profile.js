@@ -21,8 +21,10 @@ async function sendLevelUpNotification(client, userId, oldVoiceLevel, newVoiceLe
         const embed = colorManager.createEmbed()
             .setTitle('Congratulations')
             .setDescription('**Level Up **')
-            .setThumbnail('<:emoji_45:1434229731183694040>')
             .setTimestamp();
+        
+        // استخدام رابط صورة بدلاً من إيموجي في التمبنيل لأن ديسكورد لا يدعم الإيموجي هناك
+        embed.setThumbnail('https://cdn.discordapp.com/emojis/1434229731183694040.png?size=128');
 
         let changesText = '';
         let levelUpType = [];
