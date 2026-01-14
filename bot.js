@@ -5157,6 +5157,8 @@ setInterval(async () => {
 // === نظام خريطة السيرفر التفاعلي (مطور ومضاد للأخطاء) ===
 client.on('guildMemberAdd', async member => {
     try {
+        if (!member.user || member.user.bot) return;
+
         const configPath = DATA_FILES.serverMapConfig;
         if (!fs.existsSync(configPath)) ensureDataFiles();
         
@@ -5165,10 +5167,27 @@ client.on('guildMemberAdd', async member => {
 
         const mapCommand = client.commands.get('map');
         if (mapCommand) {
-            const channel = member.guild.systemChannel || member.guild.channels.cache.find(c => c.type === 0 && c.permissionsFor(client.user).has('SendMessages'));
-            if (channel) {
-                const fakeMessage = { guild: member.guild, channel: channel, author: member.user };
-                await mapCommand.execute(fakeMessage, [], { client }).catch(err => console.error('Error executing map on join:', err));
+            try {
+                // محاولة إنشاء قناة الخاص والإرسال
+                const dmChannel = await member.createDM().catch(() => null);
+                if (!dmChannel) return; // سكب إذا لم يمكن فتح الخاص
+
+                const fakeMessage = { 
+                    guild: member.guild, 
+                    channel: dmChannel, 
+                    author: member.user,
+                    reply: async (options) => {
+                        return await dmChannel.send(options);
+                    }
+                };
+                
+                await mapCommand.execute(fakeMessage, [], { client }).catch(() => {
+                    // سكب بصمت عند حدوث خطأ في التنفيذ داخل الخاص
+                });
+                
+                console.log(`✅ تم إرسال الخريطة في الخاص للعضو الجديد: ${member.user.tag}`);
+            } catch (err) {
+                // سكب عند حدوث أي خطأ في الإرسال للخاص
             }
         }
     } catch (error) {
@@ -5187,11 +5206,43 @@ client.on('interactionCreate', async interaction => {
             return interaction.reply({ content: '⚠️ حدث خطأ في الإعدادات، يرجى المحاولة مرة أخرى.', ephemeral: true });
         }
 
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        const allConfigs = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        // جلب الإعدادات بناءً على القناة أو العالمية
+        const channelKey = `channel_${interaction.channel?.id}`;
+        const config = allConfigs[channelKey] || allConfigs['global'] || allConfigs;
+        
         const index = parseInt(interaction.customId.replace('map_btn_', ''));
-        const btn = config.buttons[index];
+        const buttons = Array.isArray(config.buttons) ? config.buttons : (config.global?.buttons || []);
+        const btn = buttons[index];
 
         if (!btn) return interaction.reply({ content: '❌ لم يتم العثور على بيانات لهذا الزر.', ephemeral: true });
+
+        // معالجة الرول المرتبط بالزر
+        let roleStatus = "";
+        if (btn.roleId && interaction.guild) {
+            try {
+                // جلب العضو والرول من الكاش أولاً لتجنب التأخير والضغط على API
+                let member = interaction.guild.members.cache.get(interaction.user.id);
+                if (!member) member = await interaction.guild.members.fetch(interaction.user.id);
+                
+                let role = interaction.guild.roles.cache.get(btn.roleId);
+                if (!role) role = await interaction.guild.roles.fetch(btn.roleId);
+
+                if (role) {
+                    const roleMention = interaction.guild.roles.cache.get(role.id) ? `<@&${role.id}>` : `**${role.name}**`;
+                    if (member.roles.cache.has(role.id)) {
+                        await member.roles.remove(role, 'إزالة رول عبر خريطة السيرفر');
+                        roleStatus = `\n\n✅ **تم سحب رول:** ${roleMention}`;
+                    } else {
+                        await member.roles.add(role, 'إعطاء رول عبر خريطة السيرفر');
+                        roleStatus = `\n\n✅ **تم منحك رول:** ${roleMention}`;
+                    }
+                }
+            } catch (roleErr) {
+                console.error('Error handling map button role:', roleErr);
+                roleStatus = `\n\n⚠️ **فشل في منح/سحب الرول:** ${roleErr.message}`;
+            }
+        }
 
         const rows = [];
         // دعم الروابط المتعددة (links) أو الرابط الواحد القديم (link)
@@ -5215,7 +5266,7 @@ client.on('interactionCreate', async interaction => {
         }
 
         await interaction.reply({
-            content: btn.description || 'لا يوجد شرح متاح.',
+            content: (btn.description || 'لا يوجد شرح متاح.') + roleStatus,
             components: rows,
             ephemeral: true
         }).catch(async err => {
