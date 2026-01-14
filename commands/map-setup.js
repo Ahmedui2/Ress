@@ -37,8 +37,8 @@ module.exports = {
 
             const sendMainEmbed = async (msgOrInteraction) => {
                 const embed = new EmbedBuilder()
-                    .setTitle('⚙️ إعدادات خريطة السيرفر')
-                    .setDescription(`**الحالة:** ${config.enabled ? '✅ مفعل' : '❌ معطل'}\n**الرسالة:** ${config.welcomeMessage}\n**عدد الأزرار:** ${config.buttons.length}/25`)
+                    .setTitle('⚙️ إعدادات خريطة السيرفر (مطور)')
+                    .setDescription(`**الحالة:** ${config.enabled ? '✅ مفعل' : '❌ معطل'}\n**الرسالة:** ${config.welcomeMessage}\n**عدد الأزرار:** ${config.buttons.length}/25\n\n*ملاحظة: يمكنك الآن إضافة روابط متعددة بأسماء مخصصة لكل زر.*`)
                     .setImage(config.imageUrl)
                     .setColor(config.enabled ? '#43b581' : '#f04747')
                     .setFooter({ text: 'نظام الخريطة التفاعلي • Ress Bot' });
@@ -97,12 +97,12 @@ module.exports = {
                         const modal = new ModalBuilder().setCustomId('modal_add_btn').setTitle('إضافة زر جديد');
                         const labelInput = new TextInputBuilder().setCustomId('btn_label').setLabel('اسم الزر').setStyle(TextInputStyle.Short).setMaxLength(80).setRequired(true);
                         const descInput = new TextInputBuilder().setCustomId('btn_desc').setLabel('شرح الزر (يظهر عند الضغط)').setStyle(TextInputStyle.Paragraph).setRequired(true);
-                        const linkInput = new TextInputBuilder().setCustomId('btn_link').setLabel('رابط الروم (اختياري)').setStyle(TextInputStyle.Short).setPlaceholder('https://discord.com/channels/...').setRequired(false);
+                        const linksInput = new TextInputBuilder().setCustomId('btn_links').setLabel('الروابط (اسم1,رابط1 | اسم2,رابط2)').setStyle(TextInputStyle.Paragraph).setPlaceholder('مثال:\nروم الفعاليات,https://...\nروم القوانين,https://...').setRequired(false);
                         
                         modal.addComponents(
                             new ActionRowBuilder().addComponents(labelInput),
                             new ActionRowBuilder().addComponents(descInput),
-                            new ActionRowBuilder().addComponents(linkInput)
+                            new ActionRowBuilder().addComponents(linksInput)
                         );
                         await i.showModal(modal);
                     } else if (i.customId === 'clear_buttons') {
@@ -119,8 +119,6 @@ module.exports = {
                 mainMsg.edit({ components: [] }).catch(() => {});
             });
 
-            // معالجة المودال (Modals) - يتم تعريفها مرة واحدة في البوت
-            // ملاحظة: في هذا الهيكل، يتم استخدام مستمع مؤقت للمودال
             const modalHandler = async mi => {
                 if (!mi.isModalSubmit() || mi.user.id !== message.author.id) return;
 
@@ -136,17 +134,32 @@ module.exports = {
                         await mi.reply({ content: '✅ تم تحديث الرسالة بنجاح.', ephemeral: true });
                         await sendMainEmbed(mainMsg);
                     } else if (mi.customId === 'modal_add_btn') {
-                        const link = mi.fields.getTextInputValue('btn_link');
-                        if (link && !link.startsWith('http')) {
-                            return await mi.reply({ content: '❌ الرابط غير صحيح، يجب أن يبدأ بـ http أو https', ephemeral: true });
+                        const linksRaw = mi.fields.getTextInputValue('btn_links');
+                        const links = [];
+                        
+                        if (linksRaw) {
+                            // معالجة الروابط المتعددة (دعم التنسيق: اسم,رابط | اسم,رابط أو كل واحد في سطر)
+                            const lines = linksRaw.split(/[\n|]/);
+                            for (let line of lines) {
+                                const parts = line.split(',');
+                                if (parts.length >= 2) {
+                                    const label = parts[0].trim();
+                                    const url = parts.slice(1).join(',').trim();
+                                    if (url.startsWith('http')) {
+                                        links.push({ label, url });
+                                    }
+                                }
+                            }
                         }
+
                         config.buttons.push({
                             label: mi.fields.getTextInputValue('btn_label'),
                             description: mi.fields.getTextInputValue('btn_desc'),
-                            link: link || null
+                            links: links.length > 0 ? links : null
                         });
+                        
                         saveConfig(config);
-                        await mi.reply({ content: '✅ تم إضافة الزر بنجاح.', ephemeral: true });
+                        await mi.reply({ content: `✅ تم إضافة الزر مع ${links.length} روابط مخصصة.`, ephemeral: true });
                         await sendMainEmbed(mainMsg);
                     }
                 } catch (err) {

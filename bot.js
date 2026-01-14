@@ -5193,19 +5193,30 @@ client.on('interactionCreate', async interaction => {
 
         if (!btn) return interaction.reply({ content: '❌ لم يتم العثور على بيانات لهذا الزر.', ephemeral: true });
 
-        const row = new ActionRowBuilder();
-        if (btn.link) {
-            row.addComponents(
-                new ButtonBuilder()
-                    .setLabel('انتقال للروم')
-                    .setURL(btn.link)
-                    .setStyle(ButtonStyle.Link)
-            );
+        const rows = [];
+        // دعم الروابط المتعددة (links) أو الرابط الواحد القديم (link)
+        const links = btn.links || (btn.link ? [{ label: btn.linkLabel || 'انتقال للروم', url: btn.link }] : []);
+        
+        if (links.length > 0) {
+            let currentRow = new ActionRowBuilder();
+            links.forEach((linkData, i) => {
+                if (i > 0 && i % 5 === 0) {
+                    rows.push(currentRow);
+                    currentRow = new ActionRowBuilder();
+                }
+                currentRow.addComponents(
+                    new ButtonBuilder()
+                        .setLabel(linkData.label || 'انتقال للروم')
+                        .setURL(linkData.url)
+                        .setStyle(ButtonStyle.Link)
+                );
+            });
+            rows.push(currentRow);
         }
 
         await interaction.reply({
             content: btn.description || 'لا يوجد شرح متاح.',
-            components: btn.link ? [row] : [],
+            components: rows,
             ephemeral: true
         }).catch(async err => {
             if (err.code === 50007) {
