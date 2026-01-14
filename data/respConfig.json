@@ -1,0 +1,13 @@
+{
+  "guilds": {
+    "1283078116188749888": {
+      "suggestionsChannel": "1454106554746802196",
+      "embedChannel": "1447153203740151961",
+      "embedData": {
+        "messageId": "1454428092499235031",
+        "channelId": "1447153203740151961"
+      },
+      "messageFormat": "embed"
+    }
+  }
+}

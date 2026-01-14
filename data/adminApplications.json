@@ -1,0 +1,59 @@
+{
+  "settings": {
+    "applicationChannel": "1449440829516021902",
+    "approvers": {
+      "type": "roles",
+      "list": [
+        "1447369760324063374"
+      ]
+    },
+    "maxPendingPerAdmin": 3,
+    "rejectCooldownHours": 24,
+    "evaluation": {
+      "minMessages": {
+        "weak": 20,
+        "good": 50,
+        "excellent": 100,
+        "resetWeekly": false
+      },
+      "minVoiceTime": {
+        "weak": 7200000,
+        "good": 18000000,
+        "excellent": 36000000,
+        "resetWeekly": false
+      },
+      "minReactions": {
+        "weak": 10,
+        "good": 25,
+        "excellent": 50,
+        "resetWeekly": false
+      },
+      "activeDaysPerWeek": {
+        "minimum": 3,
+        "resetWeekly": true
+      },
+      "timeInServerDays": {
+        "minimum": 7,
+        "excellent": 30
+      }
+    },
+    "adminRolesToGrant": [
+      "1447160036857090161"
+    ]
+  },
+  "pendingApplications": {},
+  "rejectedCooldowns": {
+    "1405570190535823505": {
+      "rejectedAt": "2026-01-05T11:47:26.428Z",
+      "rejectedBy": "636930315503534110",
+      "rejectorName": "Ahmed.",
+      "reason": "معك رول"
+    },
+    "759644136629338162": {
+      "rejectedAt": "2026-01-05T13:28:09.254Z",
+      "rejectedBy": "284206267122188299",
+      "rejectorName": "UtopianNay3f",
+      "reason": "ارفع تفاعلك"
+    }
+  }
+}
