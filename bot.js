@@ -469,14 +469,20 @@ async function checkAutoLevelUp(userId, type, client) {
         const lastNotified = previousLevel.last_notified || 0;
         const isNewUser = (oldVoiceLevel === 0 && oldChatLevel === 0 && lastNotified === 0);
 
-        // التحقق من وجود ترقية
-        const hasVoiceLevelUp = currentVoiceLevel > oldVoiceLevel;
-        const hasChatLevelUp = currentChatLevel > oldChatLevel;
+        // التحقق من وجود ترقية حقيقية (يجب أن يكون اللفل الجديد أكبر من 0 وأكبر من القديم)
+        const hasVoiceLevelUp = currentVoiceLevel > 0 && currentVoiceLevel > oldVoiceLevel;
+        const hasChatLevelUp = currentChatLevel > 0 && currentChatLevel > oldChatLevel;
 
-        if (!hasVoiceLevelUp && !hasChatLevelUp) return;
+        // إذا لم تكن هناك ترقية حقيقية، نحدث المستويات في القاعدة بصمت ونخرج
+        if (!hasVoiceLevelUp && !hasChatLevelUp) {
+            if (currentVoiceLevel !== oldVoiceLevel || currentChatLevel !== oldChatLevel) {
+                await updateUserLevel(userId, currentVoiceLevel, currentChatLevel);
+            }
+            return;
+        }
 
-        // إذا كان مستخدم جديد، فقط نحفظ المستوى بدون إرسال إشعار
-        if (isNewUser) {
+        // إذا كان مستخدم جديد أو اللفل الجديد هو 0، لا نرسل إشعاراً
+        if (isNewUser || (currentVoiceLevel === 0 && currentChatLevel === 0)) {
             await updateUserLevel(userId, currentVoiceLevel, currentChatLevel);
             await updateLastNotified(userId);
             return;
@@ -489,23 +495,27 @@ async function checkAutoLevelUp(userId, type, client) {
             return;
         }
 
+        // تحديث المستوى ووقت آخر إشعار أولاً لمنع التكرار في حال فشل الإرسال
+        await updateUserLevel(userId, currentVoiceLevel, currentChatLevel);
+        await updateLastNotified(userId);
+
         // إرسال إشعار الترقية
         const profileCommand = require('./commands/profile.js');
         if (profileCommand && typeof profileCommand.sendLevelUpNotification === 'function') {
-            await profileCommand.sendLevelUpNotification(
-                client,
-                userId,
-                oldVoiceLevel,
-                currentVoiceLevel,
-                oldChatLevel,
-                currentChatLevel,
-                voiceXP,
-                chatXP
-            );
-
-            // تحديث المستوى ووقت آخر إشعار
-            await updateUserLevel(userId, currentVoiceLevel, currentChatLevel);
-            await updateLastNotified(userId);
+            try {
+                await profileCommand.sendLevelUpNotification(
+                    client,
+                    userId,
+                    oldVoiceLevel,
+                    currentVoiceLevel,
+                    oldChatLevel,
+                    currentChatLevel,
+                    voiceXP,
+                    chatXP
+                );
+            } catch (sendError) {
+                console.log(`⚠️ فشل إرسال إشعار الترقية للمستخدم ${userId} (قد يكون الخاص مغلقاً)`);
+            }
         }
     } catch (error) {
         console.error('❌ خطأ في الفحص التلقائي للترقيات:', error);
