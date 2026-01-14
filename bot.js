@@ -31,8 +31,30 @@ const DATA_FILES = {
     cooldowns: path.join(dataDir, 'cooldowns.json'),
     notifications: path.join(dataDir, 'notifications.json'),
     reports: path.join(dataDir, 'reports.json'),
-    adminApplications: path.join(dataDir, 'adminApplications.json')
+    adminApplications: path.join(dataDir, 'adminApplications.json'),
+    serverMapConfig: path.join(dataDir, 'serverMapConfig.json')
 };
+
+// نظام التحقق التلقائي من ملفات البيانات
+function ensureDataFiles() {
+    const defaults = {
+        serverMapConfig: {
+            enabled: false,
+            imageUrl: "https://i.imgur.com/Xv7XzXz.png",
+            welcomeMessage: "مرحباً بك في السيرفر! استكشف الخريطة أدناه:",
+            buttons: []
+        }
+    };
+
+    for (const [key, filePath] of Object.entries(DATA_FILES)) {
+        if (!fs.existsSync(filePath)) {
+            const defaultValue = defaults[key] || (filePath.endsWith('.json') ? (key === 'adminRoles' ? [] : {}) : '');
+            fs.writeFileSync(filePath, JSON.stringify(defaultValue, null, 2));
+            console.log(`✅ تم إنشاء ملف البيانات المفقود: ${path.basename(filePath)}`);
+        }
+    }
+}
+ensureDataFiles();
 
 // دالة لقراءة ملف JSON
 function readJSONFile(filePath, defaultValue = {}) {
@@ -5131,6 +5153,86 @@ setInterval(async () => {
     console.error('Error in pairing expiration check:', error);
   }
 }, 5 * 60 * 1000); // Check every 5 minutes
+
+// === نظام خريطة السيرفر التفاعلي (مطور ومضاد للأخطاء) ===
+client.on('guildMemberAdd', async member => {
+    try {
+        const configPath = DATA_FILES.serverMapConfig;
+        if (!fs.existsSync(configPath)) ensureDataFiles();
+        
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        if (!config.enabled) return;
+
+        const mapCommand = client.commands.get('map');
+        if (mapCommand) {
+            const channel = member.guild.systemChannel || member.guild.channels.cache.find(c => c.type === 0 && c.permissionsFor(client.user).has('SendMessages'));
+            if (channel) {
+                const fakeMessage = { guild: member.guild, channel: channel, author: member.user };
+                await mapCommand.execute(fakeMessage, [], { client }).catch(err => console.error('Error executing map on join:', err));
+            }
+        }
+    } catch (error) {
+        console.error('❌ خطأ في نظام الترحيب بالخريطة:', error.message);
+    }
+});
+
+client.on('interactionCreate', async interaction => {
+    try {
+        if (!interaction.isButton()) return;
+        if (!interaction.customId.startsWith('map_btn_')) return;
+
+        const configPath = DATA_FILES.serverMapConfig;
+        if (!fs.existsSync(configPath)) {
+            ensureDataFiles();
+            return interaction.reply({ content: '⚠️ حدث خطأ في الإعدادات، يرجى المحاولة مرة أخرى.', ephemeral: true });
+        }
+
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        const index = parseInt(interaction.customId.replace('map_btn_', ''));
+        const btn = config.buttons[index];
+
+        if (!btn) return interaction.reply({ content: '❌ لم يتم العثور على بيانات لهذا الزر.', ephemeral: true });
+
+        const rows = [];
+        // دعم الروابط المتعددة (links) أو الرابط الواحد القديم (link)
+        const links = btn.links || (btn.link ? [{ label: btn.linkLabel || 'انتقال للروم', url: btn.link }] : []);
+        
+        if (links.length > 0) {
+            let currentRow = new ActionRowBuilder();
+            links.forEach((linkData, i) => {
+                if (i > 0 && i % 5 === 0) {
+                    rows.push(currentRow);
+                    currentRow = new ActionRowBuilder();
+                }
+                currentRow.addComponents(
+                    new ButtonBuilder()
+                        .setLabel(linkData.label || 'انتقال للروم')
+                        .setURL(linkData.url)
+                        .setStyle(ButtonStyle.Link)
+                );
+            });
+            rows.push(currentRow);
+        }
+
+        await interaction.reply({
+            content: btn.description || 'لا يوجد شرح متاح.',
+            components: rows,
+            ephemeral: true
+        }).catch(async err => {
+            if (err.code === 50007) {
+                console.log(`🚫 لا يمكن الرد على ${interaction.user.tag} لأن الخاص مغلق أو لا يمكن الوصول إليه.`);
+            } else {
+                console.error('Interaction Reply Error:', err);
+            }
+        });
+    } catch (error) {
+        console.error('❌ خطأ في معالج تفاعلات الخريطة:', error.message);
+        if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({ content: '❌ حدث خطأ داخلي أثناء معالجة الطلب.', ephemeral: true }).catch(() => {});
+        }
+    }
+});
+// =================================
 
 client.login(process.env.DISCORD_TOKEN);
 }
