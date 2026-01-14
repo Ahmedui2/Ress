@@ -684,33 +684,36 @@ async function execute(message, args, { client }) {
         const canvas = createCanvas(1000, 380);
         const ctx = canvas.getContext('2d');
         
-        // === ENHANCED 3D BACKGROUND ===
-        // Check if custom banner exists
-        if (customProfile && customProfile.banner_url && customProfile.banner_url.trim() !== '') {
+        // Use a simpler approach for loading images to prevent hanging
+        const loadImg = async (url) => {
             try {
-                // Load custom banner
-                const bannerResponse = await axios.get(customProfile.banner_url, { responseType: 'arraybuffer' });
-                const bannerImage = await loadImage(Buffer.from(bannerResponse.data));
-                
-                // Draw banner as background
+                if (url.startsWith('/data/')) {
+                    const localPath = path.join(__dirname, '..', url);
+                    if (fs.existsSync(localPath)) {
+                        return await loadImage(localPath);
+                    }
+                }
+                const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 5000 });
+                return await loadImage(Buffer.from(response.data));
+            } catch (err) {
+                console.error(`Failed to load image from ${url}:`, err.message);
+                return null;
+            }
+        };
+
+        // === ENHANCED 3D BACKGROUND ===
+        let backgroundDrawn = false;
+        if (customProfile && customProfile.banner_url && customProfile.banner_url.trim() !== '') {
+            const bannerImage = await loadImg(customProfile.banner_url);
+            if (bannerImage) {
                 ctx.drawImage(bannerImage, 0, 0, 1000, 380);
-                
-                // Add dark overlay for readability
                 ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
                 ctx.fillRect(0, 0, 1000, 380);
-            } catch (error) {
-                console.error('Error loading custom banner:', error);
-                // Fallback to default background if banner fails
-                const bgGradient = ctx.createLinearGradient(0, 0, 1000, 380);
-                bgGradient.addColorStop(0, '#0f1525');
-                bgGradient.addColorStop(0.3, '#1a1f3a');
-                bgGradient.addColorStop(0.6, '#2d3561');
-                bgGradient.addColorStop(1, '#1e2442');
-                ctx.fillStyle = bgGradient;
-                ctx.fillRect(0, 0, 1000, 380);
+                backgroundDrawn = true;
             }
-        } else {
-            // Default gradient background
+        }
+
+        if (!backgroundDrawn) {
             const bgGradient = ctx.createLinearGradient(0, 0, 1000, 380);
             bgGradient.addColorStop(0, '#0f1525');
             bgGradient.addColorStop(0.3, '#1a1f3a');
@@ -796,9 +799,10 @@ async function execute(message, args, { client }) {
                 avatarURL = customProfile.avatar_url;
             }
             
-            const response = await axios.get(avatarURL, { responseType: 'arraybuffer' });
-            const avatarImage = await loadImage(Buffer.from(response.data));
+            const avatarImage = await loadImg(avatarURL) || await loadImg(targetUser.displayAvatarURL({ extension: 'png', size: 256 }));
             
+            if (!avatarImage) throw new Error("Could not load any avatar");
+
             const avatarSize = 180;
             const avatarX = 260;
             const avatarY = 100;

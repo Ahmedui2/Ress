@@ -1,4 +1,5 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const sqlite3 = require('sqlite3').verbose();
@@ -50,47 +51,73 @@ function getCustomProfile(userId) {
 }
 
 // تعيين الأفتار المخصص
-function setCustomAvatar(userId, avatarUrl) {
-    return new Promise((resolve, reject) => {
-        const db = new sqlite3.Database(dbPath);
+async function setCustomAvatar(userId, avatarUrl) {
+    try {
+        const response = await axios.get(avatarUrl, { responseType: 'arraybuffer' });
+        const ext = avatarUrl.split('.').pop().split('?')[0] || 'png';
+        const fileName = `${userId}_avatar_${Date.now()}.${ext}`;
+        const dirPath = path.join(__dirname, '..', 'data', 'custom_assets', 'avatars');
+        if (!fs.existsSync(dirPath)) {
+            fs.mkdirSync(dirPath, { recursive: true });
+        }
+        const filePath = path.join(dirPath, fileName);
         
-        db.run(`
-            INSERT INTO custom_profiles (user_id, avatar_url, updated_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(user_id) DO UPDATE SET 
-                avatar_url = excluded.avatar_url,
-                updated_at = CURRENT_TIMESTAMP
-        `, [userId, avatarUrl], (err) => {
-            db.close();
-            if (err) {
-                reject(err);
-            } else {
-                resolve();
-            }
+        fs.writeFileSync(filePath, Buffer.from(response.data));
+        const localUrl = `/data/custom_assets/avatars/${fileName}`;
+
+        return new Promise((resolve, reject) => {
+            const db = new sqlite3.Database(dbPath);
+            db.run(`
+                INSERT INTO custom_profiles (user_id, avatar_url, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id) DO UPDATE SET 
+                    avatar_url = excluded.avatar_url,
+                    updated_at = CURRENT_TIMESTAMP
+            `, [userId, localUrl], (err) => {
+                db.close();
+                if (err) reject(err);
+                else resolve();
+            });
         });
-    });
+    } catch (error) {
+        console.error('Error saving local avatar:', error);
+        throw error;
+    }
 }
 
 // تعيين البنر المخصص
-function setCustomBanner(userId, bannerUrl) {
-    return new Promise((resolve, reject) => {
-        const db = new sqlite3.Database(dbPath);
+async function setCustomBanner(userId, bannerUrl) {
+    try {
+        const response = await axios.get(bannerUrl, { responseType: 'arraybuffer' });
+        const ext = bannerUrl.split('.').pop().split('?')[0] || 'png';
+        const fileName = `${userId}_banner_${Date.now()}.${ext}`;
+        const dirPath = path.join(__dirname, '..', 'data', 'custom_assets', 'banners');
+        if (!fs.existsSync(dirPath)) {
+            fs.mkdirSync(dirPath, { recursive: true });
+        }
+        const filePath = path.join(dirPath, fileName);
         
-        db.run(`
-            INSERT INTO custom_profiles (user_id, banner_url, updated_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(user_id) DO UPDATE SET 
-                banner_url = excluded.banner_url,
-                updated_at = CURRENT_TIMESTAMP
-        `, [userId, bannerUrl], (err) => {
-            db.close();
-            if (err) {
-                reject(err);
-            } else {
-                resolve();
-            }
+        fs.writeFileSync(filePath, Buffer.from(response.data));
+        const localUrl = `/data/custom_assets/banners/${fileName}`;
+
+        return new Promise((resolve, reject) => {
+            const db = new sqlite3.Database(dbPath);
+            db.run(`
+                INSERT INTO custom_profiles (user_id, banner_url, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id) DO UPDATE SET 
+                    banner_url = excluded.banner_url,
+                    updated_at = CURRENT_TIMESTAMP
+            `, [userId, localUrl], (err) => {
+                db.close();
+                if (err) reject(err);
+                else resolve();
+            });
         });
-    });
+    } catch (error) {
+        console.error('Error saving local banner:', error);
+        throw error;
+    }
 }
 
 // إزالة الأفتار المخصص
