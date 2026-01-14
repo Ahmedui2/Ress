@@ -455,12 +455,13 @@ async function checkAutoLevelUp(userId, type, client) {
         const userStats = await dbManager.getUserStats(userId);
         if (!userStats) return;
 
-        // حساب المستويات الحالية
-        const voiceXP = Math.floor(userStats.totalVoiceTime / 5);
-        const chatXP = Math.floor(userStats.totalMessages / 10);
+        // حساب المستويات الحالية باستخدام الملي ثانية مباشرة
+        // 1 XP = 5 دقائق = 300,000 ملي ثانية
+        const voiceXP = Math.floor(userStats.totalVoiceTime / 300000); 
+        const chatXP = Math.floor(userStats.totalMessages / 10); // 10 رسائل = 1 XP
         
-        const currentVoiceLevel = Math.floor(Math.pow(voiceXP / 100, 0.5));
-        const currentChatLevel = Math.floor(Math.pow(chatXP / 100, 0.5));
+        const currentVoiceLevel = Math.floor(Math.sqrt(voiceXP / 100));
+        const currentChatLevel = Math.floor(Math.sqrt(chatXP / 100));
 
         // جلب المستوى السابق
         const previousLevel = await getUserLevel(userId);
@@ -469,22 +470,24 @@ async function checkAutoLevelUp(userId, type, client) {
         const lastNotified = previousLevel.last_notified || 0;
         const isNewUser = (oldVoiceLevel === 0 && oldChatLevel === 0 && lastNotified === 0);
 
-        // التحقق من وجود ترقية حقيقية (يجب أن يكون اللفل الجديد أكبر من 0 وأكبر من القديم)
-        const hasVoiceLevelUp = currentVoiceLevel > 0 && currentVoiceLevel > oldVoiceLevel;
-        const hasChatLevelUp = currentChatLevel > 0 && currentChatLevel > oldChatLevel;
+        // التحقق من وجود ترقية حقيقية (يجب أن يكون اللفل الجديد أكبر من القديم)
+        // نستخدم Math.floor للتأكد من أننا نقارن الأرقام الصحيحة للمستويات فقط
+        const hasVoiceLevelUp = currentVoiceLevel > oldVoiceLevel;
+        const hasChatLevelUp = currentChatLevel > oldChatLevel;
 
-        // إذا لم تكن هناك ترقية حقيقية، نحدث المستويات في القاعدة بصمت ونخرج
+        // إذا لم يرتفع المستوى (الرقم الصحيح)، نحدث البيانات في القاعدة بصمت ونخرج
         if (!hasVoiceLevelUp && !hasChatLevelUp) {
+            // تحديث المستويات في القاعدة إذا كان هناك تغيير في الـ XP (بصمت)
             if (currentVoiceLevel !== oldVoiceLevel || currentChatLevel !== oldChatLevel) {
                 await updateUserLevel(userId, currentVoiceLevel, currentChatLevel);
             }
             return;
         }
 
-        // إذا كان مستخدم جديد أو اللفل الجديد هو 0، لا نرسل إشعاراً
-        if (isNewUser || (currentVoiceLevel === 0 && currentChatLevel === 0)) {
+        // منع الإرسال للمستخدمين الجدد عند أول نشاط (لفل 0) أو إذا كان المستوى الجديد 0
+        if (isNewUser || (currentVoiceLevel === 0 && !hasChatLevelUp && oldVoiceLevel === 0) || (currentChatLevel === 0 && !hasVoiceLevelUp && oldChatLevel === 0)) {
             await updateUserLevel(userId, currentVoiceLevel, currentChatLevel);
-            await updateLastNotified(userId);
+            // لا نحدث lastNotified هنا لنسمح بأول ترقية حقيقية لاحقاً
             return;
         }
 
@@ -1245,6 +1248,7 @@ client.once(Events.ClientReady, async () => {
 
   // Interaction Create Handler
   client.on('interactionCreate', async interaction => {
+      if (interaction.replied || interaction.deferred) return;
     try {
       const respCommand = client.commands.get('resp');
       if (interaction.isButton()) {
@@ -2621,6 +2625,7 @@ async function checkExpiredReports() {
 
 // معالج التفاعلات المحسن للأداء
 client.on('interactionCreate', async (interaction) => {
+    if (interaction.replied || interaction.deferred) return;
   try {
     // تعريف customId في البداية
     const customId = interaction?.customId || '';
