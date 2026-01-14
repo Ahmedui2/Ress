@@ -5,23 +5,32 @@ const path = require('path');
 
 const configPath = path.join(__dirname, '..', 'data', 'serverMapConfig.json');
 
-function loadConfig() {
+function loadAllConfigs() {
     try {
         if (fs.existsSync(configPath)) {
-            return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            const data = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            if (data.imageUrl && !data.global) return { global: data };
+            return data;
         }
-    } catch (e) { 
-        console.error('Error loading map config:', e.message); 
-    }
-    return { enabled: false, imageUrl: 'https://i.imgur.com/Xv7XzXz.png', welcomeMessage: 'مرحباً بك!', buttons: [] };
+    } catch (e) { console.error('Error loading map config:', e.message); }
+    return { global: { enabled: false, imageUrl: 'https://i.ibb.co/pP9GzD7/default-map.png', welcomeMessage: 'مرحباً بك!', buttons: [] } };
 }
 
 module.exports = {
     name: 'map',
     description: 'عرض خريطة السيرفر التفاعلية',
-    async execute(message, args, { client }) {
+    async execute(message, args, { client, BOT_OWNERS }) {
         try {
-            const config = loadConfig();
+            const isOwner = BOT_OWNERS.includes(message.author.id);
+            if (!isOwner) {
+                await message.react('❌').catch(() => {});
+                return;
+            }
+            
+            const allConfigs = loadAllConfigs();
+            const channelKey = `channel_${message.channel.id}`;
+            const config = allConfigs[channelKey] || allConfigs['global'];
+
             if (!config.enabled && !args.includes('--force')) {
                 return message.reply('⚠️ نظام الخريطة معطل حالياً.').catch(() => {});
             }
@@ -32,29 +41,22 @@ module.exports = {
             }
 
             // إنشاء الصورة باستخدام Canvas
-            const canvas = createCanvas(800, 400);
+            const canvas = createCanvas(1280, 720); // جودة عالية
             const ctx = canvas.getContext('2d');
 
             try {
-                const bg = await loadImage(config.imageUrl || 'https://i.imgur.com/Xv7XzXz.png');
-                ctx.drawImage(bg, 0, 0, 800, 400);
+                const bg = await loadImage(config.imageUrl || 'https://i.ibb.co/pP9GzD7/default-map.png');
+                ctx.drawImage(bg, 0, 0, 1280, 720);
                 
-                // تأثيرات جمالية
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-                ctx.fillRect(0, 320, 800, 80);
-                
-                ctx.font = 'bold 35px Arial';
-                ctx.fillStyle = '#ffffff';
-                ctx.textAlign = 'center';
-                ctx.fillText(message.guild.name, 400, 370);
+                // تمت إزالة تأثيرات الاسم والخلفية السوداء بناءً على طلب المستخدم
             } catch (e) {
                 console.error("Error drawing map image:", e.message);
                 ctx.fillStyle = '#23272a';
-                ctx.fillRect(0, 0, 800, 400);
-                ctx.font = 'bold 40px Arial';
+                ctx.fillRect(0, 0, 1280, 720);
+                ctx.font = 'bold 60px Arial';
                 ctx.fillStyle = '#ffffff';
                 ctx.textAlign = 'center';
-                ctx.fillText(message.guild.name, 400, 200);
+                ctx.fillText(message.guild.name, 640, 360);
             }
 
             const attachment = new AttachmentBuilder(canvas.toBuffer(), { name: 'server-map.png' });
@@ -68,12 +70,17 @@ module.exports = {
                         rows.push(currentRow);
                         currentRow = new ActionRowBuilder();
                     }
-                    currentRow.addComponents(
-                        new ButtonBuilder()
-                            .setCustomId(`map_btn_${index}`)
-                            .setLabel(btn.label || 'زر بدون اسم')
-                            .setStyle(ButtonStyle.Secondary)
-                    );
+                    
+                    const button = new ButtonBuilder()
+                        .setCustomId(`map_btn_${index}`)
+                        .setLabel(btn.label || 'زر بدون اسم')
+                        .setStyle(ButtonStyle.Secondary);
+                    
+                    if (btn.emoji) {
+                        button.setEmoji(btn.emoji);
+                    }
+                    
+                    currentRow.addComponents(button);
                 });
                 if (currentRow.components.length > 0) rows.push(currentRow);
             }
