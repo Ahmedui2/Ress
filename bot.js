@@ -393,16 +393,7 @@ try {
     const setactiveCommand = require('./commands/setactive.js');
     const interactiveRolesManager = require('./utils/interactiveRolesManager.js');
     
-    client.on('interactionCreate', async (interaction) => {
-      // معالجة إعدادات setactive
-      if (setactiveCommand.handleSetActiveInteraction) {
-        await setactiveCommand.handleSetActiveInteraction(interaction);
-      }
-      // معالجة طلبات الرولات التفاعلية (قبول/رفض)
-      if (interactiveRolesManager.handleInteraction) {
-        await interactiveRolesManager.handleInteraction(interaction);
-      }
-    });
+    
 
     client.on('messageCreate', async (message) => {
       if (interactiveRolesManager.handleMessage) {
@@ -1314,12 +1305,7 @@ client.once(Events.ClientReady, async () => {
   console.log(`✅ نظام الكولداون جاهز - الافتراضي: ${(cooldownData.default || 60000) / 1000} ثانية`);
 
   // Interaction Create Handler
-  client.on('interactionCreate', async interaction => {
-    // التأكد من أن التفاعل لم يتم الرد عليه مسبقاً (لحماية Collectors)
-    if (interaction.replied || interaction.deferred) return;
-
-    try {
-      const respCommand = client.commands.get('resp');
+  
       
       if (interaction.isModalSubmit()) {
         // معالجة مودال تعديل زر الخريطة
@@ -1422,10 +1408,7 @@ client.once(Events.ClientReady, async () => {
           await respCommand.handleRejectReasonModal(interaction, client);
         }
       }
-    } catch (error) {
-      console.error('Interaction Error:', error);
-    }
-  });
+
 
   startReminderSystem(client);
 
@@ -2807,46 +2790,178 @@ client.on('interactionCreate', async (interaction) => {
     // تعريف customId في البداية
     const customId = interaction?.customId || '';
 
-    // Log all interactions for debugging
-    if (customId) {
-      console.log(`🔔 تفاعل جديد: ${customId} من ${interaction.user.tag}`);
+    // --- Start of Consolidated Handlers ---
+
+    // 1. Handle setactive and interactiveRolesManager
+    const setactiveCommand = client.commands.get('setactive');
+    if (setactiveCommand && setactiveCommand.handleSetActiveInteraction) {
+        await setactiveCommand.handleSetActiveInteraction(interaction);
+    }
+    if (interactiveRolesManager.handleInteraction) {
+        await interactiveRolesManager.handleInteraction(interaction);
     }
 
-    // فحص سريع للتفاعلات غير الصحيحة
-    if (!interaction?.isRepliable()) {
-      console.log('❌ تفاعل غير قابل للرد');
-      return;
+    // 2. Handle resp command modals/buttons and serverMapConfig modals
+    const respCommand = client.commands.get('resp');
+    if (respCommand) {
+        if (interaction.isModalSubmit()) {
+            // معالجة مودال تعديل زر الخريطة
+            if (interaction.customId.startsWith('modal_edit_btn_')) {
+                const idx = parseInt(interaction.customId.replace('modal_edit_btn_', ''));
+                const label = interaction.fields.getTextInputValue('btn_label');
+                const emoji = interaction.fields.getTextInputValue('btn_emoji');
+                const description = interaction.fields.getTextInputValue('btn_desc');
+                const roleId = interaction.fields.getTextInputValue('btn_role');
+                const linksText = interaction.fields.getTextInputValue('btn_links');
+
+                const links = linksText.split('\n').filter(line => line.includes(',')).map(line => {
+                    const [lLabel, lUrl] = line.split(',').map(s => s.trim());
+                    return { label: lLabel, url: lUrl };
+                });
+
+                const configPath = path.join(__dirname, 'data', 'serverMapConfig.json');
+                let allConfigs = {};
+                try {
+                    if (fs.existsSync(configPath)) {
+                        allConfigs = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+                    }
+                } catch (e) {}
+
+                for (let key in allConfigs) {
+                    if (allConfigs[key].buttons && allConfigs[key].buttons[idx]) {
+                        allConfigs[key].buttons[idx] = {
+                            ...allConfigs[key].buttons[idx],
+                            label,
+                            emoji: emoji || null,
+                            description,
+                            roleId: roleId || null,
+                            links
+                        };
+                    }
+                }
+                
+                fs.writeFileSync(configPath, JSON.stringify(allConfigs, null, 2));
+                return await interaction.reply({ content: `✅ تم تحديث بيانات الزر **${label}** بنجاح.`, ephemeral: true });
+            }
+
+            if (interaction.customId.startsWith('apply_resp_modal_')) {
+                await respCommand.handleApplyRespModal(interaction, client);
+            } else if (interaction.customId.startsWith('reject_reason_modal_')) {
+                await respCommand.handleRejectReasonModal(interaction, client);
+            }
+        } else if (interaction.isButton()) {
+            if (interaction.customId === 'apply_resp_button') {
+                await respCommand.handleApplyRespButton(interaction, client);
+            } else if (interaction.customId.startsWith('approve_apply_') || interaction.customId.startsWith('reject_apply_')) {
+                await respCommand.handleApplyAction(interaction, client);
+            }
+        } else if (interaction.isStringSelectMenu()) {
+            if (interaction.customId === 'apply_resp_select') {
+                await respCommand.handleApplyRespSelect(interaction, client);
+            }
+        }
     }
 
-    // فحص عمر التفاعل بشكل أسرع (12 دقيقة بدلاً من 14)
-    const interactionAge = Date.now() - interaction.createdTimestamp;
-    if (interactionAge > 720000) { // 12 دقيقة
-      console.log('❌ تفاعل منتهي الصلاحية');
-      return;
+    // 3. Handle map_btn_ interactions
+    if (interaction.isButton() && interaction.customId.startsWith('map_btn_')) {
+        const configPath = DATA_FILES.serverMapConfig;
+        if (!fs.existsSync(configPath)) {
+            ensureDataFiles();
+            return interaction.reply({ content: '⚠️ حدث خطأ في الإعدادات، يرجى المحاولة مرة أخرى.', ephemeral: true });
+        }
+
+        const allConfigs = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        // جلب الإعدادات بناءً على القناة أو العالمية
+        const channelKey = `channel_${interaction.channel?.id}`;
+        const config = allConfigs[channelKey] || allConfigs['global'] || allConfigs;
+        
+        const index = parseInt(interaction.customId.replace('map_btn_', ''));
+        const buttons = Array.isArray(config.buttons) ? config.buttons : (config.global?.buttons || []);
+        const btn = buttons[index];
+
+        if (!btn) return interaction.reply({ content: '❌ لم يتم العثور على بيانات لهذا الزر.', ephemeral: true });
+
+        // معالجة الرول المرتبط بالزر
+        let roleStatus = "";
+        if (btn.roleId && interaction.guild) {
+            try {
+                // إرجاء الرد لإعطاء وقت كافٍ لمعالجة الرولات
+                if (!interaction.deferred && !interaction.replied) {
+                    await interaction.deferReply({ ephemeral: true }).catch(err => {
+                        if (err.code !== 10062) throw err;
+                    });
+                }
+
+                // التحقق مرة أخرى من حالة التفاعل بعد التأجيل
+                if (!interaction.deferred && !interaction.replied) return;
+
+                let member = interaction.guild.members.cache.get(interaction.user.id);
+                if (!member) member = await interaction.guild.members.fetch(interaction.user.id);
+                
+                let role = interaction.guild.roles.cache.get(btn.roleId);
+                if (!role) role = await interaction.guild.roles.fetch(btn.roleId);
+
+                if (role) {
+                    const roleMention = interaction.guild.roles.cache.get(role.id) ? `<@&${role.id}>` : `**${role.name}**`;
+                    if (member.roles.cache.has(role.id)) {
+                        await member.roles.remove(role, 'إزالة رول عبر خريطة السيرفر');
+                        roleStatus = `\n\n✅ **تم سحب رول:** ${roleMention}`;
+                    } else {
+                        await member.roles.add(role, 'إعطاء رول عبر خريطة السيرفر');
+                        roleStatus = `\n\n✅ **تم منحك رول:** ${roleMention}`;
+                    }
+                }
+            } catch (roleErr) {
+                if (roleErr.code !== 10062) {
+                    console.error('Error handling map button role:', roleErr);
+                    roleStatus = `\n\n⚠️ **فشل في منح/سحب الرول:** ${roleErr.message}`;
+                }
+            }
+        }
+
+        const rows = [];
+        const links = btn.links || (btn.link ? [{ label: btn.linkLabel || 'انتقال للروم', url: btn.link }] : []);
+        
+        if (links.length > 0) {
+            let currentRow = new ActionRowBuilder();
+            links.forEach((linkData, i) => {
+                if (i > 0 && i % 5 === 0) {
+                    rows.push(currentRow);
+                    currentRow = new ActionRowBuilder();
+                }
+                currentRow.addComponents(
+                    new ButtonBuilder()
+                        .setLabel(linkData.label || 'انتقال للروم')
+                        .setURL(linkData.url)
+                        .setStyle(ButtonStyle.Link)
+                );
+            });
+            rows.push(currentRow);
+        }
+
+        const replyPayload = {
+            content: (btn.description || 'لا يوجد شرح متاح.') + roleStatus,
+            components: rows,
+            ephemeral: true
+        };
+
+        if (interaction.deferred || interaction.replied) {
+            await interaction.editReply(replyPayload).catch(err => console.error('Error in editReply:', err));
+        } else {
+            await interaction.reply(replyPayload).catch(async err => {
+                if (err.code === 50007) {
+                    console.log(`🚫 لا يمكن الرد على ${interaction.user.tag} لأن الخاص مغلق أو لا يمكن الوصول إليه.`);
+                } else {
+                    console.error('Interaction Reply Error:', err);
+                }
+            });
+        }
+        return;
     }
 
-    // فحص البلوك بشكل مبكر
-    const { isUserBlocked } = require('./commands/block.js');
-    if (isUserBlocked(interaction.user.id)) {
-      return; // تجاهل بصمت لتوفير الأداء
-    }
+    // --- End of Consolidated Handlers ---
 
-    // تسجيل تفصيلي للمودال
-    if (interaction.customId && interaction.customId.startsWith('masoul_modal_')) {
-      console.log(`[DEBUG] تفاعل masoul_modal اكتُشف في بداية المعالج`);
-    }
 
-    // --- Create a unified context object for all interaction handlers (MOVED TO TOP) ---
-    const context = {
-        client,
-        responsibilities,
-        points,
-        scheduleSave,
-        BOT_OWNERS,
-        reportsConfig: undefined, // Removed reportsConfig as it's not defined and not needed
-        logConfig: client.logConfig,
-        colorManager
-    };
 
     // Handle Streak system interactions
     if (interaction.customId && interaction.customId.startsWith('streak_')) {
@@ -5364,10 +5479,7 @@ client.on('guildMemberAdd', async member => {
     }
 });
 
-client.on('interactionCreate', async interaction => {
-    try {
-        if (!interaction.isButton()) return;
-        if (!interaction.customId.startsWith('map_btn_')) return;
+
 
         const configPath = DATA_FILES.serverMapConfig;
         if (!fs.existsSync(configPath)) {
@@ -5461,13 +5573,7 @@ client.on('interactionCreate', async interaction => {
                 }
             });
         }
-    } catch (error) {
-        console.error('❌ خطأ في معالج تفاعلات الخريطة:', error.message);
-        if (!interaction.replied && !interaction.deferred) {
-            await interaction.reply({ content: '❌ حدث خطأ داخلي أثناء معالجة الطلب.', ephemeral: true }).catch(() => {});
-        }
-    }
-});
+
 // =================================
 
 client.login(process.env.DISCORD_TOKEN);
