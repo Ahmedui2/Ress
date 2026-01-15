@@ -122,7 +122,7 @@ async function handleMessage(message) {
         : '';
 
     const sentMessage = await message.channel.send({
-        content: `${approverMentions}\n**طلب جديد من <@${message.author.id}> بخصوص <@${targetId}>**`,
+        content: approverMentions || null,
         embeds: [statsEmbed],
         components: [row1, row2]
     });
