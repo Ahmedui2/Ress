@@ -1,7 +1,7 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
-const { collectUserStats, createUserStatsEmbed } = require('./userStatsCollector');
+const { collectUserStats, createUserStatsEmbed, loadEvaluationSettings, getEvaluationType } = require('./userStatsCollector');
 const colorManager = require('./colorManager');
 
 const interactiveRolesPath = path.join(__dirname, '..', 'data', 'interactiveRoles.json');
@@ -156,21 +156,95 @@ async function handleInteraction(interaction) {
         const userStats = request.userStats;
         
         let updatedEmbed;
-        if (value === 'simple_view') {
-            updatedEmbed = await createUserStatsEmbed(userStats, colorManager, true, null, `<@${request.requesterId}>`);
-            updatedEmbed.setTitle(`🎭 طلب رول تفاعلي`).setDescription(`**Admin :** <@${request.requesterId}>\n**Member :** <@${targetId}>\n\n${request.originalContent}`);
-        } else {
-            // Full view with specific category matching admin-apply logic
-            updatedEmbed = await createUserStatsEmbed(userStats, colorManager, false, null, `<@${request.requesterId}>`, value);
-            
-            // Re-apply title and correct styling after createUserStatsEmbed
-            const targetMember = await interaction.guild.members.fetch(targetId).catch(() => null);
-            updatedEmbed.setTitle(`🎭 تفاصيل العضو: ${targetMember ? targetMember.user.username : targetId}`);
-            
-            // Add requester field if it's missing in some views
-            if (updatedEmbed.data && updatedEmbed.data.fields && !updatedEmbed.data.fields.some(f => f.name && f.name.includes('بواسطة'))) {
-                updatedEmbed.addFields({ name: 'بواسطة', value: `<@${request.requesterId}>`, inline: true });
-            }
+        
+        switch (value) {
+            case 'dates':
+                updatedEmbed = colorManager.createEmbed()
+                    .setTitle(`📅 Dates - ${userStats.mention}`)
+                    .setThumbnail(userStats.avatar)
+                    .addFields([
+                        { name: '**انضمام السيرفر**', value: `**${userStats.joinedServerFormatted}**`, inline: false },
+                        { name: '**إنشاء الحساب**', value: `**${userStats.accountCreatedFormatted}**`, inline: false },
+                        { name: '**المدة في السيرفر**', value: `${userStats.timeInServerFormatted}`, inline: true },
+                        { name: '**عمر الحساب**', value: `${userStats.accountAgeFormatted}`, inline: true },
+                        { name: ' **آخر نشاط**', value: `**${userStats.lastActivity}**`, inline: true }
+                    ]);
+                break;
+
+            case 'evaluation':
+                const evaluationSettings = loadEvaluationSettings();
+                const timeInServerDays = Math.floor(userStats.timeInServerMs / (24 * 60 * 60 * 1000));
+
+                const messageCount = evaluationSettings.minMessages.resetWeekly ? userStats.weeklyMessages || 0 : userStats.realMessages;
+                const voiceTime = evaluationSettings.minVoiceTime.resetWeekly ? userStats.weeklyVoiceTime || 0 : userStats.realVoiceTime;
+                const reactionCount = evaluationSettings.minReactions.resetWeekly ? userStats.weeklyReactions || 0 : userStats.reactionsGiven || 0;
+
+                const messageLabel = evaluationSettings.minMessages.resetWeekly ? "<:emoji:1443616698996359380> Messages : ( week )" : "<:emoji:1443616698996359380> Messages : ( All )";
+                const voiceLabel = evaluationSettings.minVoiceTime.resetWeekly ? "<:emoji:1443616700707635343> Voice : ( week )" : "<:emoji:1443616700707635343> Voice : ( All )";
+                const reactionLabel = evaluationSettings.minReactions.resetWeekly ? "Reactions : ( week )" : "Reactions : ( All )";
+
+                const evaluation = getEvaluationType(
+                    userStats.realMessages,
+                    userStats.weeklyMessages || 0,
+                    userStats.realVoiceTime,
+                    userStats.weeklyVoiceTime || 0,
+                    userStats.reactionsGiven || 0,
+                    userStats.weeklyReactions || 0,
+                    userStats.activeDays,
+                    timeInServerDays
+                );
+
+                updatedEmbed = colorManager.createEmbed()
+                    .setTitle(`📊 Evaluation - ${userStats.mention}`)
+                    .setThumbnail(userStats.avatar)
+                    .addFields([
+                        { name: ` **${messageLabel}**`, value: `**${messageCount.toLocaleString()}**`, inline: true },
+                        { name: ` **${voiceLabel}**`, value: `**${evaluationSettings.minVoiceTime.resetWeekly ? userStats.formattedWeeklyVoiceTime || 'No Data' : userStats.formattedVoiceTime || 'No Data'}**`, inline: true },
+                        { name: ` **${reactionLabel}**`, value: `**${reactionCount.toLocaleString()}**`, inline: true },
+                        { name: ' **Active**', value: userStats.activeDays >= evaluationSettings.activeDaysPerWeek.minimum ? '🟢 **نشط**' : '🔴 **غير نشط**', inline: true },
+                        { name: '  **الخبرة حسب المدة**', value: timeInServerDays >= evaluationSettings.timeInServerDays.excellent ? '🟢 **خبرة ممتازة**' : timeInServerDays >= evaluationSettings.timeInServerDays.minimum ? '🟡 **خبرة جيدة**' : '🔴 **جديد**', inline: true }
+                    ]);
+                break;
+
+            case 'roles':
+                const rolesText = userStats.roles.length > 0
+                    ? userStats.roles.map((role, index) => `**${index + 1}.** <@&${role.id}> (${role.name})`).join('\n')
+                    : '**لا توجد رولات إضافية**';
+
+                updatedEmbed = colorManager.createEmbed()
+                    .setTitle(`🎭 Roles - ${userStats.mention}`)
+                    .setThumbnail(userStats.avatar)
+                    .addFields([
+                        { name: '**إجمالي الرولات**', value: `**${userStats.roleCount}** رول`, inline: true },
+                        { name: ' **حالة الإدارة**', value: userStats.hasAdminRoles ? '✅ **لديه رولات إدارية**' : '❌ **لا يملك رولات إدارية**', inline: true },
+                        { name: '**قائمة الرولات**', value: rolesText.length > 1024 ? rolesText.substring(0, 1021) + '...' : rolesText, inline: false }
+                    ]);
+                break;
+
+            case 'advanced_stats':
+                updatedEmbed = colorManager.createEmbed()
+                    .setTitle(`📈 Stats - ${userStats.mention}`)
+                    .setThumbnail(userStats.avatar)
+                    .addFields([
+                        { name: ' **Messages**', value: `**${userStats.realMessages.toLocaleString()}** رسالة`, inline: true },
+                        { name: ' **In voice**', value: `${userStats.formattedVoiceTime}`, inline: true },
+                        { name: ' **Join voice**', value: `**${userStats.joinedChannels}** `, inline: true },
+                        { name: ' **Reactions**', value: `**${userStats.reactionsGiven}** `, inline: true },
+                        { name: ' **Active days**', value: `**${userStats.activeDays}** `, inline: true },
+                        { name: ' **Bot?**', value: userStats.isBot ? ' **بوت**' : ' **حقيقي**', inline: true }
+                    ]);
+                break;
+
+            case 'simple_view':
+            default:
+                updatedEmbed = await createUserStatsEmbed(userStats, colorManager, true, null, `<@${request.requesterId}>`);
+                updatedEmbed.setTitle(`🎭 طلب رول تفاعلي`).setDescription(`**Admin :** <@${request.requesterId}>\n**Member :** <@${targetId}>\n\n${request.originalContent}`);
+                break;
+        }
+
+        // Add requester field to all views except simple_view (which already has it in description)
+        if (value !== 'simple_view') {
+            updatedEmbed.addFields({ name: 'بواسطة', value: `<@${request.requesterId}>`, inline: true });
         }
 
         await interaction.update({ embeds: [updatedEmbed] });
