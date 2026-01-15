@@ -1,0 +1,9 @@
+{
+  "settings": {
+    "approvers": [],
+    "interactiveRoles": [],
+    "requestChannel": null
+  },
+  "pendingRequests": {},
+  "cooldowns": {}
+}

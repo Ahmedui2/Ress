@@ -358,15 +358,40 @@ try {
   console.error('❌ خطأ في تسجيل معالجات نظام التذاكر:', error);
 }
 
-// تسجيل معالج مودال الباكب
-try {
-  const backupCommand = require('./commands/backup.js');
-  if (backupCommand.registerBackupModalHandler) {
-    backupCommand.registerBackupModalHandler(client);
+  // تسجيل معالج مودال الباكب
+  try {
+    const backupCommand = require('./commands/backup.js');
+    if (backupCommand.registerBackupModalHandler) {
+      backupCommand.registerBackupModalHandler(client);
+    }
+  } catch (error) {
+    console.error('❌ خطأ في تسجيل معالج backup:', error);
   }
-} catch (error) {
-  console.error('❌ خطأ في تسجيل معالج backup:', error);
-}
+
+  // تسجيل معالج setactive ونظام الرولات التفاعلية
+  try {
+    const setactiveCommand = require('./commands/setactive.js');
+    const interactiveRolesManager = require('./utils/interactiveRolesManager.js');
+    
+    client.on('interactionCreate', async (interaction) => {
+      // معالجة إعدادات setactive
+      if (setactiveCommand.handleSetActiveInteraction) {
+        await setactiveCommand.handleSetActiveInteraction(interaction);
+      }
+      // معالجة طلبات الرولات التفاعلية (قبول/رفض)
+      if (interactiveRolesManager.handleInteraction) {
+        await interactiveRolesManager.handleInteraction(interaction);
+      }
+    });
+
+    client.on('messageCreate', async (message) => {
+      if (interactiveRolesManager.handleMessage) {
+        await interactiveRolesManager.handleMessage(message);
+      }
+    });
+  } catch (error) {
+    console.error('❌ خطأ في تسجيل نظام الرولات التفاعلية:', error);
+  }
 
 let isDataDirty = false;
 let saveTimeout = null;
