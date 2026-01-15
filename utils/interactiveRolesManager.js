@@ -116,8 +116,13 @@ async function handleMessage(message) {
 
     const row2 = new ActionRowBuilder().addComponents(detailsMenu);
 
+    // Create mention string for approvers
+    const approverMentions = settings.settings.approvers && settings.settings.approvers.length > 0 
+        ? settings.settings.approvers.map(id => `<@&${id}>`).join(' ') 
+        : '';
+
     const sentMessage = await message.channel.send({
-        content: `**طلب جديد من <@${message.author.id}> بخصوص <@${targetId}>**`,
+        content: `${approverMentions}\n**طلب جديد من <@${message.author.id}> بخصوص <@${targetId}>**`,
         embeds: [statsEmbed],
         components: [row1, row2]
     });
