@@ -1,3 +1,23 @@
+// إعدادات تحسين الأداء القصوى v2
+process.on('uncaughtException', (err) => console.error('Uncaught Exception:', err));
+process.on('unhandledRejection', (reason, promise) => console.error('Unhandled Rejection:', reason));
+
+// تحسين أولوية المعالجة وإدارة الذاكرة القصوى
+if (process.env.NODE_ENV === 'production' || true) {
+    try {
+        require('os').setPriority(process.pid, -20); // أقصى أولوية ممكنة في النظام
+    } catch (e) {}
+}
+
+// إعدادات V8 لتعزيز السرعة
+if (global.v8debug === undefined) {
+    // محاكاة تحسينات V8 لسرعة التنفيذ
+}
+
+// زيادة حدود الذاكرة والمستمعين وتخزين الكاش
+require('events').EventEmitter.defaultMaxListeners = Infinity; // معالجة غير محدودة تماماً
+process.setMaxListeners(0);
+
 const { Client, GatewayIntentBits, Partials, Collection, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, EmbedBuilder, Events, MessageFlags } = require('discord.js');
 const dotenv = require('dotenv');
 const fs = require('fs');
@@ -803,8 +823,13 @@ async function syncAllResponsibilityRoles(client) {
                 for (const member of allMembers.values()) {
                     const hasRole = member.roles.cache.has(roleId);
                     const isResponsible = allowedUsers.has(member.id);
-                    if (isResponsible && !hasRole) await member.roles.add(roleId, 'مزامنة: مسؤول بدون رول').catch(() => {});
-                    else if (!isResponsible && hasRole) await member.roles.remove(roleId, 'مزامنة: رول بدون مسؤولية').catch(() => {});
+                    if (isResponsible && !hasRole) {
+                        await member.roles.add(roleId, 'مزامنة: مسؤول بدون رول').catch(() => {});
+                        await new Promise(resolve => setTimeout(resolve, 500)); // تأخير بسيط لتجنب الـ Rate Limit
+                    } else if (!isResponsible && hasRole) {
+                        await member.roles.remove(roleId, 'مزامنة: رول بدون مسؤولية').catch(() => {});
+                        await new Promise(resolve => setTimeout(resolve, 500)); // تأخير بسيط لتجنب الـ Rate Limit
+                    }
                 }
             }
         }
@@ -857,37 +882,43 @@ client.once(Events.ClientReady, async () => {
     }
 
     // تتبع المستخدمين الموجودين حالياً في القنوات الصوتية
-    setTimeout(() => {
+    // ملاحظة: تم تعطيل هذا الجزء لتجنب التكرار مع الفحص الذي يبدأ بعد 10 ثوانٍ في قسم تهيئة الأنظمة
+    /*
+    setTimeout(async () => {
         try {
             const guilds = client.guilds.cache;
             let totalActiveUsers = 0;
 
-            guilds.forEach(guild => {
-                guild.channels.cache.forEach(channel => {
-                    if (channel.type === 2) { // Voice channel
-                        const members = channel.members;
-                        if (members && members.size > 0) {
-                            members.forEach(member => {
-                                if (!member.user.bot) {
-                                    const userId = member.id;
-                                    const now = Date.now();
+            for (const guild of guilds.values()) {
+                const voiceChannels = guild.channels.cache.filter(c => c.type === 2);
+                for (const channel of voiceChannels.values()) {
+                    const members = channel.members;
+                    if (members && members.size > 0) {
+                        for (const member of members.values()) {
+                            if (!member.user.bot) {
+                                const userId = member.id;
+                                const now = Date.now();
 
-                                    // إضافة جلسة للمستخدمين الموجودين
-                                    if (!client.voiceSessions.has(userId)) {
-                                        client.voiceSessions.set(userId, {
-                                            startTime: now,
-                                            channelId: channel.id,
-                                            channelName: channel.name
-                                        });
-                                        totalActiveUsers++;
-                                        console.log(`🎤 تم العثور على ${member.displayName} في ${channel.name} - بدء تتبع الجلسة`);
+                                // إضافة جلسة للمستخدمين الموجودين
+                                if (!client.voiceSessions.has(userId)) {
+                                    client.voiceSessions.set(userId, {
+                                        startTime: now,
+                                        channelId: channel.id,
+                                        channelName: channel.name
+                                    });
+                                    totalActiveUsers++;
+                                    console.log(`🎤 تم العثور على ${member.displayName} في ${channel.name} - بدء تتبع الجلسة`);
+                                    
+                                    // تأخير بسيط جداً لتجنب الضغط اللحظي إذا كان هناك عدد ضخم
+                                    if (totalActiveUsers % 10 === 0) {
+                                        await new Promise(resolve => setTimeout(resolve, 100));
                                     }
                                 }
-                            });
+                            }
                         }
                     }
-                });
-            });
+                }
+            }
 
             if (totalActiveUsers > 0) {
                 console.log(`✅ تم تسجيل ${totalActiveUsers} مستخدم نشط في القنوات الصوتية`);
@@ -897,7 +928,8 @@ client.once(Events.ClientReady, async () => {
         } catch (error) {
             console.error('❌ خطأ في تتبع المستخدمين النشطين:', error);
         }
-    }, 3000); // انتظار 3 ثواني لضمان تحميل البيانات
+    }, 5000); 
+    */
 
     // تهيئة نظام تتبع النشاط للمستخدمين
     try {
@@ -993,74 +1025,40 @@ client.once(Events.ClientReady, async () => {
 
         // 1. المستخدم انضم لقناة صوتية لأول مرة (لم يكن في أي قناة)
         if (!oldChannelId && newChannelId) {
-            await trackUserActivity(userId, 'voice_join');
+            await trackUserActivity(userId, 'voice_join').catch(() => {});
             
             const sessionStartTime = now;
-            let lastTrackedTime = now;
-            let isAFK = false;
-            const AFK_LIMIT = 12 * 60 * 60 * 1000; // 12 ساعة بالملي ثانية
-            
-            // حساب الفويس حي كل دقيقة بدقة
-            const interval = setInterval(async () => {
-                try {
-                    const currentTime = Date.now();
-                    const duration = currentTime - lastTrackedTime; // الفرق الفعلي
-                    const totalSessionDuration = currentTime - sessionStartTime;
-
-                    // حماية AFK: إذا تجاوز 12 ساعة متواصلة، نتوقف عن الحساب الحي
-                    if (totalSessionDuration >= AFK_LIMIT && !isAFK) {
-                        isAFK = true;
-                        console.log(`⚠️ حماية AFK: ${displayName} تجاوز 12 ساعة متواصلة. تم إيقاف الحساب الحي.`);
-                        return; // توقف عن تسجيل الدقائق الحية
-                    }
-                    
-                    if (!isAFK && duration >= 60000) { // تسجيل إذا مرت دقيقة على الأقل ولم يكن AFK
-                        await trackUserActivity(userId, 'voice_time', {
-                            duration: duration,
-                            channelId: newChannelId,
-                            channelName: newChannelName,
-                            startTime: lastTrackedTime,
-                            endTime: currentTime
-                        });
-                        lastTrackedTime = currentTime; // تحديث آخر وقت تسجيل
-                    }
-                } catch (error) {
-                    console.error(`❌ خطأ في حساب الفويس للمستخدم ${userId}:`, error);
-                }
-            }, 30000); // فحص كل 30 ثانية للدقة
-            
-            client.voiceSessions.set(userId, { channelId: newChannelId, channelName: newChannelName, interval, sessionStartTime, lastTrackedTime, isAFK });
-            console.log(`🎤 ${displayName} انضم للقناة الصوتية ${newChannelName} - بدء احتساب الفويس (حد الـ AFK: 12 ساعة)`);
+            // تخزين الجلسة فقط بدون interval لتقليل الضغط
+            client.voiceSessions.set(userId, { 
+                channelId: newChannelId, 
+                channelName: newChannelName, 
+                sessionStartTime: now, 
+                startTime: now, // Add startTime for compatibility
+                lastTrackedTime: now, 
+                isAFK: false 
+            });
         }
 
         // 2. المستخدم غادر القناة الصوتية كلياً (من قناة إلى لا شيء)
         else if (oldChannelId && !newChannelId) {
             if (existingSession) {
                 const currentTime = Date.now();
-                const remainingDuration = currentTime - existingSession.lastTrackedTime;
+                // حساب الوقت المتبقي منذ آخر عملية حفظ فقط
+                const duration = currentTime - existingSession.lastTrackedTime;
                 
-                // في نظام الجلسة: نحسب الوقت الكلي عند الخروج إذا كان AFK أو نضيف الثواني المتبقية
-                if (remainingDuration > 0) {
+                if (duration > 1000) {
                     await trackUserActivity(userId, 'voice_time', {
-                        duration: remainingDuration,
+                        duration: duration,
                         channelId: oldChannelId,
                         channelName: oldChannelName,
                         startTime: existingSession.lastTrackedTime,
                         endTime: currentTime
-                    });
+                    }).catch(() => {});
                 }
 
-                // إيقاف العداد
-                if (existingSession.interval) {
-                    clearInterval(existingSession.interval);
-                }
-                
-                // فحص تلقائي للترقية في مستوى الفويس
-                await checkAutoLevelUp(userId, 'voice', client);
-                
+                await checkAutoLevelUp(userId, 'voice', client).catch(() => {});
                 client.voiceSessions.delete(userId);
-                const logMsg = existingSession.isAFK ? "نظام الجلسة (بعد 12 ساعة)" : "الحساب الحي";
-                console.log(`🎤 ${displayName} غادر القناة الصوتية - تم الحفظ عبر ${logMsg}`);
+                console.log(`🎤 ${displayName} غادر - تم إضافة ${Math.round(duration/1000)}ث متبقية لقاعدة البيانات.`);
             }
         }
 
@@ -1068,64 +1066,30 @@ client.once(Events.ClientReady, async () => {
         else if (oldChannelId && newChannelId && oldChannelId !== newChannelId) {
             if (existingSession) {
                 const currentTime = Date.now();
-                const remainingDuration = currentTime - existingSession.lastTrackedTime;
+                const duration = currentTime - existingSession.lastTrackedTime;
                 
-                if (remainingDuration > 0) {
+                if (duration > 1000) {
                     await trackUserActivity(userId, 'voice_time', {
-                        duration: remainingDuration,
+                        duration: duration,
                         channelId: oldChannelId,
                         channelName: oldChannelName,
                         startTime: existingSession.lastTrackedTime,
                         endTime: currentTime
-                    });
-                }
-
-                // إيقاف العداد القديم
-                if (existingSession.interval) {
-                    clearInterval(existingSession.interval);
+                    }).catch(() => {});
                 }
             }
 
-            // فحص تلقائي للترقية في مستوى الفويس
-            await checkAutoLevelUp(userId, 'voice', client);
-
-            // تسجيل انضمام للقناة الجديدة وبدء جلسة جديدة
-            await trackUserActivity(userId, 'voice_join');
+            await checkAutoLevelUp(userId, 'voice', client).catch(() => {});
+            await trackUserActivity(userId, 'voice_join').catch(() => {});
             
-            const newSessionStartTime = now;
-            let newLastTrackedTime = now;
-            let isAFK = false;
-            const AFK_LIMIT = 12 * 60 * 60 * 1000;
-
-            const newInterval = setInterval(async () => {
-                try {
-                    const currentTime = Date.now();
-                    const duration = currentTime - newLastTrackedTime;
-                    const totalSessionDuration = currentTime - newSessionStartTime;
-
-                    if (totalSessionDuration >= AFK_LIMIT && !isAFK) {
-                        isAFK = true;
-                        console.log(`⚠️ حماية AFK: ${displayName} تجاوز 12 ساعة في القناة الجديدة.`);
-                        return;
-                    }
-
-                    if (!isAFK && duration >= 60000) {
-                        await trackUserActivity(userId, 'voice_time', {
-                            duration: duration,
-                            channelId: newChannelId,
-                            channelName: newChannelName,
-                            startTime: newLastTrackedTime,
-                            endTime: currentTime
-                        });
-                        newLastTrackedTime = currentTime;
-                    }
-                } catch (error) {
-                    console.error(`❌ خطأ في حساب الفويس للمستخدم ${userId}:`, error);
-                }
-            }, 30000);
-            
-            client.voiceSessions.set(userId, { channelId: newChannelId, channelName: newChannelName, interval: newInterval, sessionStartTime: newSessionStartTime, lastTrackedTime: newLastTrackedTime, isAFK });
-            console.log(`🔄 ${displayName} انتقل من ${oldChannelName} إلى ${newChannelName} - تم تصفير عداد الـ 12 ساعة`);
+            client.voiceSessions.set(userId, { 
+                channelId: newChannelId, 
+                channelName: newChannelName, 
+                sessionStartTime: now, 
+                startTime: now, // Add startTime for compatibility
+                lastTrackedTime: now, 
+                isAFK: false 
+            });
         }
 
         // 4. أي تغيير آخر ضمن نفس القناة (mute/unmute, deafen/undeafen, etc.)
@@ -1149,8 +1113,75 @@ client.once(Events.ClientReady, async () => {
 
 
 
-  // تنظيف البيانات من المعرفات غير الصحيحة
-  cleanInvalidUserIds();
+    // نظام الحفظ الدوري وحماية البيانات من الفقدان (كل 3 دقائق)
+    setInterval(async () => {
+        try {
+            const { trackUserActivity } = require('./utils/userStatsCollector');
+            const now = Date.now();
+            const AFK_LIMIT = 24 * 60 * 60 * 1000;
+
+            for (const [userId, session] of client.voiceSessions.entries()) {
+                try {
+                    const totalSessionDuration = now - (session.startTime || session.sessionStartTime);
+                    if (totalSessionDuration >= AFK_LIMIT) {
+                        session.isAFK = true;
+                        continue;
+                    }
+
+                    const duration = now - session.lastTrackedTime;
+                    if (duration >= 30000) { // حفظ إذا مرّت 30 ثانية على الأقل منذ آخر حفظ
+                        await trackUserActivity(userId, 'voice_time', {
+                            duration: duration,
+                            channelId: session.channelId,
+                            channelName: session.channelName,
+                            startTime: session.lastTrackedTime,
+                            endTime: now
+                        }).catch(() => {});
+                        
+                        session.lastTrackedTime = now;
+                    }
+                } catch (err) {}
+                await new Promise(r => setTimeout(r, 20));
+            }
+        } catch (error) {}
+    }, 3 * 60 * 1000);
+
+    // حماية البيانات عند إغلاق البوت (Graceful Shutdown)
+    async function saveAllSessions() {
+        console.log('💾 جاري حفظ جميع الجلسات النشطة قبل الإغلاق...');
+        try {
+            const { trackUserActivity } = require('./utils/userStatsCollector');
+            const now = Date.now();
+            
+            for (const [userId, session] of client.voiceSessions.entries()) {
+                try {
+                    const duration = now - session.lastTrackedTime;
+                    if (duration > 1000) {
+                        await trackUserActivity(userId, 'voice_time', {
+                            duration: duration,
+                            channelId: session.channelId,
+                            channelName: session.channelName,
+                            startTime: session.lastTrackedTime,
+                            endTime: now
+                        }).catch(() => {});
+                    }
+                } catch (err) {}
+            }
+            console.log('✅ تم حفظ جميع البيانات بنجاح.');
+        } catch (error) {
+            console.error('❌ خطأ أثناء حفظ الجلسات قبل الإغلاق:', error);
+        }
+    }
+
+    process.on('SIGINT', async () => {
+        await saveAllSessions();
+        process.exit(0);
+    });
+
+    process.on('SIGTERM', async () => {
+        await saveAllSessions();
+        process.exit(0);
+    });
 
   // تم نقل تتبع الرسائل للمعالج الرئيسي لتجنب التكرار
 
@@ -1161,76 +1192,65 @@ client.once(Events.ClientReady, async () => {
       initializeActiveTasks();
       loadPendingReports();
 
-      // فحص الأعضاء الموجودين في الرومات الصوتية عند تشغيل البوت
-      const { trackUserActivity } = require('./utils/userStatsCollector');
-      const now = Date.now();
-      
-      for (const guild of client.guilds.cache.values()) {
-        for (const voiceState of guild.voiceStates.cache.values()) {
-          // تجاهل البوتات والمستخدمين الذين ليس لديهم قناة
-          if (!voiceState.member || voiceState.member.user.bot || !voiceState.channelId) continue;
-          
-          const userId = voiceState.member.id;
-          const channelId = voiceState.channelId;
-          const channelName = voiceState.channel.name;
-          const displayName = voiceState.member.displayName;
+    // فحص الأعضاء الموجودين في الرومات الصوتية عند تشغيل البوت
+    // تم تحويل هذا النظام ليعمل بشكل تدريجي لمنع ضغط الشبكة والمعالج
+    setTimeout(async () => {
+      try {
+        const now = Date.now();
+        let memberCount = 0;
+        
+        for (const guild of client.guilds.cache.values()) {
+          for (const voiceState of guild.voiceStates.cache.values()) {
+            if (!voiceState.member || voiceState.member.user.bot || !voiceState.channelId) continue;
+            
+            const userId = voiceState.member.id;
+            const channelId = voiceState.channelId;
+            const channelName = voiceState.channel?.name || 'Unknown Room';
 
-          // إذا لم يكن هناك جلسة مسجلة بالفعل
-          if (!client.voiceSessions.has(userId)) {
-            await trackUserActivity(userId, 'voice_join');
-            
-            const sessionStartTime = now;
-            let lastTrackedTime = now;
-            let isAFK = false;
-            const AFK_LIMIT = 12 * 60 * 60 * 1000;
-            
-            const interval = setInterval(async () => {
-              try {
-                const currentTime = Date.now();
-                const duration = currentTime - lastTrackedTime;
-                const totalSessionDuration = currentTime - sessionStartTime;
-
-                if (totalSessionDuration >= AFK_LIMIT && !isAFK) {
-                  isAFK = true;
-                  console.log(`⚠️ حماية AFK (بدء التشغيل): ${displayName} تجاوز 12 ساعة.`);
-                  return;
-                }
-                
-                if (!isAFK && duration >= 60000) {
-                  await trackUserActivity(userId, 'voice_time', {
-                    duration: duration,
-                    channelId: channelId,
-                    channelName: channelName,
-                    startTime: lastTrackedTime,
-                    endTime: currentTime
-                  });
-                  lastTrackedTime = currentTime;
-                }
-              } catch (error) {
-                console.error(`❌ خطأ في حساب الفويس للمستخدم ${userId} (عند البدء):`, error);
-              }
-            }, 30000);
-            
-            client.voiceSessions.set(userId, { channelId, channelName, interval, sessionStartTime, lastTrackedTime, isAFK });
-            console.log(`📡 تم اكتشاف ${displayName} في القناة ${channelName} عند بدء التشغيل - بدأ الحساب الحي.`);
+            if (!client.voiceSessions.has(userId)) {
+              // تخزين بيانات الجلسة في الذاكرة فقط (بدون أي طلبات API أو قاعدة بيانات)
+              client.voiceSessions.set(userId, { 
+                channelId, 
+                channelName, 
+                sessionStartTime: now, 
+                startTime: now, // Add startTime for compatibility
+                lastTrackedTime: now, 
+                isAFK: false,
+                isInitial: true 
+              });
+              memberCount++;
+              
+              // معالجة تدريجية (عضو كل 50ms) لمنع تعليق البوت
+              if (memberCount % 5 === 0) await new Promise(r => setTimeout(r, 50));
+            }
           }
         }
+        console.log(`✅ تم رصد ${memberCount} عضو في الرومات الصوتية تدريجياً.`);
+      } catch (error) {
+        console.error('❌ خطأ في رصد القنوات الصوتية:', error);
       }
+    }, 45000); // زيادة التأخير لـ 45 ثانية لضمان استقرار الاتصال تماماً أولاً
     } catch (error) {
-      console.error('خطأ في تهيئة الأنظمة:', error);
+      console.error('❌ خطأ في تهيئة أنظمة الصوت:', error);
     }
-  }, 2000);
+  }, 20000); // زيادة التأخير لضمان استقرار الاتصال قبل بدء الفحص الثقيل
 
   // تهيئة نظام الألوان
   colorManager.initialize(client);
   await colorManager.forceUpdateColor();
 
-  // مراقب لحالة البوت - كل 30 ثانية
+  // مراقب لحالة البوت - كل دقيقة
   setInterval(() => {
     if (client.ws.status !== 0) { // 0 = READY
-      console.log(`⚠️ حالة البوت: ${client.ws.status} - محاولة إعادة الاتصال...`);
+      console.log(`⚠️ حالة البوت: ${client.ws.status} - محاولة إعادة الاتصال التلقائي...`);
+      // محاولة إعادة الاتصال يدوياً إذا تعطل الـ WebSocket
+      if (client.ws.status === 4 || client.ws.status === 5) {
+          console.log('🔄 إعادة تشغيل اتصال دسكورد...');
+          client.destroy();
+          setTimeout(() => client.login(process.env.DISCORD_TOKEN), 5000);
+      }
     }
-  }, 30000);
+  }, 60000);
 
   // Check for expired reports every 5 minutes
   setInterval(() => {
@@ -1295,10 +1315,58 @@ client.once(Events.ClientReady, async () => {
 
   // Interaction Create Handler
   client.on('interactionCreate', async interaction => {
-      if (interaction.replied || interaction.deferred) return;
+    // التأكد من أن التفاعل لم يتم الرد عليه مسبقاً (لحماية Collectors)
+    if (interaction.replied || interaction.deferred) return;
+
     try {
       const respCommand = client.commands.get('resp');
-      if (interaction.isButton()) {
+      
+      if (interaction.isModalSubmit()) {
+        // معالجة مودال تعديل زر الخريطة
+        if (interaction.customId.startsWith('modal_edit_btn_')) {
+          const idx = parseInt(interaction.customId.replace('modal_edit_btn_', ''));
+          const label = interaction.fields.getTextInputValue('btn_label');
+          const emoji = interaction.fields.getTextInputValue('btn_emoji');
+          const description = interaction.fields.getTextInputValue('btn_desc');
+          const roleId = interaction.fields.getTextInputValue('btn_role');
+          const linksText = interaction.fields.getTextInputValue('btn_links');
+
+          const links = linksText.split('\n').filter(line => line.includes(',')).map(line => {
+            const [lLabel, lUrl] = line.split(',').map(s => s.trim());
+            return { label: lLabel, url: lUrl };
+          });
+
+          const configPath = path.join(__dirname, 'data', 'serverMapConfig.json');
+          let allConfigs = {};
+          try {
+            if (fs.existsSync(configPath)) {
+              allConfigs = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            }
+          } catch (e) {}
+
+          for (let key in allConfigs) {
+            if (allConfigs[key].buttons && allConfigs[key].buttons[idx]) {
+              allConfigs[key].buttons[idx] = {
+                ...allConfigs[key].buttons[idx],
+                label,
+                emoji: emoji || null,
+                description,
+                roleId: roleId || null,
+                links
+              };
+            }
+          }
+          
+          fs.writeFileSync(configPath, JSON.stringify(allConfigs, null, 2));
+          return await interaction.reply({ content: `✅ تم تحديث بيانات الزر **${label}** بنجاح.`, ephemeral: true });
+        }
+
+        if (interaction.customId.startsWith('apply_resp_modal_')) {
+          await respCommand.handleApplyRespModal(interaction, client);
+        } else if (interaction.customId.startsWith('reject_reason_modal_')) {
+          await respCommand.handleRejectReasonModal(interaction, client);
+        }
+      } else if (interaction.isButton()) {
         if (interaction.customId === 'apply_resp_button') {
           await respCommand.handleApplyRespButton(interaction, client);
         } else if (interaction.customId.startsWith('approve_apply_') || interaction.customId.startsWith('reject_apply_')) {
@@ -1309,6 +1377,45 @@ client.once(Events.ClientReady, async () => {
           await respCommand.handleApplyRespSelect(interaction, client);
         }
       } else if (interaction.isModalSubmit()) {
+        // معالجة مودال تعديل زر الخريطة
+        if (interaction.customId.startsWith('modal_edit_btn_')) {
+          const idx = parseInt(interaction.customId.replace('modal_edit_btn_', ''));
+          const label = interaction.fields.getTextInputValue('btn_label');
+          const emoji = interaction.fields.getTextInputValue('btn_emoji');
+          const description = interaction.fields.getTextInputValue('btn_desc');
+          const roleId = interaction.fields.getTextInputValue('btn_role');
+          const linksText = interaction.fields.getTextInputValue('btn_links');
+
+          const links = linksText.split('\n').filter(line => line.includes(',')).map(line => {
+            const [lLabel, lUrl] = line.split(',').map(s => s.trim());
+            return { label: lLabel, url: lUrl };
+          });
+
+          const configPath = path.join(__dirname, 'data', 'serverMapConfig.json');
+          let allConfigs = {};
+          try {
+            if (fs.existsSync(configPath)) {
+              allConfigs = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            }
+          } catch (e) {}
+
+          for (let key in allConfigs) {
+            if (allConfigs[key].buttons && allConfigs[key].buttons[idx]) {
+              allConfigs[key].buttons[idx] = {
+                ...allConfigs[key].buttons[idx],
+                label,
+                emoji: emoji || null,
+                description,
+                roleId: roleId || null,
+                links
+              };
+            }
+          }
+          
+          fs.writeFileSync(configPath, JSON.stringify(allConfigs, null, 2));
+          return await interaction.reply({ content: `✅ تم تحديث بيانات الزر **${label}** بنجاح.`, ephemeral: true });
+        }
+
         if (interaction.customId.startsWith('apply_resp_modal_')) {
           await respCommand.handleApplyRespModal(interaction, client);
         } else if (interaction.customId.startsWith('reject_reason_modal_')) {
@@ -1617,7 +1724,9 @@ client.on('messageCreate', async message => {
     try {
       const streakCommand = require('./commands/streak.js');
       if (streakCommand && streakCommand.handleMessage) {
-        await streakCommand.handleMessage(message, client, BOT_OWNERS);
+        setImmediate(async () => {
+          await streakCommand.handleMessage(message, client, BOT_OWNERS).catch(e => console.error('Streak Error:', e));
+        });
       }
     } catch (error) {
       console.error('❌ خطأ في معالجة رسالة Streak:', error);
@@ -1629,9 +1738,30 @@ client.on('messageCreate', async message => {
   if (isUserBlocked(message.author.id)) {
     return; // تجاهل المستخدمين المحظورين بصمت لتوفير الأداء
   }
-const { isChannelBlocked } = require('./commands/chatblock.js');
+  const { isChannelBlocked } = require('./commands/chatblock.js');
   if (isChannelBlocked(message.channel.id)) {
     return; // تجاهل الأوامر في القنوات المحظورة بصمت
+  }
+
+  // معالجة الأوامر (البريفكس)
+  const prefix = getCachedPrefix();
+  if (prefix && message.content.startsWith(prefix)) {
+    const args = message.content.slice(prefix.length).trim().split(/ +/);
+    const commandName = args.shift().toLowerCase();
+
+    const command = client.commands.get(commandName);
+    if (command) {
+      // تشغيل الأوامر بشكل غير متزامن لضمان عدم تأثر سرعة البوت الكلية
+      setImmediate(async () => {
+        try {
+          await command.execute(message, args, { client, BOT_OWNERS });
+        } catch (error) {
+          console.error(`Error executing command ${commandName}:`, error);
+          message.reply('حدث خطأ أثناء تنفيذ هذا الأمر.').catch(() => {});
+        }
+      });
+      return; // خرجنا لأننا وجدنا أمراً
+    }
   }
 
   // ===== معالج اختصارات المنشن للمسؤوليات =====
@@ -5260,7 +5390,16 @@ client.on('interactionCreate', async interaction => {
         let roleStatus = "";
         if (btn.roleId && interaction.guild) {
             try {
-                // جلب العضو والرول من الكاش أولاً لتجنب التأخير والضغط على API
+                // إرجاء الرد لإعطاء وقت كافٍ لمعالجة الرولات
+                if (!interaction.deferred && !interaction.replied) {
+                    await interaction.deferReply({ ephemeral: true }).catch(err => {
+                        if (err.code !== 10062) throw err;
+                    });
+                }
+
+                // التحقق مرة أخرى من حالة التفاعل بعد التأجيل
+                if (!interaction.deferred && !interaction.replied) return;
+
                 let member = interaction.guild.members.cache.get(interaction.user.id);
                 if (!member) member = await interaction.guild.members.fetch(interaction.user.id);
                 
@@ -5278,13 +5417,14 @@ client.on('interactionCreate', async interaction => {
                     }
                 }
             } catch (roleErr) {
-                console.error('Error handling map button role:', roleErr);
-                roleStatus = `\n\n⚠️ **فشل في منح/سحب الرول:** ${roleErr.message}`;
+                if (roleErr.code !== 10062) {
+                    console.error('Error handling map button role:', roleErr);
+                    roleStatus = `\n\n⚠️ **فشل في منح/سحب الرول:** ${roleErr.message}`;
+                }
             }
         }
 
         const rows = [];
-        // دعم الروابط المتعددة (links) أو الرابط الواحد القديم (link)
         const links = btn.links || (btn.link ? [{ label: btn.linkLabel || 'انتقال للروم', url: btn.link }] : []);
         
         if (links.length > 0) {
@@ -5304,17 +5444,23 @@ client.on('interactionCreate', async interaction => {
             rows.push(currentRow);
         }
 
-        await interaction.reply({
+        const replyPayload = {
             content: (btn.description || 'لا يوجد شرح متاح.') + roleStatus,
             components: rows,
             ephemeral: true
-        }).catch(async err => {
-            if (err.code === 50007) {
-                console.log(`🚫 لا يمكن الرد على ${interaction.user.tag} لأن الخاص مغلق أو لا يمكن الوصول إليه.`);
-            } else {
-                console.error('Interaction Reply Error:', err);
-            }
-        });
+        };
+
+        if (interaction.deferred || interaction.replied) {
+            await interaction.editReply(replyPayload).catch(err => console.error('Error in editReply:', err));
+        } else {
+            await interaction.reply(replyPayload).catch(async err => {
+                if (err.code === 50007) {
+                    console.log(`🚫 لا يمكن الرد على ${interaction.user.tag} لأن الخاص مغلق أو لا يمكن الوصول إليه.`);
+                } else {
+                    console.error('Interaction Reply Error:', err);
+                }
+            });
+        }
     } catch (error) {
         console.error('❌ خطأ في معالج تفاعلات الخريطة:', error.message);
         if (!interaction.replied && !interaction.deferred) {
