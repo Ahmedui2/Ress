@@ -5155,40 +5155,54 @@ setInterval(async () => {
 }, 5 * 60 * 1000); // Check every 5 minutes
 
 // === نظام خريطة السيرفر التفاعلي (مطور ومضاد للأخطاء) ===
+const mapSemaphore = new Set();
 client.on('guildMemberAdd', async member => {
     try {
         if (!member.user || member.user.bot) return;
+        
+        // منع المعالجة المتكررة لنفس العضو في نفس الوقت
+        if (mapSemaphore.has(member.id)) return;
+        mapSemaphore.add(member.id);
+        setTimeout(() => mapSemaphore.delete(member.id), 10000);
 
         const configPath = DATA_FILES.serverMapConfig;
         if (!fs.existsSync(configPath)) ensureDataFiles();
         
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        if (!config.enabled) return;
+        const allConfigs = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        // إجبار استخدام الإعدادات العالمية دائماً عند الترحيب
+        const config = allConfigs.global || allConfigs;
+        if (!config || !config.enabled) return;
 
         const mapCommand = client.commands.get('map');
         if (mapCommand) {
-            try {
-                // محاولة إنشاء قناة الخاص والإرسال
-                const dmChannel = await member.createDM().catch(() => null);
-                if (!dmChannel) return; // سكب إذا لم يمكن فتح الخاص
+            setImmediate(async () => {
+                try {
+                    const dmChannel = await member.createDM().catch(() => null);
+                    if (!dmChannel) return;
 
-                const fakeMessage = { 
-                    guild: member.guild, 
-                    channel: dmChannel, 
-                    author: member.user,
-                    reply: async (options) => {
-                        return await dmChannel.send(options);
-                    }
-                };
-                
-                await mapCommand.execute(fakeMessage, [], { client }).catch(() => {
-                    // سكب بصمت عند حدوث خطأ في التنفيذ داخل الخاص
-                });
-                
-                console.log(`✅ تم إرسال الخريطة في الخاص للعضو الجديد: ${member.user.tag}`);
-            } catch (err) {
-                // سكب عند حدوث أي خطأ في الإرسال للخاص
-            }
+                    const fakeMessage = { 
+                        guild: member.guild, 
+                        channel: dmChannel, 
+                        author: member.user,
+                        client: client,
+                        isAutomatic: true,
+                        isGlobalOnly: true, // علامة لإجبار استخدام الإعدادات العالمية
+                        reply: async (options) => {
+                            return await dmChannel.send(options);
+                        },
+                        react: async () => {},
+                        permissionsFor: () => ({ has: () => true })
+                    };
+                    
+                    await mapCommand.execute(fakeMessage, [], { client, BOT_OWNERS: process.env.BOT_OWNERS ? process.env.BOT_OWNERS.split(',') : [] }).catch(err => {
+                        console.error(`❌ خطأ أثناء تنفيذ الخريطة لـ ${member.user.tag}:`, err.message);
+                    });
+                    
+                    console.log(`✅ تم إرسال الخريطة العالمية في الخاص للعضو الجديد: ${member.user.tag}`);
+                } catch (err) {
+                    console.error(`❌ فشل إرسال الخريطة لـ ${member.user.tag}:`, err.message);
+                }
+            });
         }
     } catch (error) {
         console.error('❌ خطأ في نظام الترحيب بالخريطة:', error.message);
