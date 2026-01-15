@@ -21,22 +21,28 @@ module.exports = {
     description: 'عرض خريطة السيرفر التفاعلية',
     async execute(message, args, { client, BOT_OWNERS }) {
         try {
-            const isOwner = BOT_OWNERS.includes(message.author.id);
-            if (!isOwner) {
-                await message.react('❌').catch(() => {});
+            // التحقق من أن BOT_OWNERS موجودة كـ Array
+            const owners = Array.isArray(BOT_OWNERS) ? BOT_OWNERS : [];
+            const isOwner = message.author ? owners.includes(message.author.id) : false;
+            
+            // إذا كان الطلب من نظام الترحيب (تلقائي) أو من الأونر
+            const isAutomatic = message.isAutomatic === true;
+
+            if (!isOwner && !isAutomatic) {
+                if (message.react) await message.react('❌').catch(() => {});
                 return;
             }
             
             const allConfigs = loadAllConfigs();
-            const channelKey = `channel_${message.channel.id}`;
-            const config = allConfigs[channelKey] || allConfigs['global'];
+            // إذا كان طلباً تلقائياً أو إجبارياً للعالمية، نستخدم global، وإلا نستخدم القناة الحالية
+            const config = (message.isGlobalOnly || !message.guild) ? allConfigs['global'] : (allConfigs[`channel_${message.channel.id}`] || allConfigs['global']);
 
-            if (!config.enabled && !args.includes('--force')) {
+            if (!config || (!config.enabled && !args.includes('--force'))) {
                 return message.reply('⚠️ نظام الخريطة معطل حالياً.').catch(() => {});
             }
 
-            // التحقق من صلاحيات البوت في القناة
-            if (!message.channel.permissionsFor(client.user).has(['SendMessages', 'AttachFiles', 'EmbedLinks'])) {
+            // التحقق من صلاحيات البوت في القناة (تخطي في حالة الإرسال التلقائي للخاص)
+            if (!isAutomatic && !message.channel.permissionsFor(client.user).has(['SendMessages', 'AttachFiles', 'EmbedLinks'])) {
                 return console.log(`🚫 نقص في الصلاحيات لإرسال الخريطة في قناة: ${message.channel.name}`);
             }
 
@@ -66,7 +72,8 @@ module.exports = {
             if (config.buttons && config.buttons.length > 0) {
                 let currentRow = new ActionRowBuilder();
                 config.buttons.slice(0, 25).forEach((btn, index) => {
-                    if (index > 0 && index % 5 === 0) {
+                    // إذا كان الزر يحتاج سطر جديد أو وصلنا لـ 5 أزرار في الصف
+                    if ((index > 0 && index % 5 === 0) || (btn.newline && currentRow.components.length > 0)) {
                         rows.push(currentRow);
                         currentRow = new ActionRowBuilder();
                     }
@@ -74,7 +81,7 @@ module.exports = {
                     const button = new ButtonBuilder()
                         .setCustomId(`map_btn_${index}`)
                         .setLabel(btn.label || 'زر بدون اسم')
-                        .setStyle(ButtonStyle.Secondary);
+                        .setStyle(btn.style || ButtonStyle.Secondary);
                     
                     if (btn.emoji) {
                         button.setEmoji(btn.emoji);
@@ -85,17 +92,23 @@ module.exports = {
                 if (currentRow.components.length > 0) rows.push(currentRow);
             }
 
-            await message.channel.send({
-                content: config.welcomeMessage || 'مرحباً بك في السيرفر!',
+            const sendOptions = {
+                content: (config.welcomeMessage && config.welcomeMessage.trim() !== '') ? config.welcomeMessage : null,
                 files: [attachment],
                 components: rows
-            }).catch(err => {
-                if (err.code === 50007) {
-                    console.log('🚫 لا يمكن إرسال الخريطة في الخاص للمستخدم.');
-                } else {
-                    console.error('Error sending map message:', err);
-                }
-            });
+            };
+
+            if (message.send) {
+                await message.send(sendOptions).catch(err => console.error('Error sending map (send):', err));
+            } else {
+                await message.channel.send(sendOptions).catch(err => {
+                    if (err.code === 50007) {
+                        console.log('🚫 لا يمكن إرسال الخريطة في الخاص للمستخدم.');
+                    } else {
+                        console.error('Error sending map message:', err);
+                    }
+                });
+            }
         } catch (error) {
             console.error('❌ خطأ في تنفيذ أمر الخريطة:', error.message);
         }

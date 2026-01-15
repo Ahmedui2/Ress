@@ -1,4 +1,4 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 
@@ -17,7 +17,7 @@ function loadAllConfigs() {
     } catch (e) {
         console.error('Error loading map config in setup:', e.message);
     }
-    return { global: { enabled: false, imageUrl: 'https://i.ibb.co/pP9GzD7/default-map.png', welcomeMessage: 'مرحباً بك!', buttons: [] } };
+    return { global: { enabled: false, imageUrl: 'https://i.ibb.co/pP9GzD7/default-map.png', welcomeMessage: '** Welcome **', buttons: [] } };
 }
 
 function saveAllConfigs(allConfigs) {
@@ -59,30 +59,35 @@ module.exports = {
             
             const configKey = targetChannel ? `channel_${targetChannel.id}` : 'global';
             const allConfigs = loadAllConfigs();
-            let config = allConfigs[configKey] || { enabled: false, imageUrl: 'https://i.ibb.co/pP9GzD7/default-map.png', welcomeMessage: 'مرحباً بك!', buttons: [] };
+            let config = allConfigs[configKey] || { enabled: false, imageUrl: 'https://i.ibb.co/pP9GzD7/default-map.png', welcomeMessage: '', buttons: [] };
 
             const sendMainEmbed = async (msgOrInteraction) => {
                 const colorManager = require('../utils/colorManager.js');
                 const embed = new EmbedBuilder()
-                    .setTitle(targetChannel ? `⚙️ إعدادات خريطة روم: ${targetChannel.name}` : '⚙️ إعدادات خريطة السيرفر العامة')
-                    .setDescription(`**الحالة:** ${config.enabled ? '✅ مفعل' : '❌ معطل'}\n**الرسالة:** ${config.welcomeMessage}\n**عدد الأزرار:** ${config.buttons.length}/25\n\n*ملاحظة: هذه الإعدادات ${targetChannel ? 'خاصة بهذا الروم فقط' : 'عامة (تُستخدم في الخاص)'}.*`)
+                    .setTitle(targetChannel ? `⚙️ إعدادات خريطة روم : ${targetChannel.name}` : '⚙️ إعدادات خريطة السيرفر العامة')
+                    .setDescription(`**الحالة :** ${config.enabled ? '✅ مفعل' : '❌ معطل'}\n**الرسالة :** ${config.welcomeMessage || 'لا يوجد نص'}\n**عدد الأزرار :** ${config.buttons.length}/25\n\n*ملاحظة: هذه الإعدادات ${targetChannel ? 'خاصة بهذا الروم فقط' : 'عامة (تُستخدم في الخاص)'}.*`)
                     .setImage(config.imageUrl)
                     .setColor(colorManager.getColor('primary'))
                     .setFooter({ text: 'نظام الخريطة التفاعلي • Ress Bot' });
 
                 const row1 = new ActionRowBuilder().addComponents(
                     new ButtonBuilder().setCustomId('toggle_map').setLabel(config.enabled ? 'تعطيل' : 'تفعيل').setStyle(config.enabled ? ButtonStyle.Danger : ButtonStyle.Success),
-                    new ButtonBuilder().setCustomId('edit_image').setLabel('تغيير الصورة').setStyle(ButtonStyle.Primary),
-                    new ButtonBuilder().setCustomId('edit_msg').setLabel('تعديل الرسالة').setStyle(ButtonStyle.Primary)
+                    new ButtonBuilder().setCustomId('add_button').setLabel('إضافة زر').setStyle(ButtonStyle.Secondary).setDisabled(config.buttons.length >= 25),
+                    new ButtonBuilder().setCustomId('reorder_buttons').setLabel('ترتيب الأزرار').setStyle(ButtonStyle.Secondary).setDisabled(config.buttons.length < 2)
                 );
 
                 const row2 = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId('add_button').setLabel('إضافة زر').setStyle(ButtonStyle.Secondary).setDisabled(config.buttons.length >= 25),
-                    new ButtonBuilder().setCustomId('manage_emojis').setLabel('إدارة الإيموجيات').setStyle(ButtonStyle.Secondary).setDisabled(config.buttons.length === 0),
-                    new ButtonBuilder().setCustomId('clear_buttons').setLabel('مسح الأزرار').setStyle(ButtonStyle.Danger)
+                    new ButtonBuilder().setCustomId('manage_emojis').setLabel(' الإيموجيات').setStyle(ButtonStyle.Secondary).setDisabled(config.buttons.length === 0),
+                    new ButtonBuilder().setCustomId('edit_image').setLabel(' الصورة').setStyle(ButtonStyle.Secondary),
+                    new ButtonBuilder().setCustomId('edit_msg').setLabel(' الرسالة').setStyle(ButtonStyle.Secondary)
                 );
 
-                const options = { embeds: [embed], components: [row1, row2] };
+                const row3 = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId('clear_buttons').setLabel('مسح زر').setStyle(ButtonStyle.Danger),
+                    new ButtonBuilder().setCustomId('preview_map').setLabel('معاينة').setStyle(ButtonStyle.Success)
+                );
+
+                const options = { embeds: [embed], components: [row1, row2, row3] };
                 
                 try {
                     // إذا كان لدينا تفاعل (Interaction)
@@ -118,11 +123,62 @@ module.exports = {
 
             collector.on('collect', async i => {
                 try {
-                    const currentAll = loadAllConfigs();
+                    const allConfigs = loadAllConfigs();
+                    if (i.isStringSelectMenu() && i.customId === 'delete_buttons_emoji') {
+                        const selectedIndices = i.values.map(v => parseInt(v));
+                        config.buttons.forEach((btn, idx) => {
+                            if (selectedIndices.includes(idx)) {
+                                btn.emoji = null;
+                            }
+                        });
+                        allConfigs[configKey] = config;
+                        saveAllConfigs(allConfigs);
+                        
+                        const embed = EmbedBuilder.from(i.message.embeds[0] || new EmbedBuilder())
+                            .setDescription(`✅ تم حذف الإيموجيات المختارة (${selectedIndices.length} أزرار).`);
+                        
+                        await i.update({ embeds: [embed] });
+                        return;
+                    }
+
+                    if (i.isStringSelectMenu() && i.customId === 'select_buttons_emoji') {
+                        const selectedIndices = i.values.map(v => parseInt(v));
+                        
+                        // طلب الإيموجي عبر رسالة جديدة بدلاً من مسح الإيمبد
+                        const promptMsg = await i.reply({ content: `📝 أرسل الإيموجي الذي تريد وضعه لـ ${selectedIndices.length} أزرار مختارة الآن :`, fetchReply: true });
+
+                        const msgFilter = m => m.author.id === message.author.id;
+                        try {
+                            const collected = await i.channel.awaitMessages({ filter: msgFilter, time: 30000, max: 1, errors: ['time'] });
+                            const emojiStr = collected.first().content.trim();
+                            
+                            config.buttons.forEach((btn, idx) => {
+                                if (selectedIndices.includes(idx)) {
+                                    btn.emoji = emojiStr;
+                                }
+                            });
+
+                            const latestConfigs = loadAllConfigs();
+                            latestConfigs[configKey] = config;
+                            saveAllConfigs(latestConfigs);
+
+                            await collected.first().delete().catch(() => {});
+                            await promptMsg.delete().catch(() => {});
+
+                            const embed = EmbedBuilder.from(i.message.embeds[0] || new EmbedBuilder())
+                                .setDescription(`✅ تم وضع الإيموجي (${emojiStr}) لـ ${selectedIndices.length} أزرار.`);
+                            
+                            await i.editReply({ content: '', embeds: [embed], components: i.message.components });
+                        } catch (e) {
+                            await promptMsg.edit({ content: '⌛ انتهى الوقت، لم يتم إرسال إيموجي.', components: [] }).catch(() => {});
+                        }
+                        return;
+                    }
+
                     if (i.customId === 'toggle_map') {
                         config.enabled = !config.enabled;
-                        currentAll[configKey] = config;
-                        saveAllConfigs(currentAll);
+                        allConfigs[configKey] = config;
+                        saveAllConfigs(allConfigs);
                         await sendMainEmbed(i);
                     } else if (i.customId === 'edit_image') {
                         const modal = new ModalBuilder().setCustomId('modal_image').setTitle('تغيير صورة الخريطة');
@@ -131,7 +187,7 @@ module.exports = {
                         await i.showModal(modal);
                     } else if (i.customId === 'edit_msg') {
                         const modal = new ModalBuilder().setCustomId('modal_msg').setTitle('تعديل رسالة الترحيب');
-                        const input = new TextInputBuilder().setCustomId('welcome_text').setLabel('النص').setStyle(TextInputStyle.Paragraph).setValue(config.welcomeMessage).setRequired(true);
+                        const input = new TextInputBuilder().setCustomId('welcome_text').setLabel('النص').setStyle(TextInputStyle.Paragraph).setValue(config.welcomeMessage || '').setRequired(false);
                         modal.addComponents(new ActionRowBuilder().addComponents(input));
                         await i.showModal(modal);
                     } else if (i.customId === 'add_button') {
@@ -151,20 +207,293 @@ module.exports = {
                         );
                         await i.showModal(modal);
                     } else if (i.customId === 'manage_emojis') {
-                        const modal = new ModalBuilder().setCustomId('modal_bulk_emojis').setTitle('إدارة إيموجيات الأزرار');
-                        const input = new TextInputBuilder()
-                            .setCustomId('emojis_list')
-                            .setLabel('قائمة الإيموجيات (إيموجي لكل سطر)')
-                            .setStyle(TextInputStyle.Paragraph)
-                            .setPlaceholder('ضع الإيموجيات هنا بالترتيب.\nاترك السطر فارغاً لإزالة إيموجي زر معين.\nاكتب "clear" في أول سطر لإزالة الكل.')
-                            .setRequired(true);
+                        if (config.buttons.length === 0) {
+                            return await i.reply({ content: '❌ لا يوجد أزرار لإدارة إيموجياتها.', ephemeral: true });
+                        }
+
+                        const options = config.buttons.map((btn, idx) => ({
+                            label: btn.label,
+                            value: idx.toString(),
+                            description: btn.emoji ? `الإيموجي الحالي : ${btn.emoji}` : 'لا يوجد إيموجي'
+                        }));
+
+                        const selectMenu = new StringSelectMenuBuilder()
+                            .setCustomId('select_buttons_emoji')
+                            .setPlaceholder('اختر الأزرار لتعديل أو إضافة إيموجياتها')
+                            .setMinValues(1)
+                            .setMaxValues(config.buttons.length)
+                            .addOptions(options);
+
+                        const row = new ActionRowBuilder().addComponents(selectMenu);
+
+                        const removeRow = new ActionRowBuilder().addComponents(
+                            new ButtonBuilder()
+                                .setCustomId('remove_emojis_select')
+                                .setLabel('حذف إيموجيات أزرار معينة')
+                                .setStyle(ButtonStyle.Danger),
+                            new ButtonBuilder()
+                                .setCustomId('back_to_main')
+                                .setLabel('رجوع')
+                                .setStyle(ButtonStyle.Secondary)
+                        );
                         
-                        input.setValue(config.buttons.map(b => b.emoji || '').join('\n'));
+                        await i.update({ 
+                            content: '📌 اختر الأزرار التي تريد وضع إيموجي لها، أو اختر حذف الإيموجيات:',
+                            embeds: [], 
+                            components: [row, removeRow] 
+                        });
+                    } else if (i.customId === 'remove_emojis_select') {
+                        const options = config.buttons.map((btn, idx) => ({
+                            label: btn.label,
+                            value: idx.toString(),
+                            description: btn.emoji ? `الإيموجي الحالي: ${btn.emoji}` : 'لا يوجد إيموجي'
+                        }));
+
+                        const selectMenu = new StringSelectMenuBuilder()
+                            .setCustomId('delete_buttons_emoji')
+                            .setPlaceholder('اختر الأزرار التي تريد حذف إيموجيها')
+                            .setMinValues(1)
+                            .setMaxValues(config.buttons.length)
+                            .addOptions(options);
+
+                        const row = new ActionRowBuilder().addComponents(selectMenu);
+                        await i.update({ content: '🗑️ اختر الأزرار التي تريد مسح إيموجياتها:', components: [row] });
+                    } else if (i.customId === 'back_to_main') {
+                        await sendMainEmbed(i);
+                    } else if (i.customId === 'preview_map') {
+                        // إرسال رد مؤقت فوراً لتجنب خطأ InteractionNotReplied
+                        await i.deferReply({ ephemeral: true });
                         
-                        modal.addComponents(new ActionRowBuilder().addComponents(input));
-                        await i.showModal(modal);
+                        const mapCommand = i.client.commands.get('map');
+                        if (mapCommand) {
+                            const fakeMsg = {
+                                guild: i.guild,
+                                channel: i.channel,
+                                author: i.user,
+                                client: i.client,
+                                isAutomatic: true,
+                                isGlobalOnly: targetChannel ? false : true,
+                                send: async (opts) => {
+                                    opts.ephemeral = true;
+                                    return await i.editReply(opts);
+                                },
+                                reply: async (opts) => {
+                                    opts.ephemeral = true;
+                                    return await i.editReply(opts);
+                                },
+                                react: async () => {},
+                                permissionsFor: () => ({ has: () => true })
+                            };
+                            await mapCommand.execute(fakeMsg, [], { client: i.client, BOT_OWNERS });
+                        } else {
+                            await i.editReply({ content: '❌ تعذر العثور على أمر المعاينة.', ephemeral: true });
+                        }
+                    } else if (i.customId === 'reorder_buttons') {
+                        const options = config.buttons.map((btn, idx) => ({
+                            label: `${idx + 1}. ${btn.label}`,
+                            value: idx.toString(),
+                            description: `نقل الزر : ${btn.label}`
+                        }));
+
+                        const selectMenu = new StringSelectMenuBuilder()
+                            .setCustomId('select_reorder_btn')
+                            .setPlaceholder('اختر الزر الذي تريد تحريكه')
+                            .addOptions(options);
+
+                        await i.update({
+                            content: '🔄 اختر الزر الذي تريد تغيير مكانه:',
+                            embeds: [],
+                            components: [new ActionRowBuilder().addComponents(selectMenu), new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('back_to_main').setLabel('رجوع').setStyle(ButtonStyle.Secondary))]
+                        });
                     } else if (i.customId === 'clear_buttons') {
+                        if (config.buttons.length === 0) {
+                            return await i.reply({ content: '❌ لا يوجد أزرار لحذفها.', ephemeral: true });
+                        }
+
+                        const options = config.buttons.map((btn, idx) => ({
+                            label: btn.label,
+                            value: idx.toString(),
+                            description: `حذف الزر : ${btn.label}`
+                        }));
+
+                        const selectMenu = new StringSelectMenuBuilder()
+                            .setCustomId('delete_buttons_select')
+                            .setPlaceholder('اختر الأزرار التي تريد حذفها')
+                            .setMinValues(1)
+                            .setMaxValues(config.buttons.length)
+                            .addOptions(options);
+
+                        const row1 = new ActionRowBuilder().addComponents(selectMenu);
+                        const row2 = new ActionRowBuilder().addComponents(
+                            new ButtonBuilder().setCustomId('clear_all_confirm').setLabel('حذف الكل').setStyle(ButtonStyle.Danger),
+                            new ButtonBuilder().setCustomId('back_to_main').setLabel('رجوع').setStyle(ButtonStyle.Secondary)
+                        );
+
+                        await i.update({
+                            content: '🗑️ اختر الأزرار التي تريد حذفها (يمكنك اختيار أكثر من زر)، أو اختر "حذف الكل":',
+                            embeds: [],
+                            components: [row1, row2]
+                        });
+                    } else if (i.isStringSelectMenu() && i.customId === 'delete_buttons_select') {
+                        const selectedIndices = i.values.map(v => parseInt(v));
+                        config.buttons = config.buttons.filter((_, idx) => !selectedIndices.includes(idx));
+                        
+                        const all = loadAllConfigs();
+                        all[configKey] = config;
+                        saveAllConfigs(all);
+
+                        const embed = new EmbedBuilder()
+                            .setDescription(`✅ تم حذف ${selectedIndices.length} أزرار بنجاح.`)
+                            .setColor('#ff0000');
+                        
+                        await i.update({ content: '', embeds: [embed], components: [] });
+                        // إعادة استخدام نفس التفاعل لتحديث المنيو لضمان استمرار الكوليكتور
+                        setTimeout(() => {
+                            sendMainEmbed(i);
+                        }, 1500);
+                        return;
+                    } else if (i.customId === 'clear_all_confirm') {
                         config.buttons = [];
+                        const all = loadAllConfigs();
+                        all[configKey] = config;
+                        saveAllConfigs(all);
+
+                        const embed = new EmbedBuilder()
+                            .setDescription('✅ تم مسح جميع الأزرار بنجاح.')
+                            .setColor('#ff0000');
+
+                        await i.update({ content: '', embeds: [embed], components: [] });
+                        setTimeout(() => {
+                            sendMainEmbed(i);
+                        }, 1500);
+                        return;
+                    } else if (i.isStringSelectMenu() && i.customId === 'select_reorder_btn') {
+                        const idx = parseInt(i.values[0]);
+                        const btn = config.buttons[idx];
+                        
+                        const row = new ActionRowBuilder().addComponents(
+                            new ButtonBuilder().setCustomId(`move_up_${idx}`).setLabel('⬆️ للأعلى').setStyle(ButtonStyle.Primary).setDisabled(idx === 0),
+                            new ButtonBuilder().setCustomId(`move_down_${idx}`).setLabel('⬇️ للأسفل').setStyle(ButtonStyle.Primary).setDisabled(idx === config.buttons.length - 1),
+                            new ButtonBuilder().setCustomId(`toggle_newline_${idx}`).setLabel(btn.newline ? ' إلغاء سطر جديد' : ' سطر جديد').setStyle(btn.newline ? ButtonStyle.Danger : ButtonStyle.Success),
+                            new ButtonBuilder().setCustomId(`change_color_${idx}`).setLabel(' تغيير اللون').setStyle(ButtonStyle.Secondary),
+                            new ButtonBuilder().setCustomId('back_to_reorder').setLabel('رجوع').setStyle(ButtonStyle.Secondary)
+                        );
+
+                        await i.update({
+                            content: `🔄 إدارة الزر : **${btn.label}** (المكان الحالي : ${idx + 1})\nاللون الحالي : ${btn.style === ButtonStyle.Success ? 'أخضر' : (btn.style === ButtonStyle.Danger ? 'أحمر' : (btn.style === ButtonStyle.Primary ? 'أزرق' : 'رمادي'))}\nالحالة: ${btn.newline ? 'هذا الزر يبدأ في سطر جديد' : 'هذا الزر بجانب ما قبله'}`,
+                            components: [row]
+                        });
+                    } else if (i.customId.startsWith('toggle_newline_')) {
+                        const idx = parseInt(i.customId.split('_').pop());
+                        config.buttons[idx].newline = !config.buttons[idx].newline;
+                        
+                        const all = loadAllConfigs();
+                        all[configKey] = config;
+                        saveAllConfigs(all);
+
+                        const btn = config.buttons[idx];
+                        const row = new ActionRowBuilder().addComponents(
+                            new ButtonBuilder().setCustomId(`move_up_${idx}`).setLabel('⬆️ للأعلى').setStyle(ButtonStyle.Primary).setDisabled(idx === 0),
+                            new ButtonBuilder().setCustomId(`move_down_${idx}`).setLabel('⬇️ للأسفل').setStyle(ButtonStyle.Primary).setDisabled(idx === config.buttons.length - 1),
+                            new ButtonBuilder().setCustomId(`toggle_newline_${idx}`).setLabel(btn.newline ? ' إلغاء سطر جديد' :'سطر جديد').setStyle(btn.newline ? ButtonStyle.Danger : ButtonStyle.Success),
+                            new ButtonBuilder().setCustomId(`change_color_${idx}`).setLabel('🎨 تغيير اللون').setStyle(ButtonStyle.Secondary),
+                            new ButtonBuilder().setCustomId('back_to_reorder').setLabel('رجوع').setStyle(ButtonStyle.Secondary)
+                        );
+                        await i.update({
+                            content: `✅ تم ${btn.newline ? 'تفعيل' : 'إلغاء'} السطر الجديد للزر.\n🔄 إدارة الزر : **${btn.label}**`,
+                            components: [row]
+                        });
+                    } else if (i.customId.startsWith('change_color_')) {
+                        const idx = parseInt(i.customId.split('_').pop());
+                        const row = new ActionRowBuilder().addComponents(
+                            new ButtonBuilder().setCustomId(`set_color_${idx}_${ButtonStyle.Primary}`).setLabel('أزرق (Primary)').setStyle(ButtonStyle.Primary),
+                            new ButtonBuilder().setCustomId(`set_color_${idx}_${ButtonStyle.Success}`).setLabel('أخضر (Success)').setStyle(ButtonStyle.Success),
+                            new ButtonBuilder().setCustomId(`set_color_${idx}_${ButtonStyle.Danger}`).setLabel('أحمر (Danger)').setStyle(ButtonStyle.Danger),
+                            new ButtonBuilder().setCustomId(`set_color_${idx}_${ButtonStyle.Secondary}`).setLabel('رمادي (Secondary)').setStyle(ButtonStyle.Secondary),
+                            new ButtonBuilder().setCustomId(`select_reorder_btn_back_${idx}`).setLabel('رجوع').setStyle(ButtonStyle.Secondary)
+                        );
+                        await i.update({ content: '🎨 اختر لون الزر الجديد:', components: [row] });
+                    } else if (i.customId.startsWith('set_color_')) {
+                        const parts = i.customId.split('_');
+                        const idx = parseInt(parts[2]);
+                        const style = parseInt(parts[3]);
+                        
+                        config.buttons[idx].style = style;
+                        const all = loadAllConfigs();
+                        all[configKey] = config;
+                        saveAllConfigs(all);
+
+                        // العودة لصفحة إدارة الزر
+                        const btn = config.buttons[idx];
+                        const row = new ActionRowBuilder().addComponents(
+                            new ButtonBuilder().setCustomId(`move_up_${idx}`).setLabel('⬆️ للأعلى').setStyle(ButtonStyle.Primary).setDisabled(idx === 0),
+                            new ButtonBuilder().setCustomId(`move_down_${idx}`).setLabel('⬇️ للأسفل').setStyle(ButtonStyle.Primary).setDisabled(idx === config.buttons.length - 1),
+                            new ButtonBuilder().setCustomId(`change_color_${idx}`).setLabel('🎨 تغيير اللون').setStyle(ButtonStyle.Secondary),
+                            new ButtonBuilder().setCustomId('back_to_reorder').setLabel('رجوع').setStyle(ButtonStyle.Secondary)
+                        );
+                        await i.update({
+                            content: `✅ تم تغيير لون الزر إلى ${style === ButtonStyle.Success ? 'الأخضر' : (style === ButtonStyle.Danger ? 'الأحمر' : (style === ButtonStyle.Primary ? 'الأزرق' : 'الرمادي'))}.\n🔄 إدارة الزر: **${btn.label}**`,
+                            components: [row]
+                        });
+                    } else if (i.customId.startsWith('select_reorder_btn_back_')) {
+                        const idx = parseInt(i.customId.split('_').pop());
+                        const btn = config.buttons[idx];
+                        const row = new ActionRowBuilder().addComponents(
+                            new ButtonBuilder().setCustomId(`move_up_${idx}`).setLabel('⬆️ للأعلى').setStyle(ButtonStyle.Primary).setDisabled(idx === 0),
+                            new ButtonBuilder().setCustomId(`move_down_${idx}`).setLabel('⬇️ للأسفل').setStyle(ButtonStyle.Primary).setDisabled(idx === config.buttons.length - 1),
+                            new ButtonBuilder().setCustomId(`change_color_${idx}`).setLabel('🎨 تغيير اللون').setStyle(ButtonStyle.Secondary),
+                            new ButtonBuilder().setCustomId('back_to_reorder').setLabel('رجوع').setStyle(ButtonStyle.Secondary)
+                        );
+                        await i.update({ content: `🔄 إدارة الزر: **${btn.label}**`, components: [row] });
+                    } else if (i.customId.startsWith('move_up_') || i.customId.startsWith('move_down_')) {
+                        const isUp = i.customId.startsWith('move_up_');
+                        const idx = parseInt(i.customId.split('_').pop());
+                        const newIdx = isUp ? idx - 1 : idx + 1;
+
+                        // تبديل الأماكن
+                        const temp = config.buttons[idx];
+                        config.buttons[idx] = config.buttons[newIdx];
+                        config.buttons[newIdx] = temp;
+
+                        const all = loadAllConfigs();
+                        all[configKey] = config;
+                        saveAllConfigs(all);
+
+                        // إعادة تحديث قائمة الترتيب
+                        const options = config.buttons.map((btn, idx) => ({
+                            label: `${idx + 1}. ${btn.label}`,
+                            value: idx.toString(),
+                            description: `نقل الزر : ${btn.label}`
+                        }));
+                        const selectMenu = new StringSelectMenuBuilder().setCustomId('select_reorder_btn').setPlaceholder('اختر الزر الذي تريد تحريكه').addOptions(options);
+                        await i.update({
+                            content: `✅ تم تحريك الزر ${isUp ? 'للأعلى' : 'للأسفل'}. يمكنك اختيار زر آخر للترتيب:`,
+                            components: [new ActionRowBuilder().addComponents(selectMenu), new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('back_to_main').setLabel('رجوع').setStyle(ButtonStyle.Secondary))]
+                        });
+                    } else if (i.customId === 'back_to_reorder') {
+                        const options = config.buttons.map((btn, idx) => ({
+                            label: `${idx + 1}. ${btn.label}`,
+                            value: idx.toString(),
+                            description: `نقل الزر : ${btn.label}`
+                        }));
+                        const selectMenu = new StringSelectMenuBuilder().setCustomId('select_reorder_btn').setPlaceholder('اختر الزر الذي تريد تحريكه').addOptions(options);
+                        await i.update({
+                            content: '🔄 اختر الزر الذي تريد تغيير مكانه:',
+                            components: [new ActionRowBuilder().addComponents(selectMenu), new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('back_to_main').setLabel('رجوع').setStyle(ButtonStyle.Secondary))]
+                        });
+                    } else if (i.customId === 'clear_buttons') {
+                        const confirmRow = new ActionRowBuilder().addComponents(
+                            new ButtonBuilder().setCustomId('confirm_clear_buttons').setLabel('نعم، احذف الكل').setStyle(ButtonStyle.Danger),
+                            new ButtonBuilder().setCustomId('back_to_main').setLabel('إلغاء').setStyle(ButtonStyle.Secondary)
+                        );
+                        await i.update({
+                            content: '⚠️ **هل أنت متأكد من رغبتك في مسح كافة الأزرار؟** لا يمكن التراجع عن هذا الإجراء.',
+                            embeds: [],
+                            components: [confirmRow]
+                        });
+                    } else if (i.customId === 'confirm_clear_buttons') {
+                        config.buttons = [];
+                        const currentAll = loadAllConfigs();
                         currentAll[configKey] = config;
                         saveAllConfigs(currentAll);
                         await sendMainEmbed(i);
@@ -208,11 +537,8 @@ module.exports = {
                         }
                     } else if (mi.customId === 'modal_msg') {
                         const newMsg = mi.fields.getTextInputValue('welcome_text').trim();
-                        if (newMsg.length < 2) {
-                            return await mi.reply({ content: '❌ فشل: الرسالة قصيرة جداً.', ephemeral: true });
-                        }
-
-                        config.welcomeMessage = newMsg;
+                        
+                        config.welcomeMessage = newMsg || null;
                         currentAll[configKey] = config;
                         if (saveAllConfigs(currentAll)) {
                             await sendMainEmbed(mi);
