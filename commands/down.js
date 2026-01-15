@@ -309,29 +309,26 @@ async function handleInteraction(interaction, context) {
 
         // Check interaction validity
         if (interaction.replied || interaction.deferred) {
-            console.log('تم تجاهل تفاعل متكرر في down');
+            console.log('Interaction already processed');
             return;
         }
 
-    // Defer immediately if not a modal OR certain select menus that lead to modals
-    const isModalTrigger = 
-        (interaction.isStringSelectMenu() && (customId === 'down_role_selection' || customId === 'down_select_down_to_modify' || customId === 'down_select_down_to_end')) ||
-        (interaction.isModalSubmit());
+        // Defer immediately if not a modal
+        const isModalTrigger = 
+            (interaction.isStringSelectMenu() && (customId === 'down_role_selection' || customId === 'down_select_down_to_modify' || customId === 'down_select_down_to_end')) ||
+            (interaction.isModalSubmit()) || 
+            (interaction.isUserSelectMenu() && (customId === 'down_show_user_records' || customId === 'down_selected_user' || customId === 'down_select_user_for_end_down'));
 
-    if (!isModalTrigger) {
-        // Already deferred/replied check
-        if (interaction.replied || interaction.deferred) return;
-        // Check if the interaction is a StringSelectMenu and if it's one of the setup ones that might need to update the message
-        const isSetupSelect = customId.startsWith('down_setup_');
-        // Also exclude the main menu if it leads to a user select
-        const isMainMenu = customId === 'down_main_menu';
-        // Also exclude user selection for duration modify since it leads to down_select_down_to_modify
-        const isDurationUserSelect = customId === 'down_select_user_for_duration_modify';
-        
-        if (!isSetupSelect && !isMainMenu && !isDurationUserSelect) {
-            await interaction.deferReply({ ephemeral: true }).catch(() => {});
+        if (!isModalTrigger) {
+            // Check if the interaction is a StringSelectMenu and if it's one of the setup ones that might need to update the message
+            const isSetupSelect = customId.startsWith('down_setup_');
+            const isMainMenu = customId === 'down_main_menu';
+            const isDurationUserSelect = customId === 'down_select_user_for_duration_modify';
+            
+            if (!isSetupSelect && !isMainMenu && !isDurationUserSelect) {
+                await interaction.deferReply({ ephemeral: true }).catch(err => console.log('Defer error:', err.message));
+            }
         }
-    }
         console.log(`معالجة تفاعل down: ${customId}`);
 
         // Handle quick admin actions
@@ -777,12 +774,23 @@ async function handleMainMenu(interaction, context) {
     const { client } = context;
 
     const respond = async (data) => {
-        if (interaction.deferred || interaction.replied) {
-            return await interaction.editReply(data);
-        } else {
-            return await interaction.reply({ ...data, ephemeral: true });
+        try {
+            if (interaction.deferred || interaction.replied) {
+                return await interaction.editReply(data);
+            } else {
+                return await interaction.reply({ ...data, ephemeral: true });
+            }
+        } catch (e) {
+            console.error('Respond error:', e.message);
         }
     };
+
+    // Defer early to prevent timeout
+    try {
+        if (!interaction.deferred && !interaction.replied) {
+            await interaction.deferReply({ ephemeral: true }).catch(() => {});
+        }
+    } catch (e) {}
 
     switch (selectedValue) {
         case 'remove_role':
@@ -1024,6 +1032,17 @@ async function handleUserDowns(interaction, context, respond) {
 async function handleDownInteractions(interaction, context) {
     const customId = interaction.customId;
 
+    try {
+        const isModalTrigger = 
+            (interaction.isStringSelectMenu() && (customId === 'down_role_selection' || customId === 'down_select_down_to_modify' || customId === 'down_select_down_to_end')) ||
+            (interaction.isModalSubmit()) || 
+            (interaction.isUserSelectMenu() && (customId === 'down_show_user_records' || customId === 'down_selected_user' || customId === 'down_select_user_for_end_down'));
+
+        if (!interaction.replied && !interaction.deferred && !isModalTrigger) {
+            await interaction.deferReply({ ephemeral: true }).catch(() => {});
+        }
+    } catch (e) {}
+
     // Handle user selection for remove role
     if (interaction.isUserSelectMenu() && customId === 'down_selected_user') {
         const selectedUserId = interaction.values[0];
@@ -1043,7 +1062,11 @@ async function handleDownInteractions(interaction, context) {
                     `• هل العضو لديه رولات مُضافة في \`adminroles\`؟\n` +
                     `• هل الرولات غير محمية (ليست رولات بوت أو نيترو)؟`);
 
-            await interaction.editReply({ embeds: [noRolesEmbed] });
+            if (interaction.replied || interaction.deferred) {
+                await interaction.editReply({ embeds: [noRolesEmbed] });
+            } else {
+                await interaction.reply({ embeds: [noRolesEmbed], ephemeral: true });
+            }
             return;
         }
 
@@ -1063,14 +1086,18 @@ async function handleDownInteractions(interaction, context) {
 
         const selectRow = new ActionRowBuilder().addComponents(roleSelect);
 
-    const response = {
-        content: ` **اختر الرول المراد سحبه من** <@${selectedUserId}>**:**`,
-        components: [selectRow],
-        ephemeral: true
-    };
+        const response = {
+            content: ` **اختر الرول المراد سحبه من** <@${selectedUserId}>**:**`,
+            components: [selectRow],
+            ephemeral: true
+        };
 
-    await interaction.editReply(response);
-    return;
+        if (interaction.replied || interaction.deferred) {
+            await interaction.editReply(response);
+        } else {
+            await interaction.reply(response);
+        }
+        return;
     }
 
     if (interaction.isStringSelectMenu() && customId === 'down_role_selection') {
@@ -1201,10 +1228,17 @@ async function handleDownInteractions(interaction, context) {
             }
         }
 
+        const respond = async (data) => {
+            if (interaction.deferred || interaction.replied) {
+                return await interaction.editReply(data);
+            } else {
+                return await interaction.reply({ ...data, ephemeral: true });
+            }
+        };
+
         if (userDowns.length === 0) {
-            await interaction.editReply({
-                content: ` **العضو** <@${selectedUserId}> **ليس لديه أي داونات نشطة حالياً لإنهاءها!**`,
-                ephemeral: true
+            await respond({
+                content: ` **العضو** <@${selectedUserId}> **ليس لديه أي داونات نشطة حالياً لإنهاءها!**`
             });
             return;
         }
@@ -1230,14 +1264,11 @@ async function handleDownInteractions(interaction, context) {
 
         const selectRow = new ActionRowBuilder().addComponents(roleSelect);
 
-    const response = {
-        content: ` **اختر الداون الذي تريد إنهاءه للعضو** <@${selectedUserId}>:`,
-        components: [selectRow],
-        ephemeral: true
-    };
-
-    await interaction.editReply(response);
-    return;
+        await respond({
+            content: ` **اختر الداون الذي تريد إنهاءه للعضو** <@${selectedUserId}>:`,
+            components: [selectRow]
+        });
+        return;
     }
 
     // This code is now handled above in the corrected section
@@ -1782,6 +1813,12 @@ async function handleDownInteractions(interaction, context) {
 
     // Handle user selection for showing records
     if (interaction.isUserSelectMenu() && customId === 'down_show_user_records') {
+        try {
+            if (!interaction.deferred && !interaction.replied) {
+                await interaction.deferReply({ ephemeral: true }).catch(() => {});
+            }
+        } catch (e) {}
+
         const selectedUserId = interaction.values[0];
         const downManager = require('../utils/downManager');
 
