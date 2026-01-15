@@ -1,4 +1,4 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, ChannelType, RoleSelectMenuBuilder } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, ChannelType, RoleSelectMenuBuilder, ChannelSelectMenuBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const colorManager = require('../utils/colorManager');
@@ -103,15 +103,10 @@ async function handleSetActiveInteraction(interaction) {
             const row = new ActionRowBuilder().addComponents(roleMenu);
             await interaction.update({ content: '**الرجاء اختيار الرولات التي ستكون متاحة كـ "رولات تفاعلية":**', embeds: [], components: [row] });
         } else if (value === 'set_channel') {
-            const channelMenu = new StringSelectMenuBuilder()
+            const channelMenu = new ChannelSelectMenuBuilder()
                 .setCustomId('setactive_select_channel')
                 .setPlaceholder('اختر الروم...')
-                .addOptions(
-                    interaction.guild.channels.cache
-                        .filter(c => c.type === ChannelType.GuildText)
-                        .first(25)
-                        .map(c => ({ label: `#${c.name}`, value: c.id }))
-                );
+                .addChannelTypes(ChannelType.GuildText);
             const row = new ActionRowBuilder().addComponents(channelMenu);
             await interaction.update({ content: '**الرجاء اختيار الروم التي سيتم فيها استقبال ومعالجة الطلبات:**', embeds: [], components: [row] });
         } else if (value === 'show_settings') {
@@ -126,7 +121,7 @@ async function handleSetActiveInteraction(interaction) {
                     { name: '🎭 الرولات التفاعلية', value: roles, inline: false },
                     { name: '📍 روم الطلبات', value: channel, inline: false }
                 )
-                .setColor('#00ff00');
+                .setColor(colorManager.getColor ? colorManager.getColor() : '#00ff00');
             
             const backButton = new ButtonBuilder().setCustomId('setactive_back').setLabel('رجوع').setStyle(ButtonStyle.Secondary);
             const row = new ActionRowBuilder().addComponents(backButton);
@@ -149,7 +144,7 @@ async function handleSetActiveInteraction(interaction) {
         const embed = new EmbedBuilder()
             .setTitle('⚙️ إعدادات الرولات التفاعلية')
             .setDescription('**الرجاء اختيار الإعداد الذي ترغب في تعديله من القائمة أدناه:**')
-            .setColor('#0099ff');
+            .setColor(colorManager.getColor ? colorManager.getColor() : '#0099ff');
         const menu = new StringSelectMenuBuilder()
             .setCustomId('setactive_main_menu')
             .setPlaceholder('اختر الإعداد...')
