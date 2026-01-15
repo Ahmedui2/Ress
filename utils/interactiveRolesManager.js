@@ -53,6 +53,14 @@ async function handleMessage(message) {
 
     if (!targetMember) return;
 
+    // Check if member already has any of the interactive roles
+    const hasInteractiveRole = targetMember.roles.cache.some(r => settings.settings.interactiveRoles.includes(r.id));
+    if (hasInteractiveRole) {
+        const reply = await message.channel.send(`⚠️ <@${targetId}> لديه بالفعل رولات تفاعلية.`);
+        setTimeout(() => reply.delete().catch(() => {}), 5000);
+        return;
+    }
+
     // Check cooldown
     const cooldown = settings.cooldowns[targetId];
     if (cooldown && Date.now() < cooldown) {
@@ -152,11 +160,17 @@ async function handleInteraction(interaction) {
             updatedEmbed = await createUserStatsEmbed(userStats, colorManager, true, null, `<@${request.requesterId}>`);
             updatedEmbed.setTitle(`🎭 طلب رول تفاعلي`).setDescription(`**Admin :** <@${request.requesterId}>\n**Member :** <@${targetId}>\n\n${request.originalContent}`);
         } else {
-            // Full view with specific category
-            updatedEmbed = await createUserStatsEmbed(userStats, colorManager, false);
-            updatedEmbed.setTitle(`🎭 تفاصيل العضو: ${userStats.mention.replace(/[<@!>]/g, '')}`);
-            // Here we could filter fields based on 'value' if createUserStatsEmbed supported it, 
-            // but for now we show the full stats embed as a detailed view.
+            // Full view with specific category matching admin-apply logic
+            updatedEmbed = await createUserStatsEmbed(userStats, colorManager, false, null, `<@${request.requesterId}>`, value);
+            
+            // Re-apply title and correct styling after createUserStatsEmbed
+            const targetMember = await interaction.guild.members.fetch(targetId).catch(() => null);
+            updatedEmbed.setTitle(`🎭 تفاصيل العضو: ${targetMember ? targetMember.user.username : targetId}`);
+            
+            // Add requester field if it's missing in some views
+            if (updatedEmbed.data && updatedEmbed.data.fields && !updatedEmbed.data.fields.some(f => f.name && f.name.includes('بواسطة'))) {
+                updatedEmbed.addFields({ name: 'بواسطة', value: `<@${request.requesterId}>`, inline: true });
+            }
         }
 
         await interaction.update({ embeds: [updatedEmbed] });
@@ -203,7 +217,7 @@ async function handleInteraction(interaction) {
                 const msg = await channel.messages.fetch(request.messageId).catch(() => null);
                 if (msg) {
                     const embed = EmbedBuilder.from(msg.embeds[0])
-                        .setColor('#00ff00')
+                        .setColor(colorManager.getColor ? colorManager.getColor() : '#00ff00')
                         .addFields({ name: 'الحالة', value: `✅ تم القبول بواسطة <@${interaction.user.id}>\nالرول الممنوح: <@&${roleId}>` });
                     await msg.edit({ embeds: [embed], components: [] });
                 }
@@ -253,7 +267,7 @@ async function handleInteraction(interaction) {
             const msg = await channel.messages.fetch(request.messageId).catch(() => null);
             if (msg) {
                 const embed = EmbedBuilder.from(msg.embeds[0])
-                    .setColor('#ff0000')
+                    .setColor(colorManager.getColor ? colorManager.getColor() : '#ff0000')
                     .addFields({ name: 'الحالة', value: `❌ تم الرفض بواسطة <@${interaction.user.id}>\n**السبب:** ${reason}` });
                 await msg.edit({ embeds: [embed], components: [] });
             }
