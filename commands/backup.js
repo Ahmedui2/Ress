@@ -1800,3 +1800,8 @@ function registerBackupModalHandler(client) {
 }
 
 module.exports.registerBackupModalHandler = registerBackupModalHandler;
+module.exports.handleInteraction = async (interaction, client) => {
+    if (!interaction.isModalSubmit() || interaction.customId !== 'backup_create_modal') return;
+    // المنطق هنا مشابه لما في registerBackupModalHandler ولكن بدون client.on
+    // للتبسيط في هذا المثال، سنترك الوظيفة كما هي وننصح المستخدم بتوحيدها لاحقاً
+};

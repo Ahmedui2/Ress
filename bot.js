@@ -33,6 +33,18 @@ const vacationManager = require('./utils/vacationManager');
 const promoteManager = require('./utils/promoteManager');
 const { handleAdminApplicationInteraction } = require('./commands/admin-apply.js');
 const interactiveRolesManager = require('./utils/interactiveRolesManager.js');
+const interactionRouter = require('./utils/interactionRouter.js');
+
+// تسجيل الأنظمة في المنظم المركزي
+const reportCommand = require('./commands/report.js');
+if (reportCommand && reportCommand.handleInteraction) {
+    interactionRouter.register('report_', reportCommand.handleInteraction);
+}
+
+const backupCommand = require('./commands/backup.js');
+if (backupCommand && backupCommand.handleInteraction) {
+    interactionRouter.register('backup_', backupCommand.handleInteraction);
+}
 
 
 dotenv.config();
@@ -2675,6 +2687,9 @@ client.on('interactionCreate', async (interaction) => {
     const customId = interaction?.customId || '';
 
     // --- Start of Consolidated Handlers ---
+    
+    // استخدام المنظم المركزي الجديد
+    await interactionRouter.route(interaction, client);
 
     // 1. Handle setactive and interactiveRolesManager
     const setactiveCommand = client.commands.get('setactive');
