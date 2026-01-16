@@ -32,6 +32,7 @@ const colorManager = require('./utils/colorManager.js');
 const vacationManager = require('./utils/vacationManager');
 const promoteManager = require('./utils/promoteManager');
 const { handleAdminApplicationInteraction } = require('./commands/admin-apply.js');
+const interactiveRolesManager = require('./utils/interactiveRolesManager.js');
 
 
 dotenv.config();
@@ -758,35 +759,69 @@ client.on(Events.InviteDelete, (invite) => {
 
 });
 
-client.on(Events.GuildMemberAdd, async (member) => {
-    try {
-        const oldInvites = guildInvites.get(member.guild.id);
-        const newInvites = await member.guild.invites.fetch();
+    // تتبع دخول الأعضاء (الدعوات وخريطة السيرفر)
+    client.on(Events.GuildMemberAdd, async (member) => {
+        try {
+            // 1. تتبع الدعوات
+            const oldInvites = guildInvites.get(member.guild.id);
+            const newInvites = await member.guild.invites.fetch().catch(() => null);
 
-        let usedInvite = newInvites.find(inv => {
-            const prevUses = oldInvites?.get(inv.code) || 0;
-            return inv.uses > prevUses;
-        });
+            if (newInvites) {
+                let usedInvite = newInvites.find(inv => {
+                    const prevUses = oldInvites?.get(inv.code) || 0;
+                    return inv.uses > prevUses;
+                });
 
-        const inviteMap = new Map();
-        newInvites.forEach(inv => inviteMap.set(inv.code, inv.uses));
-        guildInvites.set(member.guild.id, inviteMap);
+                const inviteMap = new Map();
+                newInvites.forEach(inv => inviteMap.set(inv.code, inv.uses));
+                guildInvites.set(member.guild.id, inviteMap);
 
-        if (usedInvite) {
-            member.inviterId = usedInvite.inviter?.id;
-            console.log(`👤 العضو ${member.user.tag} انضم بواسطة ${usedInvite.inviter?.tag || "غير معروف"} (كود: ${usedInvite.code})`);
-            await dbManager.addInvite(member.id, member.inviterId, "invite");
-        } else {
-            const isVanity = member.guild.vanityURLCode && (member.guild.features.includes("VANITY_URL"));
-            const method = isVanity ? "vanity" : "unknown";
-            const inviterId = member.guild.ownerId;
-            console.log(`🔗 العضو ${member.user.tag} انضم بطريقة (${method}) - تم احتسابها لمالك السيرفر: ${inviterId}`);
-            await dbManager.addInvite(member.id, inviterId, method);
+                if (usedInvite) {
+                    member.inviterId = usedInvite.inviter?.id;
+                    console.log(`👤 العضو ${member.user.tag} انضم بواسطة ${usedInvite.inviter?.tag || "غير معروف"} (كود: ${usedInvite.code})`);
+                    await dbManager.addInvite(member.id, member.inviterId, "invite");
+                } else {
+                    const isVanity = member.guild.vanityURLCode && (member.guild.features.includes("VANITY_URL"));
+                    const method = isVanity ? "vanity" : "unknown";
+                    const inviterId = member.guild.ownerId;
+                    console.log(`🔗 العضو ${member.user.tag} انضم بطريقة (${method}) - تم احتسابها لمالك السيرفر: ${inviterId}`);
+                    await dbManager.addInvite(member.id, inviterId, method);
+                }
+            }
+
+            // 2. ترحيب خريطة السيرفر
+            if (!member.user.bot) {
+                const configPath = DATA_FILES.serverMapConfig;
+                if (fs.existsSync(configPath)) {
+                    const allConfigs = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+                    const config = allConfigs.global || allConfigs;
+                    
+                    if (config && config.enabled) {
+                        const mapCommand = client.commands.get('map');
+                        if (mapCommand) {
+                            const dmChannel = await member.createDM().catch(() => null);
+                            if (dmChannel) {
+                                const fakeMessage = { 
+                                    guild: member.guild, 
+                                    channel: dmChannel, 
+                                    author: member.user,
+                                    client: client,
+                                    isAutomatic: true,
+                                    isGlobalOnly: true,
+                                    reply: async (options) => dmChannel.send(options),
+                                    react: async () => {},
+                                    permissionsFor: () => ({ has: () => true })
+                                };
+                                await mapCommand.execute(fakeMessage, [], { client, BOT_OWNERS: process.env.BOT_OWNERS ? process.env.BOT_OWNERS.split(',') : [] }).catch(() => {});
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.error("❌ خطأ في معالج انضمام العضو الموحد:", error);
         }
-    } catch (error) {
-        console.error("❌ خطأ في تتبع دخول عضو:", error);
-    }
-});
+    });
 
 // دالة لمزامنة الرولات لجميع المسؤوليات عند التشغيل
 async function syncAllResponsibilityRoles(client) {
@@ -873,55 +908,8 @@ client.once(Events.ClientReady, async () => {
     }
 
     // تتبع المستخدمين الموجودين حالياً في القنوات الصوتية
-    // ملاحظة: تم تعطيل هذا الجزء لتجنب التكرار مع الفحص الذي يبدأ بعد 10 ثوانٍ في قسم تهيئة الأنظمة
-    /*
-    setTimeout(async () => {
-        try {
-            const guilds = client.guilds.cache;
-            let totalActiveUsers = 0;
-
-            for (const guild of guilds.values()) {
-                const voiceChannels = guild.channels.cache.filter(c => c.type === 2);
-                for (const channel of voiceChannels.values()) {
-                    const members = channel.members;
-                    if (members && members.size > 0) {
-                        for (const member of members.values()) {
-                            if (!member.user.bot) {
-                                const userId = member.id;
-                                const now = Date.now();
-
-                                // إضافة جلسة للمستخدمين الموجودين
-                                if (!client.voiceSessions.has(userId)) {
-                                    client.voiceSessions.set(userId, {
-                                        startTime: now,
-                                        channelId: channel.id,
-                                        channelName: channel.name
-                                    });
-                                    totalActiveUsers++;
-                                    console.log(`🎤 تم العثور على ${member.displayName} في ${channel.name} - بدء تتبع الجلسة`);
-                                    
-                                    // تأخير بسيط جداً لتجنب الضغط اللحظي إذا كان هناك عدد ضخم
-                                    if (totalActiveUsers % 10 === 0) {
-                                        await new Promise(resolve => setTimeout(resolve, 100));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (totalActiveUsers > 0) {
-                console.log(`✅ تم تسجيل ${totalActiveUsers} مستخدم نشط في القنوات الصوتية`);
-            } else {
-                console.log(`📭 لا يوجد مستخدمين في القنوات الصوتية حالياً`);
-            }
-        } catch (error) {
-            console.error('❌ خطأ في تتبع المستخدمين النشطين:', error);
-        }
-    }, 5000); 
-    */
-
+    // تم حذف الجزء المعطل لتنظيف الملف
+    
     // تهيئة نظام تتبع النشاط للمستخدمين
     try {
         const { initializeActivityTracking } = require('./utils/userStatsCollector');
@@ -1277,19 +1265,9 @@ client.once(Events.ClientReady, async () => {
   }, 300 * 1000); // كل 5 دقائق
 
 
-  // إنشاء backup تلقائي كل ساعة (معطل حالياً لعدم وجود ملف security.js)
-  /*
-  setInterval(() => {
-    try {
-      const securityManager = require('./security');
-      securityManager.createBackup();
-    } catch (error) {
-      console.error('فشل في إنشاء backup:', error);
-    }
-  }, 60 * 60 * 1000); // كل ساعة
-  */
-
-  // قراءة البريفكس من الملف مباشرة
+  // إنشاء backup تلقائي كل ساعة
+    
+    // قراءة البريفكس من الملف مباشرة
   const currentBotConfig = readJSONFile(DATA_FILES.botConfig, {});
   let currentPrefix = currentBotConfig.prefix;
 
@@ -1600,7 +1578,16 @@ loadPairingsToCache();
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
 
-  // Handle DM pairing/commands
+  // 1. نظام الرولات التفاعلية
+  if (typeof interactiveRolesManager !== 'undefined' && interactiveRolesManager.handleMessage) {
+    try {
+      await interactiveRolesManager.handleMessage(message);
+    } catch (e) {
+      console.error('Error in interactiveRolesManager handleMessage:', e);
+    }
+  }
+
+  // 2. نظام الاقتران (DM)
   if (message.channel.type === 1) { // DM
     const content = message.content.trim();
     const ALLOWED_ID = '636930315503534110';
@@ -2794,11 +2781,21 @@ client.on('interactionCreate', async (interaction) => {
 
     // 1. Handle setactive and interactiveRolesManager
     const setactiveCommand = client.commands.get('setactive');
-    if (setactiveCommand && setactiveCommand.handleSetActiveInteraction) {
-        await setactiveCommand.handleSetActiveInteraction(interaction);
+    if (setactiveCommand && typeof setactiveCommand.handleSetActiveInteraction === 'function') {
+        try {
+            await setactiveCommand.handleSetActiveInteraction(interaction);
+        } catch (e) {
+            console.error('Error in setactiveCommand:', e);
+        }
     }
-    if (interactiveRolesManager.handleInteraction) {
-        await interactiveRolesManager.handleInteraction(interaction);
+    
+    // Check if interactiveRolesManager is defined and has the method
+    if (typeof interactiveRolesManager !== 'undefined' && interactiveRolesManager && typeof interactiveRolesManager.handleInteraction === 'function') {
+        try {
+            await interactiveRolesManager.handleInteraction(interaction);
+        } catch (e) {
+            console.error('Error in interactiveRolesManager:', e);
+        }
     }
 
     // 2. Handle resp command modals/buttons and serverMapConfig modals
@@ -2844,19 +2841,19 @@ client.on('interactionCreate', async (interaction) => {
                 return await interaction.reply({ content: `✅ تم تحديث بيانات الزر **${label}** بنجاح.`, ephemeral: true });
             }
 
-            if (interaction.customId.startsWith('apply_resp_modal_')) {
+            if (interaction.customId.startsWith('apply_resp_modal_') && typeof respCommand.handleApplyRespModal === 'function') {
                 await respCommand.handleApplyRespModal(interaction, client);
-            } else if (interaction.customId.startsWith('reject_reason_modal_')) {
+            } else if (interaction.customId.startsWith('reject_reason_modal_') && typeof respCommand.handleRejectReasonModal === 'function') {
                 await respCommand.handleRejectReasonModal(interaction, client);
             }
         } else if (interaction.isButton()) {
-            if (interaction.customId === 'apply_resp_button') {
+            if (interaction.customId === 'apply_resp_button' && typeof respCommand.handleApplyRespButton === 'function') {
                 await respCommand.handleApplyRespButton(interaction, client);
-            } else if (interaction.customId.startsWith('approve_apply_') || interaction.customId.startsWith('reject_apply_')) {
+            } else if ((interaction.customId.startsWith('approve_apply_') || interaction.customId.startsWith('reject_apply_')) && typeof respCommand.handleApplyAction === 'function') {
                 await respCommand.handleApplyAction(interaction, client);
             }
         } else if (interaction.isStringSelectMenu()) {
-            if (interaction.customId === 'apply_resp_select') {
+            if (interaction.customId === 'apply_resp_select' && typeof respCommand.handleApplyRespSelect === 'function') {
                 await respCommand.handleApplyRespSelect(interaction, client);
             }
         }
@@ -2967,8 +2964,8 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.customId && interaction.customId.startsWith('streak_')) {
         console.log(`معالجة تفاعل Streak: ${interaction.customId}`);
         const streakCommand = client.commands.get('streak');
-        if (streakCommand && streakCommand.handleInteraction) {
-            await streakCommand.handleInteraction(interaction, context);
+        if (streakCommand && typeof streakCommand.handleInteraction === 'function') {
+            await streakCommand.handleInteraction(interaction, typeof context !== 'undefined' ? context : {});
         }
         return;
     }
@@ -2979,32 +2976,12 @@ client.on('interactionCreate', async (interaction) => {
         interaction.customId === 'disable_all_logs' ||
         interaction.customId === 'manage_log_roles' ||
         interaction.customId === 'add_log_roles' ||
-        interaction.customId === 'remove_log_roles' ||
-        interaction.customId === 'select_roles_to_add_log' ||
-        interaction.customId === 'select_roles_to_remove_log' ||
-        interaction.customId === 'back_to_main_logs' ||
-        interaction.customId === 'back_to_log_roles_menu' ||
-        interaction.customId === 'add_all_admin_roles_log' ||
         interaction.customId === 'remove_all_log_roles')) {
         console.log(`معالجة تفاعل السجلات: ${interaction.customId}`);
 
-        // تعريف arabicEventTypes للاستخدام في جميع المعالجات
-        const arabicEventTypes = {
-            'RESPONSIBILITY_MANAGEMENT': 'إدارة المسؤوليات',
-            'RESPONSIBLE_MEMBERS': 'مساعدة الاعضاء',
-            'TASK_LOGS': 'المهام',
-            'POINT_SYSTEM': 'نظام النقاط',
-            'ADMIN_ACTIONS': 'إجراءات الإدارة',
-            'NOTIFICATION_SYSTEM': 'نظام التنبيهات',
-            'COOLDOWN_SYSTEM': 'نظام الكولداون',
-            'SETUP_ACTIONS': 'إجراءات السيتب',
-            'BOT_SETTINGS': 'إعدادات البوت',
-            'ADMIN_CALLS': 'استدعاء الإداريين'
-        };
-
         const logCommand = client.commands.get('log');
-        if (logCommand && logCommand.handleInteraction) {
-            await logCommand.handleInteraction(interaction, client, saveData);
+        if (logCommand && typeof logCommand.handleInteraction === 'function') {
+            await logCommand.handleInteraction(interaction, client, typeof saveData !== 'undefined' ? saveData : () => {});
         }
         return;
     }
@@ -3047,9 +3024,9 @@ client.on('interactionCreate', async (interaction) => {
                 const statsCommand = client.commands.get('stats');
                 if (statsCommand && statsCommand.handleActivityEdit) {
                     await statsCommand.handleActivityEdit(interaction, {
-                        points: points,
-                        responsibilities: responsibilities,
-                        saveData: scheduleSave,
+                        points: typeof points !== 'undefined' ? points : {},
+                        responsibilities: typeof global.responsibilities !== 'undefined' ? global.responsibilities : {},
+                        saveData: typeof scheduleSave !== 'undefined' ? scheduleSave : () => {},
                         client: client
                     });
                 } else {
@@ -3141,7 +3118,7 @@ client.on('interactionCreate', async (interaction) => {
 
         try {
             const setAdminCommand = client.commands.get('setadmin');
-            if (setAdminCommand && setAdminCommand.handleInteraction) {
+            if (setAdminCommand && typeof setAdminCommand.handleInteraction === 'function') {
                 await setAdminCommand.handleInteraction(interaction);
             }
         } catch (error) {
@@ -3163,7 +3140,7 @@ client.on('interactionCreate', async (interaction) => {
     // --- Responsibility System Interaction Router ---
     if (interaction.customId === 'resp_delete_all_confirm') {
         const respCommand = client.commands.get('resp');
-        if (respCommand && respCommand.handleDeleteAllConfirm) {
+        if (respCommand && typeof respCommand.handleDeleteAllConfirm === 'function') {
             await respCommand.handleDeleteAllConfirm(interaction, client);
         }
         return;
@@ -3184,9 +3161,11 @@ client.on('interactionCreate', async (interaction) => {
         console.log(`معالجة تفاعل التقديم الإداري: ${interaction.customId}`);
 
         try {
-            const handled = await handleAdminApplicationInteraction(interaction);
-            if (!handled) {
-                console.log('لم يتم معالجة التفاعل في نظام التقديم الإداري');
+            if (typeof handleAdminApplicationInteraction === 'function') {
+                const handled = await handleAdminApplicationInteraction(interaction);
+                if (!handled) {
+                    console.log('لم يتم معالجة التفاعل في نظام التقديم الإداري');
+                }
             }
         } catch (error) {
             console.error('خطأ في معالجة التقديم الإداري:', error);
@@ -3209,7 +3188,9 @@ client.on('interactionCreate', async (interaction) => {
         console.log(`معالجة تفاعل إحصائيات المترقين: ${interaction.customId}`);
 
         try {
-            await handleBulkPromotionStats(interaction, client);
+            if (typeof handleBulkPromotionStats === 'function') {
+                await handleBulkPromotionStats(interaction, client);
+            }
         } catch (error) {
             console.error('خطأ في معالجة إحصائيات المترقين:', error);
             try {
@@ -3269,12 +3250,12 @@ client.on('interactionCreate', async (interaction) => {
         console.log(`معالجة تفاعل نظام الترقيات: ${interaction.customId}`);
 
         try {
-            const promoteContext = { client, BOT_OWNERS };
+            const promoteContext = typeof context !== 'undefined' ? context : { client, BOT_OWNERS: typeof BOT_OWNERS !== 'undefined' ? BOT_OWNERS : [] };
             const promoteCommand = client.commands.get('promote');
 
-            if (promoteCommand && promoteCommand.handleInteraction) {
+            if (promoteCommand && typeof promoteCommand.handleInteraction === 'function') {
                 await promoteCommand.handleInteraction(interaction, promoteContext);
-            } else {
+            } else if (typeof promoteManager !== 'undefined' && promoteManager && typeof promoteManager.handleInteraction === 'function') {
                 // إذا لم يتم العثور على أمر promote، استخدم promoteManager مباشرة
                 await promoteManager.handleInteraction(interaction, promoteContext);
             }
@@ -3296,18 +3277,18 @@ client.on('interactionCreate', async (interaction) => {
 
     // --- Vacation System Interaction Router ---
     if (interaction.customId && interaction.customId.startsWith('vac_')) {
-        const vacationContext = { client, BOT_OWNERS };
+        const vacationContext = typeof context !== 'undefined' ? context : { client, BOT_OWNERS: typeof BOT_OWNERS !== 'undefined' ? BOT_OWNERS : [] };
 
         // Handle Rejection buttons SPECIFICALLY before deferUpdate
         if (interaction.isButton() && (interaction.customId.startsWith('vac_reject_') || interaction.customId.startsWith('vac_reject_termination_'))) {
             if (interaction.customId.startsWith('vac_reject_termination_')) {
                 const myVacationCommand = client.commands.get('اجازتي');
-                if (myVacationCommand && myVacationCommand.handleInteraction) {
+                if (myVacationCommand && typeof myVacationCommand.handleInteraction === 'function') {
                     await myVacationCommand.handleInteraction(interaction, vacationContext);
                 }
             } else {
                 const vacationCommand = client.commands.get('اجازه');
-                if (vacationCommand && vacationCommand.handleInteraction) {
+                if (vacationCommand && typeof vacationCommand.handleInteraction === 'function') {
                     await vacationCommand.handleInteraction(interaction, vacationContext);
                 }
             }
@@ -3317,7 +3298,7 @@ client.on('interactionCreate', async (interaction) => {
         // Handle regular vacation approvals and rejections
         if (interaction.isButton() && interaction.customId.startsWith('vac_approve_')) {
             const vacationCommand = client.commands.get('اجازه');
-            if (vacationCommand && vacationCommand.handleInteraction) {
+            if (vacationCommand && typeof vacationCommand.handleInteraction === 'function') {
                 await vacationCommand.handleInteraction(interaction, vacationContext);
             }
             return;
@@ -3329,7 +3310,7 @@ client.on('interactionCreate', async (interaction) => {
 
             const vacationsCommand = client.commands.get('اجازات');
 
-            if (vacationsCommand && vacationsCommand.handleInteraction) {
+            if (vacationsCommand && typeof vacationsCommand.handleInteraction === 'function') {
 
                 await vacationsCommand.handleInteraction(interaction, vacationContext);
 
@@ -3352,7 +3333,7 @@ client.on('interactionCreate', async (interaction) => {
             interaction.customId === 'vac_channel_select' ||
             interaction.customId === 'vac_resp_select') {
              const setVacationCommand = client.commands.get('set-vacation');
-             if (setVacationCommand && setVacationCommand.handleInteraction) {
+             if (setVacationCommand && typeof setVacationCommand.handleInteraction === 'function') {
                  await setVacationCommand.handleInteraction(interaction, vacationContext);
              }
              return;
@@ -3361,7 +3342,7 @@ client.on('interactionCreate', async (interaction) => {
         // Route to vacation (ajaza) command
         if (interaction.customId.startsWith('vac_request_')) {
             const vacationCommand = client.commands.get('اجازه');
-            if (vacationCommand && vacationCommand.handleInteraction) {
+            if (vacationCommand && typeof vacationCommand.handleInteraction === 'function') {
                 await vacationCommand.handleInteraction(interaction, vacationContext);
             }
             return;
@@ -3373,7 +3354,7 @@ client.on('interactionCreate', async (interaction) => {
             interaction.customId === 'vac_end_cancel' ||
             interaction.customId.startsWith('vac_approve_termination_')) {
             const myVacationCommand = client.commands.get('اجازتي');
-            if (myVacationCommand && myVacationCommand.handleInteraction) {
+            if (myVacationCommand && typeof myVacationCommand.handleInteraction === 'function') {
                 await myVacationCommand.handleInteraction(interaction, vacationContext);
             }
             return;
@@ -3383,12 +3364,12 @@ client.on('interactionCreate', async (interaction) => {
         if (interaction.customId && (interaction.customId.startsWith('vac_reject_modal_') || interaction.customId.startsWith('vac_reject_termination_modal_'))) {
             if (interaction.customId.startsWith('vac_reject_termination_modal_')) {
                 const myVacationCommand = client.commands.get('اجازتي');
-                if (myVacationCommand && myVacationCommand.handleInteraction) {
+                if (myVacationCommand && typeof myVacationCommand.handleInteraction === 'function') {
                     await myVacationCommand.handleInteraction(interaction, vacationContext);
                 }
             } else {
                 const vacationCommand = client.commands.get('اجازه');
-                if (vacationCommand && vacationCommand.handleInteraction) {
+                if (vacationCommand && typeof vacationCommand.handleInteraction === 'function') {
                     await vacationCommand.handleInteraction(interaction, vacationContext);
                 }
             }
@@ -3431,22 +3412,21 @@ client.on('interactionCreate', async (interaction) => {
 
       const respCommand = client.commands.get('resp');
 
-      if (respCommand && respCommand.handleSuggestionModal) {
+      if (respCommand && typeof respCommand.handleSuggestionModal === 'function') {
 
         await respCommand.handleSuggestionModal(interaction, client);
 
       }
 
       return;
-        // The old handler for early termination has been moved to my-vacation.js
     }
 
     // Handle adminroles interactions (including refresh buttons)
     if (customId.startsWith('adminroles_') || customId === 'admin_roles_select' || customId === 'admin_roles_add' || customId === 'admin_roles_remove') {
       try {
         const adminrolesCommand = client.commands.get('adminroles');
-        if (adminrolesCommand && adminrolesCommand.handleInteraction) {
-          await adminrolesCommand.handleInteraction(interaction, context);
+        if (adminrolesCommand && typeof adminrolesCommand.handleInteraction === 'function') {
+          await adminrolesCommand.handleInteraction(interaction, typeof context !== 'undefined' ? context : { client });
         } else {
           console.log('⚠️ لم يتم العثور على معالج adminroles');
           if (!interaction.replied && !interaction.deferred) {
@@ -3493,13 +3473,13 @@ client.on('interactionCreate', async (interaction) => {
         console.log(`معالجة تفاعل down: ${interaction.customId}`);
 
         // Load fresh admin roles for down system
-        const ADMIN_ROLES = getCachedAdminRoles();
-        context.ADMIN_ROLES = ADMIN_ROLES;
+        const ADMIN_ROLES = typeof getCachedAdminRoles === 'function' ? getCachedAdminRoles() : [];
+        const downContext = typeof context !== 'undefined' ? { ...context, ADMIN_ROLES } : { client, ADMIN_ROLES };
 
         const downCommand = client.commands.get('down');
-        if (downCommand && downCommand.handleInteraction) {
+        if (downCommand && typeof downCommand.handleInteraction === 'function') {
             try {
-                await downCommand.handleInteraction(interaction, context);
+                await downCommand.handleInteraction(interaction, downContext);
             } catch (error) {
                 console.error('خطأ في معالجة تفاعل down:', error);
                 if (!interaction.replied && !interaction.deferred) {
@@ -3518,9 +3498,10 @@ client.on('interactionCreate', async (interaction) => {
         console.log(`معالجة تفاعل warn: ${interaction.customId}`);
 
         const warnCommand = client.commands.get('warn');
-        if (warnCommand && warnCommand.handleInteraction) {
+        if (warnCommand && typeof warnCommand.handleInteraction === 'function') {
             try {
-                await warnCommand.handleInteraction(interaction, context);
+                const warnContext = typeof context !== 'undefined' ? context : { client };
+                await warnCommand.handleInteraction(interaction, warnContext);
             } catch (error) {
                 console.error('خطأ في معالجة تفاعل warn:', error);
                 if (!interaction.replied && !interaction.deferred) {
@@ -3538,8 +3519,8 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.customId && (interaction.customId.startsWith('notification_') ||
         interaction.customId === 'select_responsibility_time')) {
         const notificationsCommand = client.commands.get('notifications');
-        if (notificationsCommand && notificationsCommand.handleInteraction) {
-            await notificationsCommand.handleInteraction(interaction, context);
+        if (notificationsCommand && typeof notificationsCommand.handleInteraction === 'function') {
+            await notificationsCommand.handleInteraction(interaction, typeof context !== 'undefined' ? context : { client });
         }
         return;
     }
@@ -3549,13 +3530,12 @@ client.on('interactionCreate', async (interaction) => {
         interaction.customId.startsWith('responsibility_time_modal_') ||
         interaction.customId === 'notifications_search_responsibility_modal')) {
         const notificationsCommand = client.commands.get('notifications');
-        if (notificationsCommand && notificationsCommand.handleModalSubmit) {
-            await notificationsCommand.handleModalSubmit(interaction, client, responsibilities);
+        if (notificationsCommand && typeof notificationsCommand.handleModalSubmit === 'function') {
+            await notificationsCommand.handleModalSubmit(interaction, client, typeof global.responsibilities !== 'undefined' ? global.responsibilities : {});
         } else if (interaction.customId === 'notifications_search_responsibility_modal') {
             // إضافة معالج مباشر للبحث
-            const notificationsCommand = client.commands.get('notifications');
-            if (notificationsCommand && notificationsCommand.handleInteraction) {
-                await notificationsCommand.handleInteraction(interaction, context);
+            if (notificationsCommand && typeof notificationsCommand.handleInteraction === 'function') {
+                await notificationsCommand.handleInteraction(interaction, typeof context !== 'undefined' ? context : { client });
             }
         }
         return;
@@ -3565,7 +3545,7 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.customId && (interaction.customId.startsWith('vip_') ||
         interaction.customId === 'vip_status_select')) {
         const vipCommand = client.commands.get('vip');
-        if (vipCommand && vipCommand.handleInteraction) {
+        if (vipCommand && typeof vipCommand.handleInteraction === 'function') {
             await vipCommand.handleInteraction(interaction, client, { guild: interaction.guild, author: interaction.user });
         }
         return;
@@ -3578,7 +3558,7 @@ client.on('interactionCreate', async (interaction) => {
         interaction.customId === 'vip_banner_modal' ||
         interaction.customId.startsWith('activity_modal_'))) {
         const vipCommand = client.commands.get('vip');
-        if (vipCommand && vipCommand.handleModalSubmit) {
+        if (vipCommand && typeof vipCommand.handleModalSubmit === 'function') {
             await vipCommand.handleModalSubmit(interaction, client);
         }
         return;
@@ -3628,8 +3608,8 @@ client.on('interactionCreate', async (interaction) => {
         interaction.customId.startsWith('add_resps_to_category_')
     )) {
         const ctgCommand = client.commands.get('ctg');
-        if (ctgCommand && ctgCommand.handleInteraction) {
-            await ctgCommand.handleInteraction(interaction, context);
+        if (ctgCommand && typeof ctgCommand.handleInteraction === 'function') {
+            await ctgCommand.handleInteraction(interaction, typeof context !== 'undefined' ? context : { client });
         }
         return;
     }
@@ -3638,7 +3618,7 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isModalSubmit() && (interaction.customId === 'add_category_modal' ||
         interaction.customId.startsWith('edit_category_modal_'))) {
         const ctgCommand = client.commands.get('ctg');
-        if (ctgCommand && ctgCommand.handleModalSubmit) {
+        if (ctgCommand && typeof ctgCommand.handleModalSubmit === 'function') {
             await ctgCommand.handleModalSubmit(interaction, client);
         }
         return;
@@ -5423,156 +5403,6 @@ setInterval(async () => {
     console.error('Error in pairing expiration check:', error);
   }
 }, 5 * 60 * 1000); // Check every 5 minutes
-
-// === نظام خريطة السيرفر التفاعلي (مطور ومضاد للأخطاء) ===
-const mapSemaphore = new Set();
-client.on('guildMemberAdd', async member => {
-    try {
-        if (!member.user || member.user.bot) return;
-        
-        // منع المعالجة المتكررة لنفس العضو في نفس الوقت
-        if (mapSemaphore.has(member.id)) return;
-        mapSemaphore.add(member.id);
-        setTimeout(() => mapSemaphore.delete(member.id), 10000);
-
-        const configPath = DATA_FILES.serverMapConfig;
-        if (!fs.existsSync(configPath)) ensureDataFiles();
-        
-        const allConfigs = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        // إجبار استخدام الإعدادات العالمية دائماً عند الترحيب
-        const config = allConfigs.global || allConfigs;
-        if (!config || !config.enabled) return;
-
-        const mapCommand = client.commands.get('map');
-        if (mapCommand) {
-            setImmediate(async () => {
-                try {
-                    const dmChannel = await member.createDM().catch(() => null);
-                    if (!dmChannel) return;
-
-                    const fakeMessage = { 
-                        guild: member.guild, 
-                        channel: dmChannel, 
-                        author: member.user,
-                        client: client,
-                        isAutomatic: true,
-                        isGlobalOnly: true, // علامة لإجبار استخدام الإعدادات العالمية
-                        reply: async (options) => {
-                            return await dmChannel.send(options);
-                        },
-                        react: async () => {},
-                        permissionsFor: () => ({ has: () => true })
-                    };
-                    
-                    await mapCommand.execute(fakeMessage, [], { client, BOT_OWNERS: process.env.BOT_OWNERS ? process.env.BOT_OWNERS.split(',') : [] }).catch(err => {
-                        console.error(`❌ خطأ أثناء تنفيذ الخريطة لـ ${member.user.tag}:`, err.message);
-                    });
-                    
-                    console.log(`✅ تم إرسال الخريطة العالمية في الخاص للعضو الجديد: ${member.user.tag}`);
-                } catch (err) {
-                    console.error(`❌ فشل إرسال الخريطة لـ ${member.user.tag}:`, err.message);
-                }
-            });
-        }
-    } catch (error) {
-        console.error('❌ خطأ في نظام الترحيب بالخريطة:', error.message);
-    }
-});
-
-
-
-        const configPath = DATA_FILES.serverMapConfig;
-        if (!fs.existsSync(configPath)) {
-            ensureDataFiles();
-            return interaction.reply({ content: '⚠️ حدث خطأ في الإعدادات، يرجى المحاولة مرة أخرى.', ephemeral: true });
-        }
-
-        const allConfigs = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        // جلب الإعدادات بناءً على القناة أو العالمية
-        const channelKey = `channel_${interaction.channel?.id}`;
-        const config = allConfigs[channelKey] || allConfigs['global'] || allConfigs;
-        
-        const index = parseInt(interaction.customId.replace('map_btn_', ''));
-        const buttons = Array.isArray(config.buttons) ? config.buttons : (config.global?.buttons || []);
-        const btn = buttons[index];
-
-        if (!btn) return interaction.reply({ content: '❌ لم يتم العثور على بيانات لهذا الزر.', ephemeral: true });
-
-        // معالجة الرول المرتبط بالزر
-        let roleStatus = "";
-        if (btn.roleId && interaction.guild) {
-            try {
-                // إرجاء الرد لإعطاء وقت كافٍ لمعالجة الرولات
-                if (!interaction.deferred && !interaction.replied) {
-                    await interaction.deferReply({ ephemeral: true }).catch(err => {
-                        if (err.code !== 10062) throw err;
-                    });
-                }
-
-                // التحقق مرة أخرى من حالة التفاعل بعد التأجيل
-                if (!interaction.deferred && !interaction.replied) return;
-
-                let member = interaction.guild.members.cache.get(interaction.user.id);
-                if (!member) member = await interaction.guild.members.fetch(interaction.user.id);
-                
-                let role = interaction.guild.roles.cache.get(btn.roleId);
-                if (!role) role = await interaction.guild.roles.fetch(btn.roleId);
-
-                if (role) {
-                    const roleMention = interaction.guild.roles.cache.get(role.id) ? `<@&${role.id}>` : `**${role.name}**`;
-                    if (member.roles.cache.has(role.id)) {
-                        await member.roles.remove(role, 'إزالة رول عبر خريطة السيرفر');
-                        roleStatus = `\n\n✅ **تم سحب رول:** ${roleMention}`;
-                    } else {
-                        await member.roles.add(role, 'إعطاء رول عبر خريطة السيرفر');
-                        roleStatus = `\n\n✅ **تم منحك رول:** ${roleMention}`;
-                    }
-                }
-            } catch (roleErr) {
-                if (roleErr.code !== 10062) {
-                    console.error('Error handling map button role:', roleErr);
-                    roleStatus = `\n\n⚠️ **فشل في منح/سحب الرول:** ${roleErr.message}`;
-                }
-            }
-        }
-
-        const rows = [];
-        const links = btn.links || (btn.link ? [{ label: btn.linkLabel || 'انتقال للروم', url: btn.link }] : []);
-        
-        if (links.length > 0) {
-            let currentRow = new ActionRowBuilder();
-            links.forEach((linkData, i) => {
-                if (i > 0 && i % 5 === 0) {
-                    rows.push(currentRow);
-                    currentRow = new ActionRowBuilder();
-                }
-                currentRow.addComponents(
-                    new ButtonBuilder()
-                        .setLabel(linkData.label || 'انتقال للروم')
-                        .setURL(linkData.url)
-                        .setStyle(ButtonStyle.Link)
-                );
-            });
-            rows.push(currentRow);
-        }
-
-        const replyPayload = {
-            content: (btn.description || 'لا يوجد شرح متاح.') + roleStatus,
-            components: rows,
-            ephemeral: true
-        };
-
-        if (interaction.deferred || interaction.replied) {
-            await interaction.editReply(replyPayload).catch(err => console.error('Error in editReply:', err));
-        } else {
-            await interaction.reply(replyPayload).catch(async err => {
-                if (err.code === 50007) {
-                    console.log(`🚫 لا يمكن الرد على ${interaction.user.tag} لأن الخاص مغلق أو لا يمكن الوصول إليه.`);
-                } else {
-                    console.error('Interaction Reply Error:', err);
-                }
-            });
-        }
 
 // =================================
 
