@@ -1,8 +1,35 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
+const axios = require('axios');
 
 const configPath = path.join(__dirname, '..', 'data', 'serverMapConfig.json');
+const imagesDir = path.join(__dirname, '..', 'attached_assets', 'map_images');
+
+// التأكد من وجود مجلد الصور
+if (!fs.existsSync(imagesDir)) {
+    fs.mkdirSync(imagesDir, { recursive: true });
+}
+
+async function downloadImage(url, filename) {
+    try {
+        const response = await axios({
+            url,
+            method: 'GET',
+            responseType: 'stream'
+        });
+        const filePath = path.join(imagesDir, filename);
+        const writer = fs.createWriteStream(filePath);
+        response.data.pipe(writer);
+        return new Promise((resolve, reject) => {
+            writer.on('finish', () => resolve(filePath));
+            writer.on('error', reject);
+        });
+    } catch (e) {
+        console.error('Error downloading image:', e.message);
+        return null;
+    }
+}
 
 function loadAllConfigs() {
     try {
@@ -770,26 +797,25 @@ module.exports = {
                     const currentAll = loadAllConfigs();
                     if (mi.customId === 'modal_image') {
                         const newUrl = mi.fields.getTextInputValue('img_url').trim();
-                        // فحص صحة الرابط (URL)
                         if (!newUrl.startsWith('http')) {
                             return await mi.reply({ content: '❌ فشل: رابط الصورة غير صالح. يجب أن يبدأ بـ http أو https.', ephemeral: true });
                         }
                         
-                        // محاولة التحقق من امتداد الصورة بشكل بسيط
-                        const isImage = /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(newUrl.split('?')[0]);
-                        if (!isImage) {
-                            await mi.reply({ content: '⚠️ تحذير: الرابط لا يبدو كرابط صورة مباشر، ولكن سيتم اعتماده.', ephemeral: true });
-                        }
-
-                        config.imageUrl = newUrl;
-                        currentAll[configKey] = config;
-                        if (saveAllConfigs(currentAll)) {
+                        const ext = newUrl.split('.').pop().split(/[?#]/)[0] || 'png';
+                        const filename = `${configKey}_${Date.now()}.${ext}`;
+                        
+                        await mi.deferReply({ ephemeral: true });
+                        const localPath = await downloadImage(newUrl, filename);
+                        
+                        if (localPath) {
+                            config.imageUrl = newUrl;
+                            config.localImagePath = filename;
+                            currentAll[configKey] = config;
+                            saveAllConfigs(currentAll);
                             await sendMainEmbed(mi);
-                            const feedback = { content: '✅ تم تحديث صورة الخريطة بنجاح.', ephemeral: true };
-                            if (mi.replied || mi.deferred) await mi.followUp(feedback).catch(() => {});
-                            else await mi.reply(feedback).catch(() => {});
+                            await mi.editReply({ content: '✅ تم تحديث وتحميل صورة الخريطة بنجاح.' });
                         } else {
-                            await mi.reply({ content: '❌ فشل في حفظ البيانات في قاعدة البيانات.', ephemeral: true });
+                            await mi.editReply({ content: '❌ فشل تحميل الصورة، يرجى التأكد من الرابط.' });
                         }
                     } else if (mi.customId === 'modal_msg') {
                         const newMsg = mi.fields.getTextInputValue('welcome_text').trim();

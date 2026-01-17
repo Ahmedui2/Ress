@@ -204,6 +204,9 @@ async function execute(message, args, { client, scheduleSave, BOT_OWNERS }) {
                                 if (global.updateBotOwners) {
                                     global.updateBotOwners([...BOT_OWNERS]);
                                 }
+                                
+                                // تحديث القائمة العالمية فوراً لضمان مزامنة الأوامر
+                                global.BOT_OWNERS = [...BOT_OWNERS];
 
                                 // تحديث متغير البيئة
                                 process.env.BOT_OWNERS = BOT_OWNERS.join(',');
@@ -345,6 +348,9 @@ async function execute(message, args, { client, scheduleSave, BOT_OWNERS }) {
                                 if (global.updateBotOwners) {
                                     global.updateBotOwners([...BOT_OWNERS]);
                                 }
+                                
+                                // تحديث القائمة العالمية فوراً لضمان مزامنة الأوامر
+                                global.BOT_OWNERS = [...BOT_OWNERS];
 
                                 // تحديث متغير البيئة
                                 process.env.BOT_OWNERS = BOT_OWNERS.join(',');
@@ -391,6 +397,9 @@ async function execute(message, args, { client, scheduleSave, BOT_OWNERS }) {
                                 if (global.updateBotOwners) {
                                     global.updateBotOwners([...BOT_OWNERS]);
                                 }
+                                
+                                // تحديث القائمة العالمية فوراً لضمان مزامنة الأوامر
+                                global.BOT_OWNERS = [...BOT_OWNERS];
 
                                 // تحديث متغير البيئة
                                 process.env.BOT_OWNERS = BOT_OWNERS.join(',');

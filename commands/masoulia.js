@@ -15,9 +15,15 @@ module.exports = {
     aliases: ['مسؤولية'],
     async execute(message, args) {
         try {
-            const BOT_OWNERS = process.env.BOT_OWNERS ? process.env.BOT_OWNERS.split(',') : [];
-            if (!BOT_OWNERS.includes(message.author.id)) {
-                return message.reply({ content: '**هذا الأمر مخصص للاونرز فقط.**' });
+            // التحقق من الصلاحيات - الاونرز فقط
+            const botConfig = global.botConfig || { owners: [] };
+            const BOT_OWNERS_ENV = process.env.BOT_OWNERS ? process.env.BOT_OWNERS.split(',') : [];
+            const allOwners = [...new Set([...BOT_OWNERS_ENV, ...(botConfig.owners || []), ...(global.BOT_OWNERS || [])])];
+            
+            const isOwner = allOwners.includes(message.author.id);
+            
+            if (!isOwner) {
+                return message.react('❌');
             }
 
             const target = message.mentions.members.first() || message.guild.members.cache.get(args[0]);
@@ -152,7 +158,14 @@ module.exports = {
                         const config = allResps[respName];
                         if (!config) continue;
                         
-                        const roleId = config.roleId;
+                        // رولات المسؤولية من ملف الإعدادات (دعم رول واحد أو قائمة رولات)
+                        const roleIds = [];
+                        if (config.roleId) roleIds.push(config.roleId);
+                        if (Array.isArray(config.roles)) {
+                            config.roles.forEach(r => {
+                                if (r && !roleIds.includes(r)) roleIds.push(r);
+                            });
+                        }
 
                         try {
                             if (type === 'add') {
@@ -161,11 +174,19 @@ module.exports = {
                                     const success = await dbManager.updateResponsibility(respName, config);
                                     if (success) {
                                         addedResps.push(`**${respName}**`);
-                                        if (roleId) {
-                                            await member.roles.add(roleId).catch(err => {
-                                                console.error(`Failed to add role ${roleId}:`, err);
-                                                errors.push(`فشل إضافة الرول لمسؤولية **${respName}**`);
-                                            });
+                                        
+                                        for (const rId of roleIds) {
+                                            try {
+                                                const guildRole = await i.guild.roles.fetch(rId);
+                                                if (guildRole) {
+                                                    await member.roles.add(guildRole).catch(err => {
+                                                        console.error(`Failed to add role ${rId}:`, err);
+                                                        errors.push(`فشل إضافة الرول لمسؤولية **${respName}** (تأكد من ترتيب رتبة البوت)`);
+                                                    });
+                                                }
+                                            } catch (roleErr) {
+                                                console.error(`Role fetch error for ${rId}:`, roleErr);
+                                            }
                                         }
                                     }
                                 }
@@ -177,16 +198,27 @@ module.exports = {
                                     if (success) {
                                         removedResps.push(`**${respName}**`);
                                         
-                                        if (roleId) {
-                                            const stillNeedsRole = Object.values(allResps).some(r => 
-                                                r.roleId === roleId && 
-                                                r.responsibles.includes(targetId)
-                                            );
+                                        for (const rId of roleIds) {
+                                            // التأكد أن العضو لا يملك مسؤولية أخرى تستخدم نفس الرول
+                                            const stillNeedsRole = Object.values(allResps).some(r => {
+                                                const rIds = [];
+                                                if (r.roleId) rIds.push(r.roleId);
+                                                if (Array.isArray(r.roles)) r.roles.forEach(rid => rIds.push(rid));
+                                                return rIds.includes(rId) && r.responsibles.includes(targetId);
+                                            });
+
                                             if (!stillNeedsRole) {
-                                                await member.roles.remove(roleId).catch(err => {
-                                                    console.error(`Failed to remove role ${roleId}:`, err);
-                                                    errors.push(`فشل إزالة الرول لمسؤولية **${respName}**`);
-                                                });
+                                                try {
+                                                    const guildRole = await i.guild.roles.fetch(rId);
+                                                    if (guildRole) {
+                                                        await member.roles.remove(guildRole).catch(err => {
+                                                            console.error(`Failed to remove role ${rId}:`, err);
+                                                            errors.push(`فشل إزالة الرول لمسؤولية **${respName}** (تأكد من ترتيب رتبة البوت)`);
+                                                        });
+                                                    }
+                                                } catch (roleErr) {
+                                                    console.error(`Role fetch error for ${rId}:`, roleErr);
+                                                }
                                             }
                                         }
                                     }
@@ -203,10 +235,32 @@ module.exports = {
                         responseContent = addedResps.length > 0 
                             ? `✅ **تم بنجاح منح المسؤوليات التالية للعضو :** ${addedResps.join('  ,  ')}`
                             : `⚠️ **لم يتم إضافة أي مسؤوليات جديدة.**`;
+                        
+                        if (addedResps.length > 0) {
+                            try {
+                                const addEmbed = colorManager.createEmbed()
+                                    .setTitle(' Added')
+                                    .setDescription(`تم منحك المسؤوليات التالية : ${addedResps.join(' , ')}\nمن المسؤول : <@${i.user.id}>`)
+                                    .setFooter({ text: i.guild.name })
+                                    .setTimestamp();
+                                await member.send({ embeds: [addEmbed] }).catch(() => {});
+                            } catch (e) {}
+                        }
                     } else {
                         responseContent = removedResps.length > 0 
                             ? `✅ **تم بنجاح سحب المسؤوليات التالية من العضو :** ${removedResps.join('  ,  ')}`
                             : `⚠️ **لم يتم إزالة أي مسؤوليات.**`;
+
+                        if (removedResps.length > 0) {
+                            try {
+                                const removeEmbed = colorManager.createEmbed()
+                                    .setTitle('⚠️Removed')
+                                    .setDescription(`تم ازالتك من المسؤوليات : ${removedResps.join(' , ')}\nمن المسؤول : <@${i.user.id}>`)
+                                    .setFooter({ text: i.guild.name })
+                                    .setTimestamp();
+                                await member.send({ embeds: [removeEmbed] }).catch(() => {});
+                            } catch (e) {}
+                        }
                     }
 
                     if (errors.length > 0) {

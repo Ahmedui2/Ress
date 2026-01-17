@@ -51,7 +51,18 @@ module.exports = {
             const ctx = canvas.getContext('2d');
 
             try {
-                const bg = await loadImage(config.imageUrl || 'https://i.ibb.co/pP9GzD7/default-map.png');
+                let bg;
+                if (config.localImagePath) {
+                    const localPath = path.join(__dirname, '..', 'attached_assets', 'map_images', config.localImagePath);
+                    if (fs.existsSync(localPath)) {
+                        bg = await loadImage(localPath);
+                    }
+                }
+                
+                if (!bg) {
+                    bg = await loadImage(config.imageUrl || 'https://i.ibb.co/pP9GzD7/default-map.png');
+                }
+                
                 ctx.drawImage(bg, 0, 0, 1280, 720);
                 
                 // تمت إزالة تأثيرات الاسم والخلفية السوداء بناءً على طلب المستخدم
