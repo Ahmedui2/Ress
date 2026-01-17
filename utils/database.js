@@ -134,6 +134,11 @@ class DatabaseManager {
             
             // CRITICAL: Update global object used by all commands
             global.responsibilities = allResps;
+
+            // Emit update event to update UI in real-time
+            if (global.client) {
+                global.client.emit('responsibilityUpdate');
+            }
             
             return true;
         } catch (error) {
@@ -153,6 +158,11 @@ class DatabaseManager {
             const allResps = await this.getResponsibilities();
             fs.writeFileSync(responsibilitiesPath, JSON.stringify(allResps, null, 2));
             global.responsibilities = allResps;
+
+            // Emit update event to update UI in real-time
+            if (global.client) {
+                global.client.emit('responsibilityUpdate');
+            }
 
             // Remove from categories
             const categoriesPath = path.join(__dirname, '..', 'data', 'respCategories.json');
