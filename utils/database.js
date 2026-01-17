@@ -126,14 +126,24 @@ class DatabaseManager {
             
             const fs = require('fs');
             const path = require('path');
-            const allResps = await this.getResponsibilities();
+            
+            // Re-fetch all to ensure global state is fresh
+            const allResps = await this.all('SELECT name, config FROM responsibilities');
+            const data = {};
+            for (const row of allResps) {
+                try {
+                    data[row.name] = JSON.parse(row.config || '{}');
+                } catch (e) {
+                    data[row.name] = { responsibles: [], description: '' };
+                }
+            }
             
             // Sync to JSON for redundancy
             const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
-            fs.writeFileSync(responsibilitiesPath, JSON.stringify(allResps, null, 2));
+            fs.writeFileSync(responsibilitiesPath, JSON.stringify(data, null, 2));
             
             // CRITICAL: Update global object used by all commands
-            global.responsibilities = allResps;
+            global.responsibilities = data;
 
             // Emit update event to update UI in real-time
             if (global.client) {
