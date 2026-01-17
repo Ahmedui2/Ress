@@ -139,6 +139,49 @@ function readJsonFile(filePath, defaultData = {}) {
     return defaultData;
 }
 
+function normalizeDividerUrl(url) {
+    if (!url) return null;
+    const cleaned = url.trim().replace(/^<|>$/g, '');
+    try {
+        return new URL(cleaned).toString();
+    } catch (error) {
+        console.log(`⚠️ رابط خط فاصل غير صالح: ${url}`);
+        return null;
+    }
+}
+
+function getDividerFilename(url) {
+    try {
+        const parsedUrl = new URL(url);
+        const extension = path.extname(parsedUrl.pathname);
+        if (extension) {
+            return `divider${extension}`;
+        }
+    } catch (error) {
+        console.log(`⚠️ تعذر استخراج امتداد من رابط الخط الفاصل: ${url}`);
+    }
+    return 'divider.png';
+}
+
+function extractGuildIdFromCustomId(customId) {
+    const parts = customId.split('_');
+    const isGuildId = (value) => /^\d{17,20}$/.test(value);
+
+    if (parts.length >= 4 && parts[0] === 'streak' && parts[1] === 'request' && parts[2] === 'restore' && isGuildId(parts[3])) {
+        return parts[3];
+    }
+
+    if (parts.length >= 5 && parts[0] === 'streak' && (parts[1] === 'approve' || parts[1] === 'reject') && parts[2] === 'restore' && isGuildId(parts[3])) {
+        return parts[3];
+    }
+
+    return null;
+}
+
+function hasSettingsPermission(userId, botOwners) {
+    return botOwners.includes(userId);
+}
+
 async function getSettings(guildId) {
     try {
         const row = await getQuery('SELECT * FROM streak_settings WHERE guild_id = ?', [guildId]);
@@ -605,12 +648,13 @@ async function handleLockedRoomMessage(message, client, botOwners) {
 }
 
 async function createDivider(channel, user, settings, guildId, userMessageIds = []) {
-    if (!settings || !settings.dividerImageUrl) {
+    const dividerUrl = normalizeDividerUrl(settings?.dividerImageUrl);
+    if (!dividerUrl) {
         console.log('⚠️ لا يوجد رابط صورة للخط الفاصل في الإعدادات');
         return;
     }
 
-    console.log(`🖼️ إنشاء خط فاصل للمستخدم ${user.username} - رابط: ${settings.dividerImageUrl}`);
+    console.log(`🖼️ إنشاء خط فاصل للمستخدم ${user.username} - رابط: ${dividerUrl}`);
 
     const deleteButton = new ActionRowBuilder()
         .addComponents(
@@ -628,14 +672,23 @@ async function createDivider(channel, user, settings, guildId, userMessageIds = 
         
         try {
             // تحميل الصورة من الرابط
-            const response = await axios.get(settings.dividerImageUrl, { 
+            const response = await axios.get(dividerUrl, { 
                 responseType: 'arraybuffer',
-                timeout: 10000 
+                timeout: 10000,
+                maxRedirects: 5,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (compatible; StreakBot/1.0)',
+                    'Accept': 'image/*,*/*'
+                }
             });
+
+            const contentType = response.headers?.['content-type'] || '';
+            if (!contentType.startsWith('image/')) {
+                throw new Error(`invalid content-type: ${contentType || 'unknown'}`);
+            }
             
             const buffer = Buffer.from(response.data, 'binary');
-            const extension = settings.dividerImageUrl.split('.').pop().split('?')[0] || 'png';
-            const filename = `divider.${extension}`;
+            const filename = getDividerFilename(dividerUrl);
             
             const attachment = new AttachmentBuilder(buffer, { name: filename });
             
@@ -647,17 +700,14 @@ async function createDivider(channel, user, settings, guildId, userMessageIds = 
             
             console.log(`✅ تم إرسال الخط الفاصل كـ attachment - معرف الرسالة: ${dividerMsg.id}`);
         } catch (downloadError) {
-            console.log(`⚠️ فشل تحميل الصورة كـ attachment، استخدام الرابط المباشر:`, downloadError.message);
-            
-            // Fallback: إرسال الرابط مباشرة (الطريقة القديمة)
-            dividerMsg = await channel.send({ 
-                content: settings.dividerImageUrl,
-                components: [deleteButton]
-            });
-            
-            console.log(`✅ تم إرسال الخط الفاصل كرابط - معرف الرسالة: ${dividerMsg.id}`);
+            console.log(`❌ فشل تحميل صورة الخط الفاصل:`, downloadError.message);
         }
         
+        if (!dividerMsg) {
+            console.log(`⚠️ لم يتم إنشاء رسالة خط فاصل بسبب فشل التحميل`);
+            return;
+        }
+
         await runQuery(`INSERT INTO streak_dividers (guild_id, channel_id, message_id, user_id, user_message_ids)
             VALUES (?, ?, ?, ?, ?)`, 
             [guildId, channel.id, dividerMsg.id, user.id, JSON.stringify(userMessageIds)]);
@@ -700,6 +750,11 @@ async function handleDeleteReasonModal(interaction, client) {
     const [, , , userId, dividerMessageId] = interaction.customId.split('_');
     const reason = interaction.fields.getTextInputValue('delete_reason');
 
+    if (!db) {
+        console.log('⚠️ قاعدة البيانات غير مهيأة أثناء حذف الخط الفاصل');
+        return interaction.reply({ content: '**تعذر تنفيذ الحذف حالياً**', flags: 64 });
+    }
+
     const divider = await getQuery('SELECT * FROM streak_dividers WHERE message_id = ?', [dividerMessageId]);
     
     if (!divider) {
@@ -712,7 +767,6 @@ async function handleDeleteReasonModal(interaction, client) {
     for (const msgId of userMessageIds) {
         try {
             const msg = await interaction.channel.messages.fetch(msgId).catch(() => null);
-            if (!db) return resolve(null);
             if (msg) await msg.delete();
         } catch (err) {
             console.error(`فشل حذف الرسالة ${msgId}:`, err.message);
@@ -757,8 +811,12 @@ async function handleDeleteReasonModal(interaction, client) {
 }
 
 async function handleRestoreRequest(interaction, client, botOwners) {
-    const guildId = interaction.customId.split('_')[3];
+    const guildId = interaction.customId.split('_')[3] || extractGuildIdFromCustomId(interaction.customId);
     const userId = interaction.user.id;
+
+    if (!guildId) {
+        return interaction.reply({ content: '**تعذر تحديد السيرفر للطلب**', flags: 64 });
+    }
 
     const userStreak = await getUserStreak(guildId, userId);
     if (!userStreak || userStreak.current_streak > 0) {
@@ -849,6 +907,10 @@ async function getApprovers(settings, guild, botOwners) {
 async function handleApproveRestore(interaction, client) {
     const [, , , guildId, userId] = interaction.customId.split('_');
 
+    if (!guildId || !userId) {
+        return interaction.reply({ content: '**تعذر تحديد بيانات الطلب**', flags: 64 });
+    }
+
     const request = await getQuery(
         'SELECT * FROM streak_restore_requests WHERE guild_id = ? AND user_id = ? AND status = "pending" ORDER BY created_at DESC LIMIT 1',
         [guildId, userId]
@@ -900,6 +962,10 @@ async function handleApproveRestore(interaction, client) {
 
 async function handleRejectRestore(interaction, client) {
     const [, , , guildId, userId] = interaction.customId.split('_');
+
+    if (!guildId || !userId) {
+        return interaction.reply({ content: '**تعذر تحديد بيانات الطلب**', flags: 64 });
+    }
 
     const request = await getQuery(
         'SELECT * FROM streak_restore_requests WHERE guild_id = ? AND user_id = ? AND status = "pending" ORDER BY created_at DESC LIMIT 1',
@@ -1025,8 +1091,10 @@ module.exports = {
 
         const guildId = message.guild.id;
 
+        const canManageSettings = hasSettingsPermission(message.author.id, BOT_OWNERS);
+
         // إذا كان المستخدم يطلب الستريك الخاص به أو ستريك شخص آخر
-        if (args.length > 0 || !BOT_OWNERS.includes(message.author.id)) {
+        if (args.length > 0 || !canManageSettings) {
             const targetUser = message.mentions.users.first() || message.author;
             const userStreak = await getUserStreak(guildId, targetUser.id);
             
@@ -1064,12 +1132,9 @@ module.exports = {
         
         // للتفاعلات التي تأتي من DM (مثل طلب استعادة Streak)
         if (!guildId && customId.includes('_')) {
-            const parts = customId.split('_');
-            // محاولة استخراج guildId من آخر جزء من customId
-            const potentialGuildId = parts[parts.length - 1];
-            // التحقق من أن الجزء الأخير يبدو كـ guild ID (رقم طويل)
-            if (potentialGuildId && /^\d{17,20}$/.test(potentialGuildId)) {
-                guildId = potentialGuildId;
+            const extractedGuildId = extractGuildIdFromCustomId(customId);
+            if (extractedGuildId) {
+                guildId = extractedGuildId;
                 console.log(`✅ تم استخراج guildId من customId: ${guildId}`);
             }
         }
@@ -1112,7 +1177,10 @@ module.exports = {
         
         // معالجة Modal للخط الفاصل
         if (interaction.isModalSubmit() && customId === 'streak_divider_modal') {
-            const imageUrl = interaction.fields.getTextInputValue('divider_url');
+            const imageUrl = normalizeDividerUrl(interaction.fields.getTextInputValue('divider_url'));
+            if (!imageUrl) {
+                return interaction.reply({ content: '**الرابط غير صالح، تأكد أنه رابط صورة صحيح**', flags: 64 });
+            }
             let settings = await getSettings(guildId) || {};
             settings.dividerImageUrl = imageUrl;
             await saveSettings(guildId, settings);
@@ -1157,11 +1225,13 @@ module.exports = {
             return handleRejectRestore(interaction, client);
         }
 
+        const canManageSettings = hasSettingsPermission(interaction.user.id, BOT_OWNERS);
+
         // التحقق من الصلاحيات لجميع التفاعلات ما عدا طلبات الاستعادة
         if (!customId.startsWith('streak_request_restore_') && 
             !customId.startsWith('streak_approve_restore_') && 
             !customId.startsWith('streak_reject_restore_')) {
-            if (!BOT_OWNERS.includes(interaction.user.id)) {
+            if (!canManageSettings) {
                 if (!interaction.replied && !interaction.deferred) {
                     return interaction.reply({ content: '** يالليل لا تضغط **', flags: 64 });
                 }
@@ -1280,19 +1350,6 @@ module.exports = {
             return interaction.showModal(modal);
         }
 
-        if (customId === 'streak_divider_modal') {
-            const imageUrl = interaction.fields.getTextInputValue('divider_url');
-            settings.dividerImageUrl = imageUrl;
-            await saveSettings(guildId, settings);
-            
-            const statusEmbed = createStatusEmbed(settings);
-            const mainButtons = createMainButtons();
-            
-            await interaction.deferUpdate();
-            await interaction.message.edit({ content: null, embeds: [statusEmbed], components: [mainButtons] });
-            return;
-        }
-
         if (customId === 'streak_set_emojis') {
             const modal = new ModalBuilder()
                 .setCustomId('streak_emojis_modal')
@@ -1307,20 +1364,6 @@ module.exports = {
 
             modal.addComponents(new ActionRowBuilder().addComponents(emojisInput));
             return interaction.showModal(modal);
-        }
-
-        if (customId === 'streak_emojis_modal') {
-            const emojisString = interaction.fields.getTextInputValue('emojis_list');
-            const emojis = emojisString.trim().split(/\s+/);
-            settings.reactionEmojis = emojis;
-            await saveSettings(guildId, settings);
-            
-            const statusEmbed = createStatusEmbed(settings);
-            const mainButtons = createMainButtons();
-            
-            await interaction.deferUpdate();
-            await interaction.message.edit({ content: null, embeds: [statusEmbed], components: [mainButtons] });
-            return;
         }
     },
 
