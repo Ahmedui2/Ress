@@ -5320,9 +5320,20 @@ setInterval(async () => {
   }
 }, 5 * 60 * 1000); // Check every 5 minutes
 
-// =================================
+    // =================================
+    client.on('responsibilityUpdate', async () => {
+        try {
+            const respCommand = client.commands.get('resp');
+            if (respCommand && typeof respCommand.updateEmbedMessage === 'function') {
+                console.log('🔄 جاري تحديث ايمبد المسؤوليات بسبب حدث responsibilityUpdate');
+                await respCommand.updateEmbedMessage(client);
+            }
+        } catch (error) {
+            console.error('Error handling responsibilityUpdate event:', error);
+        }
+    });
 
-client.login(process.env.DISCORD_TOKEN);
+    client.login(process.env.DISCORD_TOKEN);
 }
 
 startBot();
