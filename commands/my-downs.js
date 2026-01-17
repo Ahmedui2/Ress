@@ -9,6 +9,17 @@ module.exports = {
         try {
             const { BOT_OWNERS, client } = context;
             const isOwner = BOT_OWNERS.includes(message.author.id);
+            const sendResponse = async (payload) => {
+                try {
+                    return await message.reply(payload);
+                } catch (error) {
+                    const fallbackCodes = new Set([10003, 10008, 50035]);
+                    if (message.channel?.send && fallbackCodes.has(error?.code)) {
+                        return await message.channel.send(payload);
+                    }
+                    throw error;
+                }
+            };
 
             let targetUserId = message.author.id;
             let isTargetingOther = false;
@@ -39,7 +50,7 @@ module.exports = {
                     .setTitle('🔍 حالة الداون')
                     .setDescription(isTargetingOther ? `**العضو <@${targetUserId}> ليس لديه أي داونات نشطة حالياً.**` : '**ليس لديك أي داونات نشطة حالياً.**');
                 
-                return await message.reply({ embeds: [noDownEmbed] }).catch(() => null);
+                return await sendResponse({ embeds: [noDownEmbed] }).catch(() => null);
             }
 
             // 3. بناء الـ Embed الأساسي مع الصور والتنسيق المحسن
@@ -48,7 +59,7 @@ module.exports = {
             // 4. استخراج الرولات الفريدة لمنع خطأ Invalid Form Body
             const uniqueRoleIds = [...new Set(activeDowns.filter(d => d.roleId).map(d => d.roleId))];
 
-            return await message.reply({ 
+            return await sendResponse({ 
                 embeds: [embed],
                 allowedMentions: { 
                     parse: ['users'],
@@ -58,7 +69,7 @@ module.exports = {
 
         } catch (error) {
             console.error('Error in my-downs command:', error);
-            return message.reply('⚠️ حدث خطأ غير متوقع أثناء معالجة الطلب.').catch(() => null);
+            return message.channel?.send('⚠️ حدث خطأ غير متوقع أثناء معالجة الطلب.').catch(() => null);
         }
     },
 
