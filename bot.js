@@ -122,14 +122,19 @@ async function initializeResponsibilities() {
         } else {
             console.log('⚠️ قاعدة البيانات فارغة، جاري التحميل من JSON');
             global.responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
-            
-            // Seed DB if JSON has data
-            if (Object.keys(global.responsibilities).length > 0) {
-                for (const [name, config] of Object.entries(global.responsibilities)) {
-                    await dbManager.updateResponsibility(name, config);
-                }
-            }
         }
+
+        // الاستماع لحدث تحديث المسؤوليات لتحديث الرسائل في القنوات
+        client.on('responsibilityUpdate', async () => {
+            try {
+                const respCommand = client.commands.get('resp');
+                if (respCommand && typeof respCommand.updateEmbedMessage === 'function') {
+                    await respCommand.updateEmbedMessage(client);
+                }
+            } catch (err) {
+                console.error('Error handling responsibilityUpdate event:', err);
+            }
+        });
     } catch (error) {
         console.error('❌ خطأ في تحميل المسؤوليات من قاعدة البيانات:', error);
         global.responsibilities = readJSONFile(DATA_FILES.responsibilities, {});
