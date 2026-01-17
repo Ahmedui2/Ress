@@ -56,15 +56,24 @@ async function execute(message, args, { client, BOT_OWNERS, ADMIN_ROLES }) {
         return;
     }
 
-    const roleMatch = message.mentions.roles.first() || message.guild.roles.cache.get(args[0]);
-    const userMatch = message.mentions.users.first() || await client.users.fetch(args[0]).catch(() => null);
+    const mentionRegex = /<@!?(\d+)>|<@&(\d+)>|(\b\d{17,19}\b)/g;
+    const matches = [...message.content.matchAll(mentionRegex)];
+    
+    if (matches.length === 0) {
+        return await message.channel.send('**لم يتم العثور على منشن أو آيدي في الرسالة**');
+    }
 
-    if (roleMatch) {
-        await showRoleActivityStats(message, roleMatch, client);
-    } else if (userMatch) {
-        await showUserActivityStats(message, userMatch, client);
-    } else {
-        await message.channel.send('**لم يتم العثور على الرول أو العضو**');
+    const uniqueIds = [...new Set(matches.map(m => m[1] || m[2] || m[3]))];
+    
+    for (const id of uniqueIds) {
+        const roleMatch = message.guild.roles.cache.get(id);
+        const userMatch = await client.users.fetch(id).catch(() => null);
+
+        if (roleMatch) {
+            await showRoleActivityStats(message, roleMatch, client);
+        } else if (userMatch) {
+            await showUserActivityStats(message, userMatch, client);
+        }
     }
 }
 

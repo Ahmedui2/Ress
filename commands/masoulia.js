@@ -174,6 +174,8 @@ module.exports = {
                                     const success = await dbManager.updateResponsibility(respName, config);
                                     if (success) {
                                         addedResps.push(`**${respName}**`);
+                                        // Update global state and emit event for real-time UI updates
+                                        if (global.client) global.client.emit('responsibilityUpdate');
                                         
                                         for (const rId of roleIds) {
                                             try {
@@ -197,6 +199,8 @@ module.exports = {
                                     const success = await dbManager.updateResponsibility(respName, config);
                                     if (success) {
                                         removedResps.push(`**${respName}**`);
+                                        // Update global state and emit event for real-time UI updates
+                                        if (global.client) global.client.emit('responsibilityUpdate');
                                         
                                         for (const rId of roleIds) {
                                             // التأكد أن العضو لا يملك مسؤولية أخرى تستخدم نفس الرول

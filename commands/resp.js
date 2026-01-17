@@ -845,6 +845,12 @@ async function handleApplyAction(interaction, client) {
                     await targetMember.send({ embeds: [approveEmbed] }).catch(() => {});
                 }
                 
+                // تحديث المتغير العالمي وإرسال إشارة التحديث
+                // تحديث المتغير العالمي وإرسال إشارة التحديث
+                if (global.client) {
+                    global.client.emit('responsibilityUpdate');
+                }
+                
                 await interaction.editReply({ 
                     content: `**✅ تم قبول المسؤول الجديد : <@${userId}>**\n\n ليكون مسؤول** لمسؤولية ال${respName}**\n\n** قبلة مسؤول المسؤوليات : ** <@${interaction.user.id}>`, 
                     embeds: [],

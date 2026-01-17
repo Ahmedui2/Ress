@@ -123,9 +123,8 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
       console.log('✅ [SETTINGS] تم حفظ المسؤوليات في قاعدة البيانات وتحديث الكائن العالمي');
       
       // التحديثات اللاحقة
-      const respCommand = client.commands.get('resp');
-      if (respCommand && respCommand.updateEmbedMessage) {
-          await respCommand.updateEmbedMessage(client);
+      if (global.client) {
+          global.client.emit('responsibilityUpdate');
       }
       return true;
     } catch (error) {
