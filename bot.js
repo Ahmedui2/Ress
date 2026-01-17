@@ -127,6 +127,7 @@ async function initializeResponsibilities() {
         // الاستماع لحدث تحديث المسؤوليات لتحديث الرسائل في القنوات
         client.on('responsibilityUpdate', async () => {
             try {
+                console.log('🔄 تم التقاط حدث تحديث المسؤوليات، جاري تحديث الرسائل...');
                 const respCommand = client.commands.get('resp');
                 if (respCommand && typeof respCommand.updateEmbedMessage === 'function') {
                     await respCommand.updateEmbedMessage(client);
@@ -250,6 +251,9 @@ let BOT_OWNERS = [];
 if (botConfig.owners && Array.isArray(botConfig.owners) && botConfig.owners.length > 0) {
     BOT_OWNERS = [...botConfig.owners]; // استنساخ المصفوفة
     console.log('✅ تم تحميل المالكين من ملف botConfig.json:', BOT_OWNERS);
+    
+    // تأكد من وجود الملاك في المتغير العالمي بشكل دائم
+    global.BOT_OWNERS = BOT_OWNERS;
 } else {
     // محاولة القراءة من متغيرات البيئة كـ fallback
     const envOwner = process.env.BOT_OWNERS;
@@ -261,9 +265,12 @@ if (botConfig.owners && Array.isArray(botConfig.owners) && botConfig.owners.leng
         botConfig.owners = BOT_OWNERS;
         writeJSONFile(DATA_FILES.botConfig, botConfig);
         console.log('💾 تم حفظ المالك في botConfig.json');
+        
+        global.BOT_OWNERS = BOT_OWNERS;
     } else {
         console.log('⚠️ لم يتم العثور على مالكين محددين');
         console.log('💡 نصيحة: أضف OWNER_ID في Secrets أو استخدم أمر owners بعد تعيين أول مالك');
+        global.BOT_OWNERS = [];
     }
 }
 
@@ -273,6 +280,7 @@ function reloadBotOwners() {
         const currentBotConfig = readJSONFile(DATA_FILES.botConfig, {});
         if (currentBotConfig.owners && Array.isArray(currentBotConfig.owners)) {
             BOT_OWNERS = [...currentBotConfig.owners];
+            global.BOT_OWNERS = BOT_OWNERS;
             console.log('🔄 تم إعادة تحميل المالكين:', BOT_OWNERS);
             return true;
         }
@@ -296,11 +304,17 @@ function updateBotOwners(newOwners) {
                 console.warn('⚠️ تم تجاهل معرفات غير صحيحة:', newOwners.filter(id => !validOwners.includes(id)));
             }
 
-            // تحديث المصفوفة
-            BOT_OWNERS.length = 0; // مسح المصفوفة الحالية
-            BOT_OWNERS.push(...validOwners); // إضافة المالكين الصحيحين
+            // تحديث المصفوفة المحلية والعالمية
+            BOT_OWNERS.length = 0;
+            BOT_OWNERS.push(...validOwners);
+            global.BOT_OWNERS = BOT_OWNERS;
 
-            console.log('✅ تم تحديث قائمة المالكين العالمية بنجاح:', BOT_OWNERS);
+            // تحديث الملف لضمان الحفظ الدائم
+            const currentConfig = readJSONFile(DATA_FILES.botConfig, {});
+            currentConfig.owners = BOT_OWNERS;
+            writeJSONFile(DATA_FILES.botConfig, currentConfig);
+
+            console.log('✅ تم تحديث قائمة المالكين العالمية والدائمة بنجاح:', BOT_OWNERS);
             return true;
         } else {
             console.error('❌ المدخل ليس مصفوفة:', typeof newOwners);
