@@ -153,8 +153,36 @@ isBotPromotion(guildId, userId, roleId) {
         // بدء مهام الصيانة فور التهيئة
         setTimeout(() => this.startMaintenanceTasks(), 5000); // تأخير 5 ثوانٍ
     
-this.startAutoMenuUpdate(client);
-        }
+        // بدء تحديث المنيو التلقائي كل 30 ثانية
+        this.startAutoMenuUpdate(client);
+    }
+
+    // تحديث المنيو تلقائياً كل 30 ثانية
+    startAutoMenuUpdate(client) {
+        setInterval(async () => {
+            try {
+                const settings = this.getSettings();
+                if (!settings.menuChannel || !settings.menuMessageId) return;
+
+                const channel = await client.channels.fetch(settings.menuChannel).catch(() => null);
+                if (!channel) return;
+
+                const message = await channel.messages.fetch(settings.menuMessageId).catch(() => null);
+                if (!message) return;
+
+                // تحديث الرسالة الحالية
+                const promoteModule = require('../commands/promote.js');
+                if (promoteModule && typeof promoteModule.updatePermanentMenu === 'function') {
+                    await promoteModule.updatePermanentMenu(client, message);
+                } else if (promoteModule && typeof promoteModule.createPermanentMenu === 'function') {
+                    // Fallback to recreation if update is not exported correctly
+                    await promoteModule.createPermanentMenu(client, settings.menuChannel);
+                }
+            } catch (error) {
+                console.error('Error in auto menu update:', error);
+            }
+        }, 30000);
+    }
     ensureDataFiles() {
         // Create default settings file
         if (!fs.existsSync(promoteSettingsPath)) {
@@ -192,7 +220,7 @@ this.startAutoMenuUpdate(client);
 
     // Settings Management
     getSettings() {
-        return readJson(promoteSettingsPath, {
+        const settings = readJson(promoteSettingsPath, {
             menuChannel: null,
             logChannel: null,
             allowedUsers: {
@@ -200,6 +228,11 @@ this.startAutoMenuUpdate(client);
                 targets: []
             }
         });
+        // Ensure structure is maintained even if file was corrupted or empty
+        if (!settings.allowedUsers) {
+            settings.allowedUsers = { type: null, targets: [] };
+        }
+        return settings;
     }
 
     async updateSettings(newSettings) {
@@ -1999,17 +2032,17 @@ this.startAutoMenuUpdate(client);
                 const settings = this.getSettings();
 
                 if (settings.menuChannel && settings.menuMessageId) {
-
-                    const promoteCommand = require('../commands/promote.js');
-
-                    if (promoteCommand && promoteCommand.createPermanentMenu) {
-
-                        await promoteCommand.createPermanentMenu(client, settings.menuChannel);
-
-                        console.log('✅ تم تحديث منيو الترقيات تلقائياً');
-
+                    const channel = await client.channels.fetch(settings.menuChannel).catch(() => null);
+                    if (channel) {
+                        const message = await channel.messages.fetch(settings.menuMessageId).catch(() => null);
+                        if (message) {
+                            // تحديث الرسالة الحالية
+                            const promoteModule = require('../commands/promote.js');
+                            if (promoteModule && typeof promoteModule.updatePermanentMenu === 'function') {
+                                await promoteModule.updatePermanentMenu(client, message);
+                            }
+                        }
                     }
-
                 }
 
             } catch (error) {

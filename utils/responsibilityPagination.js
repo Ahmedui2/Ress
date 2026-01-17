@@ -2,7 +2,9 @@ const { StringSelectMenuBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } 
 
 const ITEMS_PER_PAGE = 24;
 
-// تحسين دالة القوائم المنسدلة لتقليل استهلاك الذاكرة
+/**
+ * Creates a paginated select menu for responsibilities
+ */
 function createPaginatedResponsibilityMenu(responsibilities, currentPage = 0, customId = 'select_responsibility', placeholder = 'اختر مسؤولية...') {
     const respEntries = Object.entries(responsibilities);
     if (respEntries.length === 0) return { components: [], totalPages: 0, currentPage: 0 };
@@ -32,6 +34,9 @@ function createPaginatedResponsibilityMenu(responsibilities, currentPage = 0, cu
     return { components, totalPages, currentPage: validPage, hasMultiplePages: totalPages > 1 };
 }
 
+/**
+ * Creates a paginated select menu from an array of options
+ */
 function createPaginatedResponsibilityArray(responsibilities, currentPage = 0, customId = 'select_responsibility', placeholder = 'اختر مسؤولية...', maxValues = 1) {
     const totalPages = Math.ceil(responsibilities.length / ITEMS_PER_PAGE);
     
@@ -49,9 +54,10 @@ function createPaginatedResponsibilityArray(responsibilities, currentPage = 0, c
     const pageItems = responsibilities.slice(start, end);
 
     const options = pageItems.map(resp => ({
-        label: resp.name ? resp.name.substring(0, 100) : resp.substring(0, 100),
-        value: resp.name || resp,
-        description: resp.description ? resp.description.substring(0, 100) : undefined
+        label: resp.label || resp.name_role || (resp.name ? resp.name.substring(0, 100) : (typeof resp === 'string' ? resp.substring(0, 100) : 'Option')),
+        value: resp.value || resp.name || resp,
+        description: resp.description ? resp.description.substring(0, 100) : undefined,
+        emoji: resp.emoji || undefined
     }));
 
     const selectMenuBuilder = new StringSelectMenuBuilder()
@@ -94,6 +100,9 @@ function createPaginatedResponsibilityArray(responsibilities, currentPage = 0, c
     };
 }
 
+/**
+ * Handles common pagination button interactions
+ */
 function handlePaginationInteraction(interaction, customId) {
     if (!interaction.customId.startsWith(customId)) {
         return null;
@@ -110,6 +119,9 @@ function handlePaginationInteraction(interaction, customId) {
     return null;
 }
 
+/**
+ * Specialized pagination for responsibility statistics
+ */
 function createPaginatedResponsibilityStats(responsibilityStats, currentPage = 0, customId = 'stats_select_responsibility', placeholder = 'اختر مسؤولية لعرض إحصائياتها') {
     const totalPages = Math.ceil(responsibilityStats.length / ITEMS_PER_PAGE);
     
@@ -130,7 +142,7 @@ function createPaginatedResponsibilityStats(responsibilityStats, currentPage = 0
         const globalIndex = start + index;
         return {
             label: resp.name,
-            description: `${resp.totalPoints} نقطة - ${resp.membersCount} مسؤول - ${resp.activeMembersCount} Active`,
+            description: `${resp.totalPoints || 0} نقطة - ${resp.membersCount || 0} مسؤول`,
             value: resp.name,
             emoji: globalIndex === 0 ? '🏆' : globalIndex === 1 ? '🥈' : globalIndex === 2 ? '🥉' : '📊'
         };

@@ -34,10 +34,10 @@ function writeJsonFile(filePath, data) {
 }
 
 // دالة لتنسيق الوقت بدقة أكبر
-function formatDuration(milliseconds) {
-    if (!milliseconds || milliseconds <= 0) return '**لا يوجد**';
+function formatDuration(value) {
+    if (!value || value <= 0) return '**0ms**';
 
-    const totalSeconds = Math.floor(milliseconds / 1000);
+    const totalSeconds = Math.floor(value / 1000);
     const totalMinutes = Math.floor(totalSeconds / 60);
     const totalHours = Math.floor(totalMinutes / 60);
     const days = Math.floor(totalHours / 24);
@@ -45,14 +45,16 @@ function formatDuration(milliseconds) {
     const hours = totalHours % 24;
     const minutes = totalMinutes % 60;
     const seconds = totalSeconds % 60;
+    const ms = value % 1000;
 
     const parts = [];
     if (days > 0) parts.push(`**${days}**d`);
     if (hours > 0) parts.push(`**${hours}**h`);
     if (minutes > 0) parts.push(`**${minutes}**m`);
-    if (seconds > 0 && days === 0) parts.push(`**${seconds}**s`);
+    if (seconds > 0) parts.push(`**${seconds}**s`);
+    if (ms > 0 || parts.length === 0) parts.push(`**${ms}**ms`);
 
-    return parts.length > 0 ? parts.join(' and ') : '**أقل من ثانية**';
+    return parts.join(' and ');
 }
 
 // دالة لحساب الوقت الصوتي لهذا الأسبوع فقط من قاعدة البيانات
@@ -186,12 +188,12 @@ async function getRealUserStats(userId) {
         return {
             messages: stats.totalMessages || 0,
             voiceTime: stats.totalVoiceTime || 0,
-            lastActivity: stats.lastActivity ? new Date(stats.lastActivity).toLocaleDateString('en-US') : 'غير معروف',
+            lastActivity: stats.lastActivity ? moment(stats.lastActivity).tz('Asia/Riyadh').format('YYYY-MM-DD') : 'غير معروف',
             joinedChannels: stats.totalVoiceJoins || 0,
             reactionsGiven: stats.totalReactions || 0,
             activeDays: stats.activeDays || 0, // أيام النشاط الفعلية من قاعدة البيانات
             weeklyActiveDays: stats.weeklyActiveDays || 0, // أيام النشاط الأسبوعية
-            accountAge: stats.firstSeen ? Date.now() - stats.firstSeen : 0
+            accountAge: stats.firstSeen ? Date.now() - (stats.firstSeen * 1000) : 0
         };
     } catch (error) {
         console.error('❌ خطأ في الحصول على إحصائيات المستخدم:', error);

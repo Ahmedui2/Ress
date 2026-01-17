@@ -31,21 +31,21 @@ class DatabaseManager {
 
             this.db = new sqlite3.Database(dbPath);
 
-            // تحسينات PRAGMA للأداء العالي والسيرفرات الكبيرة
+            // تحسينات PRAGMA الأسطورية (Ultra-Performance Mode)
             await this.run('PRAGMA journal_mode=WAL');
-            await this.run('PRAGMA page_size=4096');
             await this.run('PRAGMA synchronous=NORMAL');
-            await this.run('PRAGMA auto_vacuum=INCREMENTAL');
-            
-            // تحسينات إضافية للأداء
-            await this.run('PRAGMA cache_size=-64000');
             await this.run('PRAGMA temp_store=MEMORY');
-            await this.run('PRAGMA mmap_size=268435456');
-            await this.run('PRAGMA wal_autocheckpoint=1000');
-            
-            // تحسين القراءة والكتابة
-            await this.run('PRAGMA busy_timeout=5000');
+            await this.run('PRAGMA cache_size=-1048576'); // 1GB كاش مخصص
+            await this.run('PRAGMA mmap_size=4294967296'); // 4GB Memory Map (أقصى سرعة قراءة)
+            await this.run('PRAGMA page_size=65536'); // أقصى حجم صفحة مدعوم لتقليل الـ I/O
             await this.run('PRAGMA locking_mode=NORMAL');
+            await this.run('PRAGMA busy_timeout=30000');
+            await this.run('PRAGMA threads=16'); // استغلال كافة خيوط المعالجة المتاحة
+            await this.run('PRAGMA cache_spill=OFF');
+            await this.run('PRAGMA secure_delete=OFF');
+            await this.run('PRAGMA auto_vacuum=NONE');
+            await this.run('PRAGMA cell_size_check=OFF');
+            await this.run('PRAGMA automatic_index=ON');
 
             // تهيئة الجداول
             await this.createTables();
@@ -641,54 +641,32 @@ class DatabaseManager {
         try {
             // حساب بداية الأسبوع (السبت) بتوقيت الرياض
             const now = moment().tz('Asia/Riyadh');
-            const weekStart = now.clone().startOf('week'); // السبت في moment هو بداية الأسبوع
+            const weekStart = now.clone().startOf('week');
             const weekStartString = weekStart.format('YYYY-MM-DD');
 
-            // جلب جلسات الفويس الأسبوعية
-            const sessions = await this.all(`
-                SELECT * FROM voice_sessions 
-                WHERE user_id = ? AND start_time >= ?
-                ORDER BY start_time DESC
-            `, [userId, weekStart.valueOf()]);
-
-            let weeklyTime = 0;
-            const weeklyChannels = {};
-
-            sessions.forEach(session => {
-                weeklyTime += session.duration;
-
-                if (!weeklyChannels[session.channel_id]) {
-                    weeklyChannels[session.channel_id] = {
-                        channelName: session.channel_name,
-                        totalTime: 0,
-                        sessionsCount: 0
-                    };
-                }
-
-                weeklyChannels[session.channel_id].totalTime += session.duration;
-                weeklyChannels[session.channel_id].sessionsCount += 1;
-            });
-
-            // جلب النشاط اليومي الأسبوعي (رسائل وتفاعلات)
-            const dailyActivity = await this.all(`
-                SELECT SUM(messages) as weeklyMessages, 
+            // جلب النشاط الأسبوعي من جدول النشاط اليومي لضمان التطابق مع الإحصائيات الأخرى
+            const activity = await this.get(`
+                SELECT SUM(voice_time) as weeklyTime,
+                       SUM(messages) as weeklyMessages, 
                        SUM(reactions) as weeklyReactions,
                        SUM(voice_joins) as weeklyVoiceJoins
                 FROM daily_activity 
                 WHERE user_id = ? AND date >= ?
             `, [userId, weekStartString]);
 
-            const weeklyMessages = dailyActivity[0]?.weeklyMessages || 0;
-            const weeklyReactions = dailyActivity[0]?.weeklyReactions || 0;
-            const weeklyVoiceJoins = dailyActivity[0]?.weeklyVoiceJoins || 0;
+            // جلب عدد الجلسات من voice_sessions (اختياري، لكن سنبقي عليه للتوافق)
+            const sessionsCount = await this.get(`
+                SELECT COUNT(*) as count FROM voice_sessions 
+                WHERE user_id = ? AND date >= ?
+            `, [userId, weekStartString]);
 
             return {
-                weeklyTime,
-                weeklySessions: sessions.length,
-                weeklyChannels,
-                weeklyMessages,
-                weeklyReactions,
-                weeklyVoiceJoins
+                weeklyTime: activity?.weeklyTime || 0,
+                weeklySessions: sessionsCount?.count || 0,
+                weeklyChannels: {}, // القنوات التفصيلية تتطلب استعلاماً منفصلاً إذا لزم الأمر
+                weeklyMessages: activity?.weeklyMessages || 0,
+                weeklyReactions: activity?.weeklyReactions || 0,
+                weeklyVoiceJoins: activity?.weeklyVoiceJoins || 0
             };
 
         } catch (error) {

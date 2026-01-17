@@ -125,6 +125,8 @@ async function approveVacation(interaction, userId, approverId) {
     if (!member) return { success: false, message: 'User not found in the guild.' };
 
     const adminRoles = readJson(adminRolesPath, []);
+    console.log(`📋 Admin Roles from file: ${JSON.stringify(adminRoles)}`);
+
     const rolesToRemove = member.roles.cache.filter(role => adminRoles.includes(role.id));
     let actuallyRemovedRoleIds = [];
 
@@ -134,30 +136,21 @@ async function approveVacation(interaction, userId, approverId) {
             console.log(`📋 الأدوار المراد سحبها: ${rolesToRemove.map(r => r.name).join(', ')}`);
 
             await member.roles.remove(rolesToRemove, 'سحب لرولات الإدارية بسبب الإجازة');
-
-            // تسجيل الأدوار التي تم سحبها فعلياً بعد العملية
             actuallyRemovedRoleIds = rolesToRemove.map(role => role.id);
-
-            // التحقق المضاعف من أن الأدوار تم سحبها فعلياً
-            const memberAfterRemoval = await guild.members.fetch(userId);
-            const stillHasRoles = actuallyRemovedRoleIds.filter(roleId => memberAfterRemoval.roles.cache.has(roleId));
-
-            if (stillHasRoles.length > 0) {
-                console.warn(`⚠️ بعض الأدوار لم يتم سحبها: ${stillHasRoles.join(', ')}`);
-                // إزالة الأدوار التي لم يتم سحبها من القائمة
-                actuallyRemovedRoleIds = actuallyRemovedRoleIds.filter(roleId => !stillHasRoles.includes(roleId));
-            }
-
-            console.log(`✅ تأكيد نهائي: تم سحب ${actuallyRemovedRoleIds.length} دور بنجاح`);
-
-            console.log(`✅ تم سحب ${actuallyRemovedRoleIds.length} دور بنجاح`);
-            console.log(`📋 معرفات الأدوار المسحوبة: ${actuallyRemovedRoleIds.join(', ')}`);
         } else {
             console.log(`⚠️ لا توجد أدوار إدارية لسحبها من المستخدم ${member.user.tag}`);
+            // Check if member has any roles that are in adminRoles but maybe cache is stale
+            const memberFetch = await guild.members.fetch(userId);
+            const rolesToRemoveFetch = memberFetch.roles.cache.filter(role => adminRoles.includes(role.id));
+            if (rolesToRemoveFetch.size > 0) {
+                console.log(`🔧 [Retry] محاولة سحب ${rolesToRemoveFetch.size} دور إداري`);
+                await memberFetch.roles.remove(rolesToRemoveFetch, 'سحب لرولات الإدارية بسبب الإجازة');
+                actuallyRemovedRoleIds = rolesToRemoveFetch.map(role => role.id);
+            }
         }
     } catch (error) {
         console.error(`Failed to remove roles from ${member.user.tag}:`, error);
-        return { success: false, message: 'Failed to remove user roles. Check bot permissions.' };
+        // We continue even if roles removal fail, but we log it
     }
 
     // إنشاء بيانات الإجازة النشطة مع ضمان حفظ الرولات
@@ -271,38 +264,19 @@ async function notifyAdminsVacationEnded(client, guild, vacation, userId, reason
         durationText = durationText.trim();
 
         const embed = colorManager.createEmbed()
-            .setTitle('Vacation ended')
+            .setTitle('إجازة منتهية')
             .setColor(colorManager.getColor('ended') || '#FFA500')
-            .setDescription(`**انتهت إجازة <@${userId}>**`)
+            .setDescription(`تم إنهاء إجازة العضو <@${userId}> بنجاح واستعادة صلاحياته.`)
             .addFields(
-                { name: 'مدة الإجازة', value: durationText, inline: true },
-                { name: 'سبب الإنهاء', value: reason, inline: true },
-                { name: 'الرولات المستعادة', value: rolesRestored.map(id => `<@&${id}>`).join(', ') || 'لا توجد', inline: false },
-                { name: ' تاريخ البدء', value: new Date(vacation.startDate).toLocaleString('en-US', { 
-                    timeZone: 'Asia/Riyadh',
-                    year: 'numeric', 
-                    month: '2-digit', 
-                    day: '2-digit', 
-                    hour: '2-digit', 
-                    minute: '2-digit'
-                }), inline: true },
-                { name: 'تاريخ الانتهاء الأصلي', value: new Date(vacation.endDate).toLocaleString('en-US', { 
-                    timeZone: 'Asia/Riyadh',
-                    year: 'numeric', 
-                    month: '2-digit', 
-                    day: '2-digit', 
-                    hour: '2-digit', 
-                    minute: '2-digit'
-                }), inline: true },
-                { name: ' تاريخ الانتهاء الفعلي', value: actualEndDate.toLocaleString('en-US', { 
-                    timeZone: 'Asia/Riyadh',
-                    year: 'numeric', 
-                    month: '2-digit', 
-                    day: '2-digit', 
-                    hour: '2-digit', 
-                    minute: '2-digit'
-                }), inline: true }
+                { name: 'العضو', value: `<@${userId}>`, inline: true },
+                { name: 'المدة', value: `\`${durationText}\``, inline: true },
+                { name: 'السبب', value: reason || 'غير محدد', inline: false },
+                { name: 'الرولات', value: rolesRestored.map(id => `<@&${id}>`).join(' ') || '`لا توجد`', inline: false },
+                { name: 'البدء', value: `<t:${Math.floor(new Date(vacation.startDate).getTime() / 1000)}:f>`, inline: true },
+                { name: 'الانتهاء', value: `<t:${Math.floor(actualEndDate.getTime() / 1000)}:f>`, inline: true }
             )
+            .setThumbnail(user ? user.displayAvatarURL() : null)
+            .setFooter({ text: 'Space' })
             .setTimestamp();
 
         if (user) {
