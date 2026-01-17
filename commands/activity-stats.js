@@ -42,15 +42,36 @@ async function execute(message, args, { client }) {
 
     // التحقق من المنشن
     let targetUser = message.author;
-    let targetMember = message.member;
 
-    if (message.mentions.users.size > 0) {
-        targetUser = message.mentions.users.first();
-        targetMember = await message.guild.members.fetch(targetUser.id);
+let targetMember = message.member;
+
+// لو كتب منشن
+
+if (message.mentions.users.size > 0) {
+
+    targetUser = message.mentions.users.first();
+
+    targetMember = await message.guild.members.fetch(targetUser.id);
+
+// لو كتب ID
+
+} else if (args[0]) {
+
+    try {
+
+        targetMember = await message.guild.members.fetch(args[0]);
+
+        targetUser = targetMember.user;
+
+    } catch (err) {
+
+        return message.reply("❌ الآيدي غير صحيح أو العضو غير موجود");
+
     }
 
+}
     // إظهار الإحصائيات الأسبوعية بشكل افتراضي
-    await showActivityStats(message, targetUser, targetMember, 'weekly', client);
+    await showActivityStats(message, targetUser, targetMember, 'monthly', client);
 }
 
 async function showActivityStats(message, user, member, period = 'weekly', client) {
@@ -66,8 +87,15 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
 
         if (period === 'daily') {
             stats = await dbManager.getDailyStats(user.id);
-            periodLabel = 'Daily Active';
-            activeDays = stats.activeDays || (stats.voiceTime > 0 || stats.messages > 0 ? 1 : 0);
+            periodLabel = 'Daily Acrive';
+            activeDays = stats.activeDays;
+            
+            // إضافة الوقت الحي لليومي
+            if (global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
+                const session = global.client.voiceSessions.get(user.id);
+                const liveDuration = Date.now() - (session.startTime || session.sessionStartTime);
+                stats.voiceTime = (stats.voiceTime || 0) + liveDuration;
+            }
         } else if (period === 'weekly') {
             stats = await dbManager.getWeeklyStats(user.id);
             const weeklyActiveDays = await dbManager.getWeeklyActiveDays(user.id);
@@ -78,16 +106,29 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
             stats.messages = stats.weeklyMessages;
             stats.reactions = stats.weeklyReactions;
             stats.voiceJoins = stats.weeklyVoiceJoins;
+            
+            // إضافة الوقت الحي للأسبوعي
+            if (global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
+                const session = global.client.voiceSessions.get(user.id);
+                const liveDuration = Date.now() - (session.startTime || session.sessionStartTime);
+                stats.voiceTime = (stats.voiceTime || 0) + liveDuration;
+            }
         } else if (period === 'monthly') {
             stats = await dbManager.getMonthlyStats(user.id);
-            const monthlyActiveDays = await dbManager.getActiveDaysCount(user.id, 30);
             periodLabel = 'Monthly Active';
-            activeDays = monthlyActiveDays;
+            activeDays = stats.activeDays;
             // إضافة تعويض للبيانات الشهرية
             stats.voiceTime = stats.voiceTime || 0;
             stats.messages = stats.messages || 0;
             stats.reactions = stats.reactions || 0;
             stats.voiceJoins = stats.voiceJoins || 0;
+            
+            // إضافة الوقت الحي للشهري
+            if (global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
+                const session = global.client.voiceSessions.get(user.id);
+                const liveDuration = Date.now() - (session.startTime || session.sessionStartTime);
+                stats.voiceTime = (stats.voiceTime || 0) + liveDuration;
+            }
         }
 
         // جلب أكثر قناة صوتية مع قيمة افتراضية
@@ -203,7 +244,14 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
                 if (newPeriod === 'daily') {
                     stats = await dbManager.getDailyStats(user.id);
                     periodLabel = 'Daily Active';
-                    activeDays = stats.activeDays || (stats.voiceTime > 0 || stats.messages > 0 ? 1 : 0);
+                    activeDays = stats.activeDays;
+                    
+                    // إضافة الوقت الحي
+                    if (global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
+                        const session = global.client.voiceSessions.get(user.id);
+                        const liveDuration = Date.now() - (session.startTime || session.sessionStartTime);
+                        stats.voiceTime = (stats.voiceTime || 0) + liveDuration;
+                    }
                 } else if (newPeriod === 'weekly') {
                     stats = await dbManager.getWeeklyStats(user.id);
                     const weeklyActiveDays = await dbManager.getWeeklyActiveDays(user.id);
@@ -213,15 +261,28 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
                     stats.messages = stats.weeklyMessages;
                     stats.reactions = stats.weeklyReactions;
                     stats.voiceJoins = stats.weeklyVoiceJoins;
+                    
+                    // إضافة الوقت الحي
+                    if (global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
+                        const session = global.client.voiceSessions.get(user.id);
+                        const liveDuration = Date.now() - (session.startTime || session.sessionStartTime);
+                        stats.voiceTime = (stats.voiceTime || 0) + liveDuration;
+                    }
                 } else if (newPeriod === 'monthly') {
                     stats = await dbManager.getMonthlyStats(user.id);
-                    const monthlyActiveDays = await dbManager.getActiveDaysCount(user.id, 30);
                     periodLabel = 'Monthly Active';
-                    activeDays = monthlyActiveDays;
+                    activeDays = stats.activeDays;
                     stats.voiceTime = stats.voiceTime || 0;
                     stats.messages = stats.messages || 0;
                     stats.reactions = stats.reactions || 0;
                     stats.voiceJoins = stats.voiceJoins || 0;
+                    
+                    // إضافة الوقت الحي
+                    if (global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
+                        const session = global.client.voiceSessions.get(user.id);
+                        const liveDuration = Date.now() - (session.startTime || session.sessionStartTime);
+                        stats.voiceTime = (stats.voiceTime || 0) + liveDuration;
+                    }
                 }
 
                 const topVoiceChannel = await dbManager.getMostActiveVoiceChannel(user.id, newPeriod) || { channel_id: null, channel_name: 'No Active Or Leave Channel', total_time: 0, session_count: 0 };

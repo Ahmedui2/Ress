@@ -45,21 +45,11 @@ module.exports = {
             // 3. بناء الـ Embed الأساسي مع الصور والتنسيق المحسن
             const embed = this.createDownsEmbed(user, activeDowns, isTargetingOther);
 
-            // 4. إضافة زر التحديث التفاعلي
-            const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`refresh_downs_${targetUserId}`)
-                    .setLabel('تحديث البيانات')
-                    .setEmoji('🔄')
-                    .setStyle(ButtonStyle.Secondary)
-            );
-
-            // 5. استخراج الرولات الفريدة لمنع خطأ Invalid Form Body
+            // 4. استخراج الرولات الفريدة لمنع خطأ Invalid Form Body
             const uniqueRoleIds = [...new Set(activeDowns.filter(d => d.roleId).map(d => d.roleId))];
 
             return await message.reply({ 
                 embeds: [embed],
-                components: [row],
                 allowedMentions: { 
                     parse: ['users'],
                     roles: uniqueRoleIds
@@ -100,24 +90,5 @@ module.exports = {
         });
 
         return embed;
-    },
-
-    // معالج التفاعل لزر التحديث
-    async handleInteraction(interaction, context) {
-        const targetUserId = interaction.customId.split('_').pop();
-        const { client } = context;
-        
-        const user = await client.users.fetch(targetUserId).catch(() => null);
-        const activeDowns = downManager.getUserDowns(targetUserId);
-        
-        const isTargetingOther = interaction.user.id !== targetUserId;
-        const embed = this.createDownsEmbed(user, activeDowns, isTargetingOther);
-        
-        const uniqueRoleIds = [...new Set(activeDowns.filter(d => d.roleId).map(d => d.roleId))];
-
-        await interaction.update({ 
-            embeds: [embed],
-            allowedMentions: { parse: ['users'], roles: uniqueRoleIds }
-        }).catch(() => null);
     }
 };

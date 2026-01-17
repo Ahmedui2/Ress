@@ -305,10 +305,10 @@ async function handleInteraction(interaction, context) {
         );
 
         if (!isAuthorizedApprover) {
-            const errorEmbed = new EmbedBuilder()
-                .setColor('#FF0000')
-                .setDescription('❌ ** خوي ها؟.**');
-            return interaction.editReply({ embeds: [errorEmbed] });
+            return interaction.reply({ 
+                content: '❌ ** خوي ها؟.**', 
+                ephemeral: true 
+            });
         }
 
         const vacationsData = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));

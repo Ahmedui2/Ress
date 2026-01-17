@@ -140,16 +140,21 @@ function readJsonFile(filePath, defaultData = {}) {
 }
 
 async function getSettings(guildId) {
-    const row = await getQuery('SELECT * FROM streak_settings WHERE guild_id = ?', [guildId]);
-    if (!row) return null;
-    
-    return {
-        approverType: row.approver_type,
-        approverTargets: row.approver_targets ? JSON.parse(row.approver_targets) : [],
-        lockedChannelId: row.locked_channel_id,
-        dividerImageUrl: row.divider_image_url,
-        reactionEmojis: row.reaction_emojis ? JSON.parse(row.reaction_emojis) : []
-    };
+    try {
+        const row = await getQuery('SELECT * FROM streak_settings WHERE guild_id = ?', [guildId]);
+        if (!row) return null;
+        
+        return {
+            approverType: row.approver_type,
+            approverTargets: row.approver_targets ? JSON.parse(row.approver_targets) : [],
+            lockedChannelId: row.locked_channel_id,
+            dividerImageUrl: row.divider_image_url,
+            reactionEmojis: row.reaction_emojis ? JSON.parse(row.reaction_emojis) : []
+        };
+    } catch (error) {
+        console.error('Error in getSettings:', error);
+        return null;
+    }
 }
 
 async function saveSettings(guildId, settings) {
@@ -707,6 +712,7 @@ async function handleDeleteReasonModal(interaction, client) {
     for (const msgId of userMessageIds) {
         try {
             const msg = await interaction.channel.messages.fetch(msgId).catch(() => null);
+            if (!db) return resolve(null);
             if (msg) await msg.delete();
         } catch (err) {
             console.error(`فشل حذف الرسالة ${msgId}:`, err.message);

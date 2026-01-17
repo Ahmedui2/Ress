@@ -37,29 +37,47 @@ module.exports = {
             }
 
             let inviterInfo = 'غير معروف';
-            if (member && member.inviterId) {
-                inviterInfo = `<@${member.inviterId}>`;
+            let inviteCount = 0;
+            let dbInvites = { total_invites: 0 };
+
+            try {
+                const { dbManager } = require('../utils/database.js');
+                const inviterData = await dbManager.getInviter(targetUser.id);
+                if (inviterData && inviterData.inviter_id) {
+                    inviterInfo = `<@${inviterData.inviter_id}>`;
+                } else if (member) {
+                    // إذا لم يوجد داعي مسجل (للأعضاء القدامى)، ننسبهم لمالك السيرفر
+                    inviterInfo = `<@${message.guild.ownerId}>`;
+                }
+
+                dbInvites = await dbManager.getInviteStats(targetUser.id);
+                inviteCount = dbInvites.total_invites;
+            } catch (dbError) {
+                console.error('Error fetching invite stats from DB:', dbError);
+                if (member) inviterInfo = `<@${message.guild.ownerId}>`;
             }
 
-            let inviteCount = 0;
-            try {
-                const guildInvites = await message.guild.invites.fetch();
-                const userInvites = guildInvites.filter(i => i.inviter && i.inviter.id === targetUser.id);
-                userInvites.forEach(i => inviteCount += i.uses);
-            } catch (e) {
-                inviteCount = 0;
+            // Fallback to live fetch if DB is 0 or error
+            if (inviteCount === 0) {
+                try {
+                    const guildInvites = await message.guild.invites.fetch();
+                    const userInvites = guildInvites.filter(i => i.inviter && i.inviter.id === targetUser.id);
+                    userInvites.forEach(i => inviteCount += i.uses);
+                } catch (e) {
+                    // keep 0
+                }
             }
 
             let devices = 'Offline';
-            if (member && member.presence) {
+            if (member && member.presence && member.presence.clientStatus) {
                 const clientStatus = member.presence.clientStatus;
-                if (clientStatus) {
-                    const deviceMap = { desktop: 'Desktop', mobile: 'Mobile', web: 'Web' };
-                    const activeDevices = Object.keys(clientStatus).map(key => deviceMap[key]).filter(Boolean);
-                    devices = activeDevices.length > 0 ? activeDevices.join(', ') : 'Offline';
-                }
-            } else if (member) {
-                devices = 'Mobile'; 
+                const deviceMap = { desktop: 'Desktop', mobile: 'Mobile', web: 'Web' };
+                const activeDevices = Object.keys(clientStatus).map(key => deviceMap[key]).filter(Boolean);
+                devices = activeDevices.length > 0 ? activeDevices.join(', ') : 'Offline';
+            } else if (member && member.voice && member.voice.channel) {
+                devices = 'Voice (Mobile/PC)';
+            } else {
+                devices = 'Offline';
             }
 
             const embed = colorManager.createEmbed()
@@ -69,15 +87,15 @@ module.exports = {
                 })
                 .setThumbnail(targetUser.displayAvatarURL({ dynamic: true, size: 256 }))
                 .setDescription(
-                    `**تاريخ دخول السيرفر :**\n\n` +
+                    `**تاريخ دخول السيرفر :**\n` +
                     `**${joinDate}**\n\n` +
-                    `**تاريخ انشاء الحساب :**\n\n` +
+                    `**تاريخ انشاء الحساب :**\n` +
                     `**${accountAge}**\n\n` +
-                    `**تم دعوة بواسطة :**\n\n` +
+                    `**تم دعوة بواسطة :**\n` +
                     `${inviterInfo}\n\n` +
-                    `**الدعوات :**\n\n` +
+                    `**الدعوات :**\n` +
                     `**${inviteCount.toLocaleString()}**\n\n` +
-                    `**الاجهزه :**\n\n` +
+                    `**الاجهزه :**\n` +
                     `**${devices}**` +
                     isNewMember
                 );

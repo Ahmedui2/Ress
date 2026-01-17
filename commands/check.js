@@ -22,8 +22,31 @@ async function execute(message, args, { client, BOT_OWNERS, ADMIN_ROLES }) {
 
     const member = await message.guild.members.fetch(message.author.id);
     const hasAdministrator = member.permissions.has('Administrator');
+    const isOwner = BOT_OWNERS.includes(message.author.id);
+    
+    const fs = require('fs');
+    const botConfigPath = path.join(__dirname, '..', 'data', 'botConfig.json');
+    const botConfig = JSON.parse(fs.readFileSync(botConfigPath, 'utf8'));
+    const allowedRoles = botConfig.checkAllowedRoles || [];
+    const hasAllowedRole = member.roles.cache.some(role => allowedRoles.includes(role.id));
 
-    if (!hasAdministrator) {
+    if (args[0] && args[0].toLowerCase() === 'allow') {
+        if (!isOwner) return message.react('❌');
+        
+        let roleToAllow = message.mentions.roles.first() || message.guild.roles.cache.get(args[1]);
+        if (!roleToAllow) return message.reply('**الرجاء منشن رول أو كتابة ID الرول المسموح له**');
+        
+        if (!botConfig.checkAllowedRoles) botConfig.checkAllowedRoles = [];
+        if (!botConfig.checkAllowedRoles.includes(roleToAllow.id)) {
+            botConfig.checkAllowedRoles.push(roleToAllow.id);
+            fs.writeFileSync(botConfigPath, JSON.stringify(botConfig, null, 2));
+            return message.reply(`**✅ تم السماح للرول ${roleToAllow.name} باستخدام أمر check**`);
+        } else {
+            return message.reply(`**⚠️ الرول ${roleToAllow.name} مسموح له بالفعل**`);
+        }
+    }
+
+    if (!hasAdministrator && !hasAllowedRole) {
         await message.react('❌');
         return;
     }
@@ -70,11 +93,14 @@ async function getColorIndicator(userId, client, dbManager) {
             WHERE user_id = ? AND date >= ?
         `, [userId, dayStart.format('YYYY-MM-DD')]);
 
-        const weeklyVoiceTime = weeklyStats[0]?.voiceTime || 0;
+        const activeSessions = client.voiceSessions || new Map();
+        const liveDuration = activeSessions.has(userId) ? (Date.now() - (activeSessions.get(userId).startTime || activeSessions.get(userId).sessionStartTime)) : 0;
+
+        const weeklyVoiceTime = (weeklyStats[0]?.voiceTime || 0) + liveDuration;
         const weeklyMessages = weeklyStats[0]?.messages || 0;
-        const monthlyVoiceTime = monthlyStats[0]?.voiceTime || 0;
+        const monthlyVoiceTime = (monthlyStats[0]?.voiceTime || 0) + liveDuration;
         const monthlyMessages = monthlyStats[0]?.messages || 0;
-        const dailyVoiceTime = dailyStats[0]?.voiceTime || 0;
+        const dailyVoiceTime = (dailyStats[0]?.voiceTime || 0) + liveDuration;
         const dailyMessages = dailyStats[0]?.messages || 0;
 
         const weeklyXP = Math.floor(weeklyMessages / 10);
@@ -196,29 +222,6 @@ async function getColorIndicator(userId, client, dbManager) {
         console.error('خطأ في حساب مؤشر اللون:', error);
         return '<:emoji_9:1429246586289918063>';
     }
-}
-
-function formatDuration(value) {
-    if (typeof value !== 'number' || isNaN(value) || value <= 0) return '0m';
-    
-    let totalMinutes;
-    // منطق ذكي: إذا كان الرقم أكبر من دقائق سنة كاملة، فهو ميلي ثانية
-    if (value > 525600) {
-        totalMinutes = Math.floor(value / 60000);
-    } else {
-        totalMinutes = Math.floor(value);
-    }
-
-    const days = Math.floor(totalMinutes / 1440);
-    const hours = Math.floor((totalMinutes % 1440) / 60);
-    const mins = totalMinutes % 60;
-    
-    const parts = [];
-    if (days > 0) parts.push(`${days}d`);
-    if (hours > 0) parts.push(`${hours}h`);
-    if (mins > 0 || parts.length === 0) parts.push(`${mins}m`);
-    
-    return parts.join(' ');
 }
 
 async function showRoleActivityStats(message, role, client) {
@@ -665,19 +668,19 @@ async function showUserActivityStats(message, user, client) {
     }
 }
 
-function formatDuration(minutes) {
-    if (!minutes || minutes <= 0) return '0m';
-    
-    const days = Math.floor(minutes / 1440);
-    const hours = Math.floor((minutes % 1440) / 60);
-    const mins = Math.floor(minutes % 60);
-    
-    const parts = [];
-    if (days > 0) parts.push(`${days}d`);
-    if (hours > 0) parts.push(`${hours}h`);
-    if (mins > 0 || parts.length === 0) parts.push(`${mins}m`);
-    
-    return parts.join(' ');
+function formatDuration(milliseconds) {
+    const seconds = Math.floor(milliseconds / 1000);
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+
+    if (hours > 0) {
+        return `${hours}h ${minutes}m`;
+    } else if (minutes > 0) {
+        return `${minutes}m ${secs}s`;
+    } else {
+        return `${secs}s`;
+    }
 }
 
 module.exports = { name, execute };

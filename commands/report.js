@@ -1849,7 +1849,80 @@ async function handleInteraction(interaction, context) {
 function registerInteractionHandler(client) {
     console.log('🔧 تسجيل معالج تفاعلات التقارير...');
 
-    // تم نقل معالجة التفاعلات إلى InteractionRouter المركزي في bot.js
+    client.on('interactionCreate', async (interaction) => {
+        // التحقق من أن التفاعل يخص نظام التقارير
+        if (!interaction.customId || !interaction.customId.startsWith('report_')) {
+            return;
+        }
+
+        console.log(`[Report] معالجة تفاعل: ${interaction.customId} من ${interaction.user.tag}`);
+
+        try {
+            // إعادة تحميل البيانات من الملفات
+            const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
+            const pointsPath = path.join(__dirname, '..', 'data', 'points.json');
+            const botConfigPath = path.join(__dirname, '..', 'data', 'botConfig.json');
+
+            let responsibilities = {};
+            let points = {};
+            let BOT_OWNERS = [];
+
+            try {
+                if (fs.existsSync(responsibilitiesPath)) {
+                    responsibilities = JSON.parse(fs.readFileSync(responsibilitiesPath, 'utf8'));
+                }
+                if (fs.existsSync(pointsPath)) {
+                    points = JSON.parse(fs.readFileSync(pointsPath, 'utf8'));
+                }
+                if (fs.existsSync(botConfigPath)) {
+                    const botConfig = JSON.parse(fs.readFileSync(botConfigPath, 'utf8'));
+                    BOT_OWNERS = botConfig.owners || [];
+                }
+            } catch (error) {
+                console.error('❌ خطأ في قراءة البيانات:', error);
+            }
+
+            // دالة للحفظ
+            const scheduleSave = () => {
+                try {
+                    fs.writeFileSync(pointsPath, JSON.stringify(points, null, 2));
+                    const botConfig = JSON.parse(fs.readFileSync(botConfigPath, 'utf8'));
+                    const pendingReportsObj = {};
+                    for (const [key, value] of client.pendingReports.entries()) {
+                        pendingReportsObj[key] = value;
+                    }
+                    botConfig.pendingReports = pendingReportsObj;
+                    fs.writeFileSync(botConfigPath, JSON.stringify(botConfig, null, 2));
+                } catch (error) {
+                    console.error('❌ خطأ في حفظ البيانات:', error);
+                }
+            };
+
+            // إنشاء كائن السياق
+            const context = {
+                client,
+                responsibilities,
+                points,
+                scheduleSave,
+                BOT_OWNERS,
+                reportsConfig: {},
+                logConfig: client.logConfig,
+                colorManager
+            };
+
+            // استدعاء المعالج
+            await handleInteraction(interaction, context);
+
+        } catch (error) {
+            console.error('خطأ في معالج تفاعلات التقارير:', error);
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({
+                    content: '❌ حدث خطأ في معالجة التفاعل.',
+                    ephemeral: true
+                }).catch(() => {});
+            }
+        }
+    });
 
     console.log('✅ تم تسجيل معالج تفاعلات التقارير بنجاح');
 }

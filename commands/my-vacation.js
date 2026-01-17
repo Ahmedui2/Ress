@@ -490,10 +490,10 @@ async function handleInteraction(interaction, context) {
         );
 
         if (!isAuthorizedApprover) {
-            const errorEmbed = new EmbedBuilder()
-                .setColor('#FF0000')
-                .setDescription('❌ **يعني محد شاف لا تسوي خوي بس**');
-            return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+            return interaction.reply({ 
+                content: '❌ **يعني محد شاف لا تسوي خوي بس**', 
+                ephemeral: true 
+            });
         }
 
         if (action === 'reject') {
@@ -527,6 +527,7 @@ async function handleInteraction(interaction, context) {
         const requestedUser = await client.users.fetch(userId).catch(() => null);
         
         if (action === 'approve') {
+            await interaction.deferUpdate().catch(() => {});
             try {
                 // إنهاء الإجازة واستعادة الرولات فعلياً
                 const result = await vacationManager.endVacation(interaction.guild, client, userId, 'تمت الموافقة على الإنهاء المبكر من الإدارة.');
@@ -534,7 +535,9 @@ async function handleInteraction(interaction, context) {
                 if (result.success) {
                     // إزالة طلب الإنهاء من قائمة الانتظار (endVacation تحذف الإجازة النشطة)
                     const currentVacations = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
-                    delete currentVacations.pendingTermination?.[userId];
+                    if (currentVacations.pendingTermination) {
+                        delete currentVacations.pendingTermination[userId];
+                    }
                     vacationManager.saveVacations(currentVacations);
 
                     const successEmbed = new EmbedBuilder()
@@ -568,7 +571,9 @@ async function handleInteraction(interaction, context) {
         const vacations = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
         
         // إزالة طلب الإنهاء وإضافة كولداون
-        delete vacations.pendingTermination?.[userId];
+        if (vacations.pendingTermination) {
+            delete vacations.pendingTermination[userId];
+        }
         if (!vacations.cooldowns) vacations.cooldowns = {};
         vacations.cooldowns[userId] = Date.now() + (12 * 60 * 60 * 1000);
         
@@ -587,6 +592,7 @@ async function handleInteraction(interaction, context) {
             .setFooter({ text: 'Space' })
             .setTimestamp();
 
+        // تحديث الرسالة الأصلية التي تحتوي على الأزرار
         await interaction.editReply({ embeds: [rejectEmbed], components: [] });
 
         // تنبيه المستخدم في الخاص

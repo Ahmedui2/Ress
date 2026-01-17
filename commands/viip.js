@@ -453,7 +453,7 @@ async function execute(message, args, { responsibilities, BOT_OWNERS, client, sa
                                     console.log('✅ تم قطع الاتصال مع Discord');
 
                                     // إعادة تسجيل الدخول
-                                    await client.login('MTE0ODg4Mjc3NTQ0MTY5MDcyNQ.Gal49O.JUykqSzscJHSqF9Q1cNgZR69ma5qYkWRWObUn8');
+                                    await client.login(process.env.DISCORD_TOKEN);
                                     console.log('✅ تم إعادة الاتصال مع Discord بنجاح');
                                 } catch (error) {
                                     console.error('❌ فشل في إعادة تشغيل البوت:', error);

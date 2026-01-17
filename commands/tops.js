@@ -263,8 +263,29 @@ async function getTopUsers(db, category, period, limit = 50) {
             }
         }
 
-        const results = await db.all(query, params);
-        return results || [];
+        let results = await db.all(query, params);
+        results = results || [];
+
+        // إضافة الوقت الحي للفويس في الترتيب (اليومي والأسبوعي والشهري والكلي)
+        if (category === 'voice' && client && client.voiceSessions) {
+            const updatedResults = [...results];
+            
+            for (const [userId, session] of client.voiceSessions.entries()) {
+                const liveDuration = Date.now() - (session.startTime || session.sessionStartTime);
+                const existingUser = updatedResults.find(r => r.user_id === userId);
+                
+                if (existingUser) {
+                    existingUser.value = (existingUser.value || 0) + liveDuration;
+                } else {
+                    updatedResults.push({ user_id: userId, value: liveDuration });
+                }
+            }
+
+            // إعادة الترتيب لضمان الدقة بعد الإضافة اللحظية
+            return updatedResults.sort((a, b) => b.value - a.value).slice(0, limit || 50);
+        }
+
+        return results;
     } catch (error) {
         console.error('خطأ في جلب أفضل المستخدمين:', error);
         return [];
@@ -331,7 +352,7 @@ async function execute(message, args, { client }) {
     }
 
     let currentCategory = null; // null means initial view (voice + chat)
-    let currentPeriod = 'weekly';
+    let currentPeriod = 'monthly';
     let currentPage = 0;
     const pageSize = 10;
 
