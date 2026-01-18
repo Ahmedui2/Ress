@@ -819,9 +819,13 @@ async function handleRestoreRequest(interaction, client, botOwners) {
         return interaction.reply({ content: '**تعذر تحديد السيرفر للطلب**', flags: 64 });
     }
 
+    if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferReply({ ephemeral: true });
+    }
+
     const userStreak = await getUserStreak(guildId, userId);
     if (!userStreak || userStreak.current_streak > 0) {
-        return interaction.reply({ content: '**لا يمكن طلب استعادة الـ Streak حالياً**', flags: 64 });
+        return interaction.editReply({ content: '**لا يمكن طلب استعادة الـ Streak حالياً**' });
     }
 
     const existingRequest = await getQuery(
@@ -830,7 +834,7 @@ async function handleRestoreRequest(interaction, client, botOwners) {
     );
 
     if (existingRequest) {
-        return interaction.reply({ content: '**لديك طلب استعادة قيد الانتظار بالفعل**', flags: 64 });
+        return interaction.editReply({ content: '**لديك طلب استعادة قيد الانتظار بالفعل**' });
     }
 
     await createRestoreRequest(guildId, userId, userStreak.longest_streak);
@@ -872,7 +876,7 @@ async function handleRestoreRequest(interaction, client, botOwners) {
         }
     }
 
-    await interaction.reply({ content: '**تم إرسال طلب استعادة الـ Streak للمسؤولين**', flags: 64 });
+    await interaction.editReply({ content: '**تم إرسال طلب استعادة الـ Streak للمسؤولين**' });
 }
 
 async function getApprovers(settings, guild, botOwners) {
@@ -912,6 +916,10 @@ async function handleApproveRestore(interaction, client) {
         return interaction.reply({ content: '**تعذر تحديد بيانات الطلب**', flags: 64 });
     }
 
+    if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferUpdate();
+    }
+
     const request = await getQuery(
         'SELECT * FROM streak_restore_requests WHERE guild_id = ? AND user_id = ? AND status = "pending" ORDER BY created_at DESC LIMIT 1',
         [guildId, userId]
@@ -925,9 +933,15 @@ async function handleApproveRestore(interaction, client) {
         );
         
         if (cancelledRequest) {
+            if (interaction.deferred) {
+                return interaction.editReply({ content: '**تم إلغاء هذا الطلب تلقائياً لأن العضو بدأ سلسلة ستريك جديدة بالفعل**' });
+            }
             return interaction.reply({ content: '**تم إلغاء هذا الطلب تلقائياً لأن العضو بدأ سلسلة ستريك جديدة بالفعل**', flags: 64 });
         }
         
+        if (interaction.deferred) {
+            return interaction.editReply({ content: '**لا يوجد طلب استعادة قيد الانتظار لهذا المستخدم**' });
+        }
         return interaction.reply({ content: '**لا يوجد طلب استعادة قيد الانتظار لهذا المستخدم**', flags: 64 });
     }
 
@@ -952,7 +966,7 @@ async function handleApproveRestore(interaction, client) {
         }
     }
 
-    await interaction.update({ 
+    await interaction.editReply({ 
         embeds: [colorManager.createEmbed()
             .setTitle('**تمت الموافقة على الطلب**')
             .setDescription(`تمت الموافقة على استعادة الـ Streak للعضو <@${userId}>`)
@@ -968,6 +982,10 @@ async function handleRejectRestore(interaction, client) {
         return interaction.reply({ content: '**تعذر تحديد بيانات الطلب**', flags: 64 });
     }
 
+    if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferUpdate();
+    }
+
     const request = await getQuery(
         'SELECT * FROM streak_restore_requests WHERE guild_id = ? AND user_id = ? AND status = "pending" ORDER BY created_at DESC LIMIT 1',
         [guildId, userId]
@@ -981,9 +999,15 @@ async function handleRejectRestore(interaction, client) {
         );
         
         if (cancelledRequest) {
+            if (interaction.deferred) {
+                return interaction.editReply({ content: '**تم إلغاء هذا الطلب تلقائياً لأن العضو بدأ سلسلة ستريك جديدة بالفعل**' });
+            }
             return interaction.reply({ content: '**تم إلغاء هذا الطلب تلقائياً لأن العضو بدأ سلسلة ستريك جديدة بالفعل**', flags: 64 });
         }
         
+        if (interaction.deferred) {
+            return interaction.editReply({ content: '**لا يوجد طلب استعادة قيد الانتظار لهذا المستخدم**' });
+        }
         return interaction.reply({ content: '**لا يوجد طلب استعادة قيد الانتظار لهذا المستخدم**', flags: 64 });
     }
 
@@ -1005,7 +1029,7 @@ async function handleRejectRestore(interaction, client) {
         }
     }
 
-    await interaction.update({ 
+    await interaction.editReply({ 
         embeds: [colorManager.createEmbed()
             .setTitle('**تم رفض الطلب**')
             .setDescription(`تم رفض طلب استعادة الـ Streak للعضو <@${userId}>`)
