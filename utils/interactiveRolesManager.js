@@ -9,15 +9,40 @@ const interactiveRolesPath = path.join(__dirname, '..', 'data', 'interactiveRole
 function loadSettings() {
     try {
         if (fs.existsSync(interactiveRolesPath)) {
-            return JSON.parse(fs.readFileSync(interactiveRolesPath, 'utf8'));
+            const data = JSON.parse(fs.readFileSync(interactiveRolesPath, 'utf8'));
+            if (!data.settings) {
+                data.settings = { approvers: [], interactiveRoles: [], requestChannel: null, exceptions: [] };
+            }
+            if (!Array.isArray(data.settings.exceptions)) {
+                data.settings.exceptions = [];
+            } else {
+                data.settings.exceptions = data.settings.exceptions.map((entry) => {
+                    if (entry && Array.isArray(entry.keywords)) {
+                        return { roleId: entry.roleId, keywords: entry.keywords.map(keyword => keyword.toLowerCase()) };
+                    }
+                    if (entry && typeof entry.keyword === 'string') {
+                        return { roleId: entry.roleId, keywords: [entry.keyword.toLowerCase()] };
+                    }
+                    return entry;
+                }).filter(entry => entry && entry.roleId && Array.isArray(entry.keywords));
+            }
+            if (!data.exceptionCooldowns || typeof data.exceptionCooldowns !== 'object') {
+                data.exceptionCooldowns = {};
+            }
+            if (!data.pendingExceptionRequests || typeof data.pendingExceptionRequests !== 'object' || Array.isArray(data.pendingExceptionRequests)) {
+                data.pendingExceptionRequests = {};
+            }
+            return data;
         }
     } catch (error) {
         console.error('Error loading interactive roles settings:', error);
     }
     return {
-        settings: { approvers: [], interactiveRoles: [], requestChannel: null },
+        settings: { approvers: [], interactiveRoles: [], requestChannel: null, exceptions: [] },
         pendingRequests: {},
-        cooldowns: {}
+        cooldowns: {},
+        exceptionCooldowns: {},
+        pendingExceptionRequests: {}
     };
 }
 
@@ -76,11 +101,130 @@ async function handleMessage(message) {
             return;
         }
 
+        const normalizedContent = message.content.toLowerCase();
+        const exceptions = settings.settings.exceptions || [];
+        const matchedException = exceptions
+            .map((entry) => {
+                if (!entry || !entry.roleId || !Array.isArray(entry.keywords)) return null;
+                const matchedKeyword = entry.keywords.find((keyword) => keyword && normalizedContent.includes(keyword.toLowerCase()));
+                if (!matchedKeyword) return null;
+                return { roleId: entry.roleId, keyword: matchedKeyword.toLowerCase() };
+            })
+            .find(Boolean);
+        const isExceptionAllowed = matchedException && !targetMember.roles.cache.has(matchedException.roleId);
+
         // Check if member already has any of the interactive roles
         const hasInteractiveRole = targetMember.roles.cache.some(r => settings.settings.interactiveRoles.includes(r.id));
-        if (hasInteractiveRole) {
+        if (hasInteractiveRole && !isExceptionAllowed) {
             const reply = await message.channel.send(`⚠️ <@${targetId}> لديه بالفعل رولات تفاعلية.`);
             setTimeout(() => reply.delete().catch(() => {}), 5000);
+            return;
+        }
+
+        if (matchedException && !settings.settings.interactiveRoles.includes(matchedException.roleId)) {
+            const reply = await message.channel.send(`⚠️ رول الاستثناء لم يعد ضمن الرولات التفاعلية.`);
+            setTimeout(() => reply.delete().catch(() => {}), 5000);
+            return;
+        }
+
+        if (matchedException && targetMember.roles.cache.has(matchedException.roleId)) {
+            const reply = await message.channel.send(`⚠️ <@${targetId}> لديه بالفعل رول الاستثناء.`);
+            setTimeout(() => reply.delete().catch(() => {}), 5000);
+            return;
+        }
+
+        if (isExceptionAllowed) {
+            const exceptionCooldown = settings.exceptionCooldowns?.[targetId]?.[matchedException.roleId]?.[matchedException.keyword];
+            if (exceptionCooldown && Date.now() < exceptionCooldown) {
+                const timeLeft = Math.ceil((exceptionCooldown - Date.now()) / (1000 * 60 * 60));
+                const reply = await message.channel.send(`❌ <@${targetId}> لديه كولداون لاستثناء هذه الكلمة. المتبقي: ${timeLeft} ساعة.`);
+                setTimeout(() => reply.delete().catch(() => {}), 5000);
+                return;
+            }
+
+            if (!settings.pendingExceptionRequests || typeof settings.pendingExceptionRequests !== 'object' || Array.isArray(settings.pendingExceptionRequests)) {
+                settings.pendingExceptionRequests = {};
+            }
+
+            const hasPendingException = Object.values(settings.pendingExceptionRequests).some((req) => req.targetId === targetId);
+            if (hasPendingException) {
+                const reply = await message.channel.send(`⚠️ <@${targetId}> لديه طلب مستثنى معلق بالفعل.`);
+                setTimeout(() => reply.delete().catch(() => {}), 5000);
+                return;
+            }
+
+            let sentMessage = null;
+            const userStats = await collectUserStats(targetMember);
+            const statsEmbed = await createUserStatsEmbed(userStats, colorManager, true, message.member?.displayName ?? null, `<@${message.author.id}>`);
+            statsEmbed.setTitle('🎭 طلب رول تفاعلي (استثناء)')
+                .setDescription(`**Admin :** <@${message.author.id}>\n**Member :** <@${targetId}>\n**الرول المستثنى:** <@&${matchedException.roleId}>\n**الكلمة:** ${matchedException.keyword}\n\n${message.content}`);
+
+            const respConfigPath = path.join(__dirname, '..', 'data', 'respConfig.json');
+            let globalImageUrl = null;
+            try {
+                if (fs.existsSync(respConfigPath)) {
+                    const config = JSON.parse(fs.readFileSync(respConfigPath, 'utf8'));
+                    globalImageUrl = config.guilds?.[message.guild.id]?.globalImageUrl;
+                }
+            } catch (e) {}
+
+            const applicationId = `${Date.now()}_${targetId}`;
+            const row1 = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`int_ex_approve_${applicationId}`)
+                    .setLabel('Approve')
+                    .setEmoji('<:emoji_1:1436850272734285856>')
+                    .setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId(`int_ex_reject_trigger_${applicationId}`)
+                    .setLabel('Reject')
+                    .setEmoji('<:emoji_1:1436850215154880553>')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+
+            const detailsMenu = new StringSelectMenuBuilder()
+                .setCustomId(`int_ex_details_${applicationId}`)
+                .setPlaceholder('تفاصيل عن العضو')
+                .addOptions([
+                    { label: 'Dates', description: 'عرض تواريخ الانضمام وإنشاء الحساب', value: 'dates' },
+                    { label: 'Evaluation', description: 'عرض تقييم العضو والمعايير', value: 'evaluation' },
+                    { label: 'Roles', description: 'عرض جميع الرولات للعضو', value: 'roles' },
+                    { label: 'Stats', description: 'عرض تفاصيل النشاط', value: 'advanced_stats' },
+                    { label: 'first ep', description: 'العودة للعرض الأساسي', value: 'simple_view' }
+                ]);
+
+            const row2 = new ActionRowBuilder().addComponents(detailsMenu);
+            const messageOptions = {
+                content: `**طلب مستثنى من <@${message.author.id}> بخصوص <@${targetId}>**`,
+                embeds: [statsEmbed],
+                components: [row1, row2]
+            };
+
+            if (globalImageUrl) {
+                messageOptions.files = [globalImageUrl];
+            }
+
+            try {
+                sentMessage = await message.channel.send(messageOptions);
+            } catch (error) {
+                console.error('Error sending exception request message:', error);
+                return;
+            }
+
+            settings.pendingExceptionRequests = settings.pendingExceptionRequests || {};
+            settings.pendingExceptionRequests[applicationId] = {
+                applicationId,
+                messageId: sentMessage?.id,
+                requesterId: message.author.id,
+                targetId,
+                originalContent: message.content,
+                userStats,
+                roleId: matchedException.roleId,
+                keyword: matchedException.keyword,
+                timestamp: Date.now()
+            });
+            saveSettings(settings);
+
             return;
         }
 
@@ -197,7 +341,172 @@ async function handleInteraction(interaction) {
     const isApprover = interaction.member.roles.cache.some(r => settings.settings.approvers.includes(r.id)) || 
                        interaction.guild.ownerId === interaction.user.id;
 
-        // Handle Details Menu (Same as admin-apply)
+    const getExceptionRequest = (applicationId) => {
+        const requests = settings.pendingExceptionRequests || {};
+        return requests[applicationId] || null;
+    };
+
+    const setExceptionCooldown = (targetId, roleId, keyword, durationMs) => {
+        if (!settings.exceptionCooldowns) settings.exceptionCooldowns = {};
+        if (!settings.exceptionCooldowns[targetId]) settings.exceptionCooldowns[targetId] = {};
+        if (!settings.exceptionCooldowns[targetId][roleId]) settings.exceptionCooldowns[targetId][roleId] = {};
+        settings.exceptionCooldowns[targetId][roleId][keyword] = Date.now() + durationMs;
+    };
+
+    if (customId.startsWith('int_ex_details_')) {
+        if (interaction.replied || interaction.deferred) return;
+        if (!isApprover) {
+            return interaction.reply({ content: '❌ **مب مسؤول؟ والله ماوريك.**', ephemeral: true }).catch(() => {});
+        }
+
+        await interaction.deferUpdate().catch(err => {
+            if (err.code !== 10062) console.error('Error deferring update:', err);
+        });
+
+        if (!interaction.deferred && !interaction.replied) return;
+
+        const applicationId = customId.replace('int_ex_details_', '');
+        const request = getExceptionRequest(applicationId);
+
+        if (!request) {
+            return interaction.followUp({ content: '❌ لم يتم العثور على بيانات الطلب المستثنى.', ephemeral: true }).catch(() => {});
+        }
+
+        const value = interaction.values[0];
+        const userStats = request.userStats;
+
+        let updatedEmbed;
+        try {
+            if (value === 'simple_view') {
+                updatedEmbed = await createUserStatsEmbed(userStats, colorManager, true, null, `<@${request.requesterId}>`);
+                updatedEmbed.setTitle('🎭 طلب رول تفاعلي (استثناء)').setDescription(`**Admin :** <@${request.requesterId}>\n**Member :** <@${request.targetId}>\n**الرول المستثنى:** <@&${request.roleId}>\n**الكلمة:** ${request.keyword}\n\n${request.originalContent}`);
+            } else {
+                updatedEmbed = await createUserStatsEmbed(userStats, colorManager, false, null, `<@${request.requesterId}>`, value);
+                const targetMember = await interaction.guild.members.fetch(request.targetId).catch(() => null);
+                updatedEmbed.setTitle(`🎭 تفاصيل العضو: ${targetMember ? targetMember.user.username : request.targetId}`);
+
+                if (updatedEmbed.data && updatedEmbed.data.fields && !updatedEmbed.data.fields.some(f => f.name && f.name.includes('بواسطة'))) {
+                    updatedEmbed.addFields({ name: 'بواسطة', value: `<@${request.requesterId}>`, inline: true });
+                }
+            }
+
+            await interaction.editReply({ embeds: [updatedEmbed] }).catch(err => {
+                if (err.code !== 10062) console.error('Error in editReply (details):', err);
+            });
+        } catch (error) {
+            console.error('Error updating read-only interaction embed:', error);
+        }
+        return;
+    }
+
+    if (customId.startsWith('int_ex_approve_')) {
+        if (interaction.replied || interaction.deferred) return;
+        if (!isApprover) return interaction.reply({ content: '❌ **مب مسؤول؟ والله ماوريك.**', ephemeral: true }).catch(() => {});
+
+        const applicationId = customId.replace('int_ex_approve_', '');
+        const request = getExceptionRequest(applicationId);
+        if (!request) {
+            return interaction.reply({ content: '❌ لم يتم العثور على هذا الطلب المستثنى.', ephemeral: true }).catch(() => {});
+        }
+
+        const targetMember = await interaction.guild.members.fetch(request.targetId).catch(() => null);
+        const role = interaction.guild.roles.cache.get(request.roleId);
+        if (!targetMember || !role) {
+            return interaction.reply({ content: '❌ تعذر العثور على العضو أو الرول.', ephemeral: true }).catch(() => {});
+        }
+
+        if (targetMember.roles.cache.has(role.id)) {
+            setExceptionCooldown(request.targetId, request.roleId, request.keyword, 24 * 60 * 60 * 1000);
+            delete settings.pendingExceptionRequests[applicationId];
+            saveSettings(settings);
+            return interaction.reply({ content: `⚠️ <@${request.targetId}> لديه بالفعل الرول المستثنى.`, ephemeral: true }).catch(() => {});
+        }
+
+        await targetMember.roles.add(role).catch(() => {});
+        try {
+            await targetMember.send(`✅ **تهانينا!** تم قبول طلبك للرول التفاعلي (استثناء) وحصلت على رول: **${role.name}** في سيرفر **${interaction.guild.name}**.`);
+        } catch (e) {}
+
+        const channel = interaction.guild.channels.cache.get(settings.settings.requestChannel);
+        if (channel && request.messageId) {
+            const msg = await channel.messages.fetch(request.messageId).catch(() => null);
+            if (msg) {
+                const embed = EmbedBuilder.from(msg.embeds[0])
+                    .setColor(colorManager.getColor ? colorManager.getColor() : '#00ff00')
+                    .addFields({ name: 'الحالة', value: `✅ تم القبول بواسطة <@${interaction.user.id}>\nالرول الممنوح: <@&${request.roleId}>\nنوع الطلب: مستثنى` });
+                await msg.edit({ embeds: [embed], components: [] }).catch(() => {});
+            }
+        }
+
+        setExceptionCooldown(request.targetId, request.roleId, request.keyword, 24 * 60 * 60 * 1000);
+        delete settings.pendingExceptionRequests[applicationId];
+        saveSettings(settings);
+
+        await interaction.reply({ content: `✅ تم منح الرول <@&${request.roleId}> لـ <@${request.targetId}> بنجاح (استثناء).`, ephemeral: true }).catch(() => {});
+        return;
+    }
+
+    if (customId.startsWith('int_ex_reject_trigger_')) {
+        if (interaction.replied || interaction.deferred) return;
+        if (!isApprover) return interaction.reply({ content: '❌ **مب مسؤول؟ والله ماوريك.**', ephemeral: true }).catch(() => {});
+
+        const applicationId = customId.replace('int_ex_reject_trigger_', '');
+        const request = getExceptionRequest(applicationId);
+        if (!request) {
+            return interaction.reply({ content: '❌ لم يتم العثور على هذا الطلب المستثنى.', ephemeral: true }).catch(() => {});
+        }
+
+        const modal = new ModalBuilder()
+            .setCustomId(`int_ex_reject_modal_${applicationId}`)
+            .setTitle('سبب الرفض');
+
+        const reasonInput = new TextInputBuilder()
+            .setCustomId('reject_reason')
+            .setLabel('السبب')
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(true)
+            .setPlaceholder('اذكر سبب الرفض هنا...');
+
+        modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
+        await interaction.showModal(modal).catch(() => {});
+        return;
+    }
+
+    if (customId.startsWith('int_ex_reject_modal_')) {
+        if (interaction.replied || interaction.deferred) return;
+        const applicationId = customId.replace('int_ex_reject_modal_', '');
+        const reason = interaction.fields.getTextInputValue('reject_reason');
+        const request = getExceptionRequest(applicationId);
+        if (!request) {
+            return interaction.reply({ content: '❌ لم يتم العثور على هذا الطلب المستثنى.', ephemeral: true }).catch(() => {});
+        }
+
+        const targetMember = await interaction.guild.members.fetch(request.targetId).catch(() => null);
+        if (targetMember) {
+            try {
+                await targetMember.send(`❌ **للأسف!** تم رفض طلبك للرول التفاعلي (استثناء) في سيرفر **${interaction.guild.name}**.\n**السبب:** ${reason}`);
+            } catch (e) {}
+        }
+
+        const channel = interaction.guild.channels.cache.get(settings.settings.requestChannel);
+        if (channel && request.messageId) {
+            const msg = await channel.messages.fetch(request.messageId).catch(() => null);
+            if (msg) {
+                const embed = EmbedBuilder.from(msg.embeds[0])
+                    .setColor(colorManager.getColor ? colorManager.getColor() : '#ff0000')
+                    .addFields({ name: 'الحالة', value: `❌ تم الرفض بواسطة <@${interaction.user.id}>\n**السبب:** ${reason}\nنوع الطلب: مستثنى` });
+                await msg.edit({ embeds: [embed], components: [] }).catch(() => {});
+            }
+        }
+
+        setExceptionCooldown(request.targetId, request.roleId, request.keyword, 24 * 60 * 60 * 1000);
+        delete settings.pendingExceptionRequests[applicationId];
+        saveSettings(settings);
+        await interaction.reply({ content: `✅ تم رفض الطلب ووضع كولداون لاستثناء <@${request.targetId}>.`, ephemeral: true }).catch(() => {});
+        return;
+    }
+
+    // Handle Details Menu (Same as admin-apply)
     if (customId.startsWith('int_details_')) {
         // التحقق من حالة التفاعل فوراً لمنع التكرار
         if (interaction.replied || interaction.deferred) return;
