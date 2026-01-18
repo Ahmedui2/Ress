@@ -1341,6 +1341,18 @@ client.once(Events.ClientReady, async () => {
     setupGlobalSetupCollector(client);
   }, 3000);
 
+  // استعادة جدولة توب الرولات الخاصة
+  try {
+    const rolesSettings = require('./commands/roles-settings.js');
+    if (rolesSettings.restoreTopSchedules) {
+      setTimeout(() => {
+        rolesSettings.restoreTopSchedules(client);
+      }, 5000);
+    }
+  } catch (error) {
+    console.error('❌ خطأ في استعادة توب الرولات الخاصة:', error);
+  }
+
   // Check for expired vacations every 2 minutes
   // This is a duplicate of the setInterval above, keeping the one added by the change.
   /*
@@ -2870,6 +2882,16 @@ client.on('interactionCreate', async (interaction) => {
             });
         }
         return;
+    }
+
+    // 4. Handle custom roles interactions
+    try {
+        const rolesSettings = require('./commands/roles-settings.js');
+        if (rolesSettings && typeof rolesSettings.handleCustomRolesInteraction === 'function') {
+            await rolesSettings.handleCustomRolesInteraction(interaction, client, BOT_OWNERS);
+        }
+    } catch (error) {
+        console.error('Error in custom roles interaction handler:', error);
     }
 
     // --- End of Consolidated Handlers ---

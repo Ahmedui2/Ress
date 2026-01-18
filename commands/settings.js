@@ -53,6 +53,13 @@ async function execute(message, args, { responsibilities, client, scheduleSave, 
     return;
   }
 
+  // تحويل إدارة الرولات الخاصة إذا تم استدعاء settings roles
+  if (args[0] && ['roles', 'رولات', 'رول', 'role'].includes(args[0].toLowerCase())) {
+    const rolesSettings = require('./roles-settings.js');
+    await rolesSettings.executeRolesSettings(message, args.slice(1), { client, BOT_OWNERS });
+    return;
+  }
+
   const isOwner = BOT_OWNERS.includes(message.author.id) || message.guild.ownerId === message.author.id;
   if (!isOwner) {
     await message.react('❌');
