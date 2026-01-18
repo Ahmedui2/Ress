@@ -21,17 +21,21 @@ const PRESET_COLORS = [
 ];
 
 function buildStateEmbed(state) {
+  const created = state.createdBy ? `<@${state.createdBy}>` : 'غير محدد';
+  const description = [
+    `المالك: <@${state.ownerId}>`,
+    `الاسم: ${state.name ? `**${state.name}**` : 'غير محدد'}`,
+    `الحد: ${state.maxMembers ? `${state.maxMembers} عضو` : 'غير محدد'}`,
+    `اللون: ${state.color || 'غير محدد'}`,
+    `الأيقونة: ${state.iconLabel || 'غير محددة'}`,
+    `المنشئ: ${created}`
+  ].join('\n');
+
   return new EmbedBuilder()
     .setTitle('✨ إنشاء رول خاص')
-    .setDescription('اختر إعدادات الرول من الأزرار.')
-    .addFields(
-      { name: 'المالك', value: `<@${state.ownerId}>`, inline: true },
-      { name: 'اسم الرول', value: state.name ? `**${state.name}**` : 'غير محدد', inline: true },
-      { name: 'حد الأعضاء', value: state.maxMembers ? `${state.maxMembers} عضو` : 'غير محدد', inline: true },
-      { name: 'لون الرول', value: state.color ? `${state.color}` : 'غير محدد', inline: true },
-      { name: 'أيقونة الرول', value: state.iconLabel || 'غير محددة', inline: true }
-    )
-    .setColor(state.color || (colorManager.getColor ? colorManager.getColor() : '#2f3136'));
+    .setDescription(description)
+    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+    .setThumbnail(state.clientAvatar);
 }
 
 function buildButtons(state) {
@@ -103,7 +107,8 @@ async function execute(message, args, { client, BOT_OWNERS }) {
     color: null,
     maxMembers: null,
     iconBuffer: null,
-    iconLabel: null
+    iconLabel: null,
+    clientAvatar: message.client.user.displayAvatarURL({ size: 128 })
   };
 
   activeCreates.set(sessionId, state);
@@ -219,8 +224,9 @@ async function execute(message, args, { client, BOT_OWNERS }) {
 
         const details = new EmbedBuilder()
           .setTitle('✅ تم إنشاء الرول الخاص')
-          .setDescription(`**الرول:** <@&${role.id}>\n**المالك:** <@${state.ownerId}>`)
-          .setColor(role.hexColor || '#2f3136');
+          .setDescription(`الرول: <@&${role.id}>\nالمالك: <@${state.ownerId}>`)
+          .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+          .setThumbnail(message.client.user.displayAvatarURL({ size: 128 }));
 
         await message.channel.send({ embeds: [details] });
 
@@ -229,8 +235,9 @@ async function execute(message, args, { client, BOT_OWNERS }) {
             embeds: [
               new EmbedBuilder()
                 .setTitle('🎉 تم إنشاء رولك الخاص')
-                .setDescription(`**الرول:** <@&${role.id}>\n**تم الإنشاء بواسطة:** <@${state.createdBy}>`)
-                .setColor(role.hexColor || '#2f3136')
+                .setDescription(`الرول: ${role.name}\nتم الإنشاء بواسطة: <@${state.createdBy}>`)
+                .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+                .setThumbnail(message.client.user.displayAvatarURL({ size: 128 }))
             ]
           }).catch(() => {});
         }

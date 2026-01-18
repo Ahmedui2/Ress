@@ -1,7 +1,7 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, PermissionsBitField } = require('discord.js');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
-const { getRoleEntry, findRoleByOwner, addRoleEntry } = require('../utils/customRolesSystem.js');
+const { findRoleByOwner, addRoleEntry } = require('../utils/customRolesSystem.js');
 const { resolveIconBuffer } = require('../utils/roleIconUtils.js');
 const moment = require('moment-timezone');
 
@@ -37,15 +37,29 @@ async function promptForMessage(channel, userId, promptText) {
   return response;
 }
 
+async function respondEphemeral(interaction, payload) {
+  if (!interaction) return;
+  if (interaction.deferred || interaction.replied) {
+    await interaction.followUp({ ...payload, ephemeral: true }).catch(() => {});
+  } else {
+    await interaction.reply({ ...payload, ephemeral: true }).catch(() => {});
+  }
+}
+
 function buildControlEmbed(roleEntry, role, membersCount) {
+  const createdAt = moment(roleEntry.createdAt).tz('Asia/Riyadh').format('YYYY-MM-DD HH:mm');
+  const description = [
+    `الرول: <@&${roleEntry.roleId}>`,
+    `المالك: <@${roleEntry.ownerId}>`,
+    `الإنشاء: ${createdAt}`,
+    `الأعضاء: ${membersCount}`
+  ].join('\n');
+
   return new EmbedBuilder()
     .setTitle('🎛️ لوحة التحكم بالرول الخاص')
-    .setDescription(`الرول: <@&${roleEntry.roleId}>\nالمالك: <@${roleEntry.ownerId}>`)
-    .addFields(
-      { name: 'تاريخ الإنشاء', value: moment(roleEntry.createdAt).tz('Asia/Riyadh').format('YYYY-MM-DD HH:mm'), inline: true },
-      { name: 'عدد الأعضاء', value: `${membersCount} عضو`, inline: true }
-    )
-    .setColor(role?.hexColor || (colorManager.getColor ? colorManager.getColor() : '#2f3136'));
+    .setDescription(description)
+    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+    .setThumbnail(role.guild.client.user.displayAvatarURL({ size: 128 }));
 }
 
 function buildControlButtons(sessionId) {
@@ -63,7 +77,7 @@ function buildControlButtons(sessionId) {
   ];
 }
 
-async function handleManageMembers({ channel, userId, role, roleEntry }) {
+async function handleManageMembers({ channel, userId, role, roleEntry, interaction, panelMessage }) {
   const members = [...role.members.values()];
   const list = members.slice(0, 40).map((member, index) => `${index + 1}. ${member.displayName} (<@${member.id}>)`).join('\n') || 'لا يوجد أعضاء حالياً.';
 
@@ -73,6 +87,7 @@ async function handleManageMembers({ channel, userId, role, roleEntry }) {
         .setTitle('👥 إدارة الأعضاء')
         .setDescription(`**الأعضاء الحاليون:**\n${list}\n\n**أوامر الإدخال:**\n- اكتب أرقام الأعضاء للحذف (مثال: 1 3 5)\n- أو اكتب منشن/ID لإضافة أعضاء جدد\n**يمكنك دمج الاثنين في رسالة واحدة.**`)
         .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+        .setThumbnail(channel.client.user.displayAvatarURL({ size: 128 }))
     ]
   });
 
@@ -117,12 +132,21 @@ async function handleManageMembers({ channel, userId, role, roleEntry }) {
   }
 
   const summary = `**تم التحديث:**\n✅ تمت إضافة ${added.length} عضو\n🗑️ تمت إزالة ${removed.length} عضو`;
-  await channel.send(summary);
+  if (interaction) {
+    await interaction.followUp({ content: summary, ephemeral: true }).catch(() => {});
+  } else {
+    await channel.send(summary);
+  }
+
+  if (panelMessage) {
+    const refreshed = buildControlEmbed(roleEntry, role, role.members.size);
+    await panelMessage.edit({ embeds: [refreshed], components: panelMessage.components }).catch(() => {});
+  }
 }
 
-async function handleColorChange({ interaction, role, roleEntry }) {
+async function handleColorChange({ interaction, role, roleEntry, panelMessage }) {
   if (!role.editable) {
-    await interaction.update({ content: '**❌ لا يمكن تعديل هذا الرول بسبب صلاحيات البوت.**', components: [], embeds: [] });
+    await respondEphemeral(interaction, { content: '**❌ لا يمكن تعديل هذا الرول بسبب صلاحيات البوت.**' });
     return;
   }
   const colorMenu = new StringSelectMenuBuilder()
@@ -133,10 +157,9 @@ async function handleColorChange({ interaction, role, roleEntry }) {
       { label: 'لون مخصص', value: 'custom' }
     ]);
 
-  await interaction.update({
+  await respondEphemeral(interaction, {
     content: '**اختر لون الرول:**',
     components: [new ActionRowBuilder().addComponents(colorMenu)],
-    embeds: []
   });
 
   const selection = await interaction.channel.awaitMessageComponent({
@@ -161,12 +184,20 @@ async function handleColorChange({ interaction, role, roleEntry }) {
     addRoleEntry(role.id, roleEntry);
   }
 
-  await interaction.channel.send('**✅ تم تحديث لون الرول.**');
+  if (panelMessage) {
+    const refreshed = buildControlEmbed(roleEntry, role, role.members.size);
+    await panelMessage.edit({ embeds: [refreshed], components: panelMessage.components }).catch(() => {});
+  }
+  await respondEphemeral(interaction, { content: '**✅ تم تحديث لون الرول.**' });
 }
 
-async function handleIconChange({ channel, userId, role, roleEntry }) {
+async function handleIconChange({ channel, userId, role, roleEntry, interaction, panelMessage }) {
   if (!role.editable) {
-    await channel.send('**❌ لا يمكن تعديل أيقونة هذا الرول بسبب صلاحيات البوت.**');
+    if (interaction) {
+      await respondEphemeral(interaction, { content: '**❌ لا يمكن تعديل أيقونة هذا الرول بسبب صلاحيات البوت.**' });
+    } else {
+      await channel.send('**❌ لا يمكن تعديل أيقونة هذا الرول بسبب صلاحيات البوت.**');
+    }
     return;
   }
   const response = await promptForMessage(channel, userId, '**أرسل إيموجي أو رابط صورة أو أرفق صورة لتعيين أيقونة الرول:**');
@@ -181,27 +212,48 @@ async function handleIconChange({ channel, userId, role, roleEntry }) {
     await role.setIcon(buffer).catch(() => {});
     roleEntry.icon = role.iconURL();
     addRoleEntry(role.id, roleEntry);
-    await channel.send('**✅ تم تحديث أيقونة الرول.**');
+    if (panelMessage) {
+      const refreshed = buildControlEmbed(roleEntry, role, role.members.size);
+      await panelMessage.edit({ embeds: [refreshed], components: panelMessage.components }).catch(() => {});
+    }
+    if (interaction) {
+      await respondEphemeral(interaction, { content: '**✅ تم تحديث أيقونة الرول.**' });
+    } else {
+      await channel.send('**✅ تم تحديث أيقونة الرول.**');
+    }
   } catch (error) {
-    await channel.send('**❌ فشل تحديث الأيقونة.**');
+    if (interaction) {
+      await respondEphemeral(interaction, { content: '**❌ فشل تحديث الأيقونة.**' });
+    } else {
+      await channel.send('**❌ فشل تحديث الأيقونة.**');
+    }
   }
 }
 
-async function handleMembersList({ channel, role, roleEntry }) {
+async function handleMembersList({ channel, role, interaction }) {
   const members = [...role.members.values()];
   const list = members.slice(0, 50).map((member, index) => `**${index + 1}.** ${member.displayName} (<@${member.id}>)`).join('\n') || 'لا يوجد أعضاء حالياً.';
   const embed = new EmbedBuilder()
     .setTitle('📋 أعضاء الرول')
     .setDescription(list)
     .setFooter({ text: `إجمالي الأعضاء: ${members.length}` })
-    .setColor(role?.hexColor || (colorManager.getColor ? colorManager.getColor() : '#2f3136'));
+    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+    .setThumbnail(channel.client.user.displayAvatarURL({ size: 128 }));
 
-  await channel.send({ embeds: [embed] });
+  if (interaction) {
+    await respondEphemeral(interaction, { embeds: [embed] });
+  } else {
+    await channel.send({ embeds: [embed] });
+  }
 }
 
-async function handleTransfer({ channel, userId, role, roleEntry }) {
+async function handleTransfer({ channel, userId, role, roleEntry, interaction, panelMessage }) {
   if (!role.editable) {
-    await channel.send('**❌ لا يمكن نقل الملكية بسبب صلاحيات البوت.**');
+    if (interaction) {
+      await respondEphemeral(interaction, { content: '**❌ لا يمكن نقل الملكية بسبب صلاحيات البوت.**' });
+    } else {
+      await channel.send('**❌ لا يمكن نقل الملكية بسبب صلاحيات البوت.**');
+    }
     return;
   }
   const response = await promptForMessage(channel, userId, '**منشن أو اكتب ID المالك الجديد:**');
@@ -209,7 +261,11 @@ async function handleTransfer({ channel, userId, role, roleEntry }) {
 
   const mentionId = response.mentions.users.first()?.id || response.content.match(/\d{17,19}/)?.[0];
   if (!mentionId) {
-    await channel.send('**❌ لم يتم العثور على عضو صالح.**');
+    if (interaction) {
+      await respondEphemeral(interaction, { content: '**❌ لم يتم العثور على عضو صالح.**' });
+    } else {
+      await channel.send('**❌ لم يتم العثور على عضو صالح.**');
+    }
     return;
   }
 
@@ -236,14 +292,26 @@ async function handleTransfer({ channel, userId, role, roleEntry }) {
 
   const newOwner = await role.guild.members.fetch(mentionId).catch(() => null);
   if (!newOwner) {
-    await channel.send('**❌ العضو غير موجود.**');
+    if (interaction) {
+      await respondEphemeral(interaction, { content: '**❌ العضو غير موجود.**' });
+    } else {
+      await channel.send('**❌ العضو غير موجود.**');
+    }
     return;
   }
 
   roleEntry.ownerId = mentionId;
   addRoleEntry(role.id, roleEntry);
   await newOwner.roles.add(role, 'نقل ملكية رول خاص').catch(() => {});
-  await channel.send('**✅ تم نقل ملكية الرول.**');
+  if (panelMessage) {
+    const refreshed = buildControlEmbed(roleEntry, role, role.members.size);
+    await panelMessage.edit({ embeds: [refreshed], components: panelMessage.components }).catch(() => {});
+  }
+  if (interaction) {
+    await respondEphemeral(interaction, { content: '**✅ تم نقل ملكية الرول.**' });
+  } else {
+    await channel.send('**✅ تم نقل ملكية الرول.**');
+  }
 }
 
 async function startMyRoleFlow({ member, channel, client }) {
@@ -294,26 +362,26 @@ async function startMyRoleFlow({ member, channel, client }) {
         await channel.send('**❌ لا يمكن تعديل الأعضاء بسبب صلاحيات البوت.**');
         return;
       }
-      await handleManageMembers({ channel, userId: member.id, role, roleEntry });
+      await handleManageMembers({ channel, userId: member.id, role, roleEntry, interaction, panelMessage: sentMessage });
     }
 
     if (action === 'color') {
-      await handleColorChange({ interaction, role, roleEntry });
+      await handleColorChange({ interaction, role, roleEntry, panelMessage: sentMessage });
     }
 
     if (action === 'icon') {
       await interaction.deferUpdate();
-      await handleIconChange({ channel, userId: member.id, role, roleEntry });
+      await handleIconChange({ channel, userId: member.id, role, roleEntry, interaction, panelMessage: sentMessage });
     }
 
     if (action === 'members') {
       await interaction.deferUpdate();
-      await handleMembersList({ channel, role, roleEntry });
+      await handleMembersList({ channel, role, interaction });
     }
 
     if (action === 'transfer') {
       await interaction.deferUpdate();
-      await handleTransfer({ channel, userId: member.id, role, roleEntry });
+      await handleTransfer({ channel, userId: member.id, role, roleEntry, interaction, panelMessage: sentMessage });
     }
   });
 
@@ -330,4 +398,49 @@ async function execute(message, args, { client, BOT_OWNERS }) {
   await startMyRoleFlow({ member: message.member, channel: message.channel, client });
 }
 
-module.exports = { name, aliases, execute, startMyRoleFlow };
+async function handleMemberAction(interaction, action, client) {
+  if (!interaction.guild) return;
+  const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+  if (!member) {
+    await interaction.reply({ content: '❌ العضو غير موجود.', ephemeral: true });
+    return;
+  }
+  const roleEntry = findRoleByOwner(member.guild.id, member.id);
+  if (!roleEntry) {
+    await interaction.reply({ content: '❌ ليس لديك رول خاص.', ephemeral: true });
+    return;
+  }
+  const role = member.guild.roles.cache.get(roleEntry.roleId);
+  if (!role) {
+    await interaction.reply({ content: '❌ لم يتم العثور على الرول في السيرفر.', ephemeral: true });
+    return;
+  }
+
+  if (action === 'members') {
+    await handleMembersList({ channel: interaction.channel, role, interaction });
+    return;
+  }
+  if (action === 'color') {
+    await handleColorChange({ interaction, role, roleEntry });
+    return;
+  }
+  if (action === 'icon') {
+    await interaction.deferReply({ ephemeral: true });
+    await handleIconChange({ channel: interaction.channel, userId: member.id, role, roleEntry, interaction });
+    return;
+  }
+  if (action === 'transfer') {
+    await interaction.deferReply({ ephemeral: true });
+    await handleTransfer({ channel: interaction.channel, userId: member.id, role, roleEntry, interaction });
+    return;
+  }
+  if (action === 'manage') {
+    await interaction.deferReply({ ephemeral: true });
+    await handleManageMembers({ channel: interaction.channel, userId: member.id, role, roleEntry, interaction });
+    return;
+  }
+
+  await interaction.reply({ content: '❌ خيار غير معروف.', ephemeral: true });
+}
+
+module.exports = { name, aliases, execute, startMyRoleFlow, handleMemberAction };

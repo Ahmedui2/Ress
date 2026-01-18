@@ -45,14 +45,16 @@ async function renderRoleDetails(message, roleEntry) {
 
   const embed = new EmbedBuilder()
     .setTitle('📌 تفاصيل رول خاص') 
-    .setDescription(`الرول: ${role ? `<@&${role.id}>` : roleEntry.name}\nالمالك: <@${roleEntry.ownerId}>`)
-    .addFields(
-      { name: 'الأعضاء', value: `${members.length} عضو`, inline: true },
-      { name: 'تفاعل الشات', value: `${activity.messages} رسالة`, inline: true },
-      { name: 'تفاعل الفويس', value: formatDuration(activity.voice), inline: true },
-      { name: 'تاريخ الإنشاء', value: moment(roleEntry.createdAt).tz('Asia/Riyadh').format('YYYY-MM-DD HH:mm'), inline: true }
+    .setDescription(
+      `الرول: ${role ? `<@&${role.id}>` : roleEntry.name}\n` +
+      `المالك: <@${roleEntry.ownerId}>\n` +
+      `الأعضاء: ${members.length}\n` +
+      `تفاعل الشات: ${activity.messages} رسالة\n` +
+      `تفاعل الفويس: ${formatDuration(activity.voice)}\n` +
+      `الإنشاء: ${moment(roleEntry.createdAt).tz('Asia/Riyadh').format('YYYY-MM-DD HH:mm')}`
     )
-    .setColor(role?.hexColor || (colorManager.getColor ? colorManager.getColor() : '#2f3136'));
+    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+    .setThumbnail(message.client.user.displayAvatarURL({ size: 128 }));
 
   await message.channel.send({ embeds: [embed] });
 }
@@ -116,7 +118,8 @@ async function execute(message, args, { client, BOT_OWNERS }) {
       `**${index + 1}. ${entry.name}** — <@&${entry.roleId}>\n` +
       `👥 ${entry.members} | 💬 ${entry.messages} | 🔊 ${formatDuration(entry.voice)}`
     )).join('\n\n'))
-    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136');
+    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+    .setThumbnail(message.client.user.displayAvatarURL({ size: 128 }));
 
   await message.channel.send({ embeds: [embed] });
 }
