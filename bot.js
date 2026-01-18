@@ -2876,16 +2876,6 @@ client.on('interactionCreate', async (interaction) => {
 
 
 
-    // Handle Streak system interactions
-    if (interaction.customId && interaction.customId.startsWith('streak_')) {
-        console.log(`معالجة تفاعل Streak: ${interaction.customId}`);
-        const streakCommand = client.commands.get('streak');
-        if (streakCommand && typeof streakCommand.handleInteraction === 'function') {
-            await streakCommand.handleInteraction(interaction, typeof context !== 'undefined' ? context : {});
-        }
-        return;
-    }
-
     // Handle log system interactions
     if (interaction.customId && (interaction.customId.startsWith('log_') ||
         interaction.customId === 'auto_set_logs' ||
