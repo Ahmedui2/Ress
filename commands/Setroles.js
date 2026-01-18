@@ -18,7 +18,7 @@ async function execute(message, args, { client, BOT_OWNERS }) {
 
   const embed = new EmbedBuilder()
     .setTitle('⚙️ إعدادات نظام الرولات الخاصة')
-    .setDescription('**اختر الإعداد الذي ترغب بتحديثه:**')
+    .setDescription('اختر الإعداد الذي ترغب بتحديثه.')
     .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136');
 
   const menu = new StringSelectMenuBuilder()
@@ -114,17 +114,23 @@ async function execute(message, args, { client, BOT_OWNERS }) {
     }
 
     if (interaction.isChannelSelectMenu() && interaction.customId.startsWith('setroles_channel_')) {
-      const parts = interaction.customId.split('_');
-      const selection = parts[2];
+      const payload = interaction.customId.replace('setroles_channel_', '');
+      const parts = payload.split('_');
+      const targetUserId = parts.pop();
+      if (targetUserId !== message.author.id) {
+        await interaction.reply({ content: '❌ هذا الخيار ليس لك.', ephemeral: true });
+        return;
+      }
+      const selection = parts.join('_');
       const channelId = interaction.values[0];
 
-      if (selection === 'log') {
+      if (selection === 'log_channel') {
         updateGuildConfig(message.guild.id, { logChannelId: channelId });
-      } else if (selection === 'requests') {
+      } else if (selection === 'requests_channel') {
         updateGuildConfig(message.guild.id, { requestsChannelId: channelId });
-      } else if (selection === 'admin') {
+      } else if (selection === 'admin_control_channel') {
         updateGuildConfig(message.guild.id, { adminControlChannelId: channelId });
-      } else if (selection === 'member') {
+      } else if (selection === 'member_control_channel') {
         updateGuildConfig(message.guild.id, { memberControlChannelId: channelId });
       }
 

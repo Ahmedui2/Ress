@@ -1,4 +1,4 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, PermissionsBitField } = require('discord.js');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
 const { getRoleEntry, findRoleByOwner, addRoleEntry } = require('../utils/customRolesSystem.js');
@@ -40,7 +40,7 @@ async function promptForMessage(channel, userId, promptText) {
 function buildControlEmbed(roleEntry, role, membersCount) {
   return new EmbedBuilder()
     .setTitle('🎛️ لوحة التحكم بالرول الخاص')
-    .setDescription(`**الرول:** <@&${roleEntry.roleId}>\n**المالك:** <@${roleEntry.ownerId}>`)
+    .setDescription(`الرول: <@&${roleEntry.roleId}>\nالمالك: <@${roleEntry.ownerId}>`)
     .addFields(
       { name: 'تاريخ الإنشاء', value: moment(roleEntry.createdAt).tz('Asia/Riyadh').format('YYYY-MM-DD HH:mm'), inline: true },
       { name: 'عدد الأعضاء', value: `${membersCount} عضو`, inline: true }
@@ -121,6 +121,10 @@ async function handleManageMembers({ channel, userId, role, roleEntry }) {
 }
 
 async function handleColorChange({ interaction, role, roleEntry }) {
+  if (!role.editable) {
+    await interaction.update({ content: '**❌ لا يمكن تعديل هذا الرول بسبب صلاحيات البوت.**', components: [], embeds: [] });
+    return;
+  }
   const colorMenu = new StringSelectMenuBuilder()
     .setCustomId(`myrole_color_select_${interaction.id}`)
     .setPlaceholder('اختر لوناً...')
@@ -161,6 +165,10 @@ async function handleColorChange({ interaction, role, roleEntry }) {
 }
 
 async function handleIconChange({ channel, userId, role, roleEntry }) {
+  if (!role.editable) {
+    await channel.send('**❌ لا يمكن تعديل أيقونة هذا الرول بسبب صلاحيات البوت.**');
+    return;
+  }
   const response = await promptForMessage(channel, userId, '**أرسل إيموجي أو رابط صورة أو أرفق صورة لتعيين أيقونة الرول:**');
   if (!response) return;
 
@@ -192,6 +200,10 @@ async function handleMembersList({ channel, role, roleEntry }) {
 }
 
 async function handleTransfer({ channel, userId, role, roleEntry }) {
+  if (!role.editable) {
+    await channel.send('**❌ لا يمكن نقل الملكية بسبب صلاحيات البوت.**');
+    return;
+  }
   const response = await promptForMessage(channel, userId, '**منشن أو اكتب ID المالك الجديد:**');
   if (!response) return;
 
@@ -247,6 +259,12 @@ async function startMyRoleFlow({ member, channel, client }) {
     return;
   }
 
+  const botMember = member.guild.members.me || await member.guild.members.fetchMe().catch(() => null);
+  if (!botMember || !botMember.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+    await channel.send('**❌ البوت يحتاج صلاحية Manage Roles لإدارة الرولات.**');
+    return;
+  }
+
   const membersCount = role.members.size;
   const embed = buildControlEmbed(roleEntry, role, membersCount);
 
@@ -259,7 +277,9 @@ async function startMyRoleFlow({ member, channel, client }) {
   });
 
   collector.on('collect', async interaction => {
-    const [, action, session] = interaction.customId.split('_');
+    const parts = interaction.customId.split('_');
+    const action = parts[1];
+    const session = parts.slice(2).join('_');
     if (session !== sessionId) return;
 
     if (action === 'close') {
@@ -270,6 +290,10 @@ async function startMyRoleFlow({ member, channel, client }) {
 
     if (action === 'manage') {
       await interaction.deferUpdate();
+      if (!role.editable) {
+        await channel.send('**❌ لا يمكن تعديل الأعضاء بسبب صلاحيات البوت.**');
+        return;
+      }
       await handleManageMembers({ channel, userId: member.id, role, roleEntry });
     }
 
@@ -291,6 +315,12 @@ async function startMyRoleFlow({ member, channel, client }) {
       await interaction.deferUpdate();
       await handleTransfer({ channel, userId: member.id, role, roleEntry });
     }
+  });
+
+  collector.on('end', async (_collected, reason) => {
+    if (reason === 'closed') return;
+    if (!sentMessage.editable) return;
+    await sentMessage.edit({ components: [], content: '**⏱️ انتهت مهلة لوحة الرول.**' }).catch(() => {});
   });
 }
 

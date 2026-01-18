@@ -34,18 +34,23 @@ async function resolveIconBuffer(input, attachments = []) {
 
   if (!input) return null;
 
-  if (input.startsWith('http://') || input.startsWith('https://')) {
-    return fetchImageBuffer(input);
-  }
+  const tokens = input.trim().split(/\s+/).filter(Boolean);
+  const candidates = tokens.length > 0 ? tokens : [input.trim()];
 
-  const customEmojiUrl = parseCustomEmoji(input);
-  if (customEmojiUrl) {
-    return fetchImageBuffer(customEmojiUrl);
-  }
+  for (const candidate of candidates) {
+    if (candidate.startsWith('http://') || candidate.startsWith('https://')) {
+      return fetchImageBuffer(candidate);
+    }
 
-  const unicodeUrl = parseUnicodeEmoji(input);
-  if (unicodeUrl) {
-    return fetchImageBuffer(unicodeUrl);
+    const customEmojiUrl = parseCustomEmoji(candidate);
+    if (customEmojiUrl) {
+      return fetchImageBuffer(customEmojiUrl);
+    }
+
+    const unicodeUrl = parseUnicodeEmoji(candidate);
+    if (unicodeUrl) {
+      return fetchImageBuffer(unicodeUrl);
+    }
   }
 
   return null;
