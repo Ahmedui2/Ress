@@ -256,6 +256,34 @@ async function hasPermission(userId, guildId, guild, botOwners) {
     return false;
 }
 
+async function hasPermissionFromMember(userId, guildId, member, botOwners) {
+    const settings = await getSettings(guildId);
+    if (!settings || !settings.approverType) return false;
+
+    if (settings.approverType === 'owners') {
+        return botOwners.includes(userId);
+    }
+
+    if (!member) return false;
+
+    if (settings.approverType === 'role') {
+        const userRoles = member.roles?.cache?.map(role => role.id) || [];
+        return settings.approverTargets.some(roleId => userRoles.includes(roleId));
+    }
+
+    if (settings.approverType === 'responsibility') {
+        const responsibilities = readJsonFile(responsibilitiesPath, {});
+        for (const respName of settings.approverTargets) {
+            const respData = responsibilities[respName];
+            if (respData && respData.responsibles && respData.responsibles.includes(userId)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 function getTimeUntilMidnight() {
     const now = moment().tz('Asia/Riyadh');
     const midnight = moment().tz('Asia/Riyadh').endOf('day');
@@ -721,15 +749,19 @@ async function createDivider(channel, user, settings, guildId, userMessageIds = 
     }
 }
 
-async function handleDividerDelete(interaction, client, botOwners) {
-    const guildId = interaction.guild.id;
-    const isAdmin = await hasPermission(interaction.user.id, guildId, interaction.guild, botOwners);
+async function handleDividerDelete(interaction, botOwners) {
+    const userId = interaction.customId.split('_')[2];
+    const member = interaction.member;
+    const guildId = interaction.guild?.id;
 
+    if (!guildId) {
+        return interaction.reply({ content: '**تعذر تحديد السيرفر لهذا الطلب**', flags: 64 });
+    }
+
+    const isAdmin = await hasPermissionFromMember(interaction.user.id, guildId, member, botOwners);
     if (!isAdmin) {
         return interaction.reply({ content: '**تبي تحذف صور الناس؟ باند**', flags: 64 });
     }
-
-    const userId = interaction.customId.split('_')[2];
 
     const modal = new ModalBuilder()
         .setCustomId(`streak_delete_reason_${userId}_${interaction.message.id}`)
@@ -747,19 +779,33 @@ async function handleDividerDelete(interaction, client, botOwners) {
     await interaction.showModal(modal);
 }
 
-async function handleDeleteReasonModal(interaction, client) {
+async function handleDeleteReasonModal(interaction, client, botOwners) {
     const [, , , userId, dividerMessageId] = interaction.customId.split('_');
     const reason = interaction.fields.getTextInputValue('delete_reason');
 
+    if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferReply({ ephemeral: true });
+    }
+
     if (!db) {
         console.log('⚠️ قاعدة البيانات غير مهيأة أثناء حذف الخط الفاصل');
-        return interaction.reply({ content: '**تعذر تنفيذ الحذف حالياً**', flags: 64 });
+        return interaction.editReply({ content: '**تعذر تنفيذ الحذف حالياً**' });
+    }
+
+    const guildId = interaction.guild?.id;
+    if (!guildId) {
+        return interaction.editReply({ content: '**تعذر تحديد السيرفر لهذا الطلب**' });
+    }
+
+    const isAdmin = await hasPermission(interaction.user.id, guildId, interaction.guild, botOwners);
+    if (!isAdmin) {
+        return interaction.editReply({ content: '**تبي تحذف صور الناس؟ باند**' });
     }
 
     const divider = await getQuery('SELECT * FROM streak_dividers WHERE message_id = ?', [dividerMessageId]);
     
     if (!divider) {
-        return interaction.reply({ content: '**لم يتم العثور على معلومات الخط الفاصل**', flags: 64 });
+        return interaction.editReply({ content: '**لم يتم العثور على معلومات الخط الفاصل**' });
     }
 
     const userMessageIds = JSON.parse(divider.user_message_ids || '[]');
@@ -784,11 +830,6 @@ async function handleDeleteReasonModal(interaction, client) {
 
     await runQuery('DELETE FROM streak_dividers WHERE message_id = ?', [dividerMessageId]);
 
-    // تأجيل الرد إذا كان هناك تأخير في الحذف لضمان بقاء التفاعل صالحاً
-    if (!interaction.deferred && !interaction.replied) {
-        await interaction.deferReply({ ephemeral: true });
-    }
-
     const user = await client.users.fetch(userId).catch(() => null);
     if (user) {
         try {
@@ -804,11 +845,7 @@ async function handleDeleteReasonModal(interaction, client) {
         }
     }
 
-    if (interaction.deferred) {
-        await interaction.editReply({ content: '**تم حذف الصورة وإرسال السبب للعضو**' });
-    } else {
-        await interaction.reply({ content: '**تم حذف الصورة وإرسال السبب للعضو**', flags: 64 });
-    }
+    await interaction.editReply({ content: '**تم حذف الصورة وإرسال السبب للعضو**' });
 }
 
 async function handleRestoreRequest(interaction, client, botOwners) {
@@ -1195,7 +1232,7 @@ module.exports = {
 
         // معالجة Modal للسبب عند الحذف
         if (interaction.isModalSubmit() && customId.startsWith('streak_delete_reason_')) {
-            return handleDeleteReasonModal(interaction, client);
+            return handleDeleteReasonModal(interaction, client, BOT_OWNERS);
         }
         
         // معالجة Modal للخط الفاصل
@@ -1233,7 +1270,7 @@ module.exports = {
         }
 
         if (customId.startsWith('streak_delete_')) {
-            return handleDividerDelete(interaction, client, BOT_OWNERS);
+            return handleDividerDelete(interaction, BOT_OWNERS);
         }
 
         if (customId.startsWith('streak_request_restore_')) {
