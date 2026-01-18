@@ -18,8 +18,9 @@ async function execute(message, args, { client, BOT_OWNERS }) {
 
   const embed = new EmbedBuilder()
     .setTitle('⚙️ إعدادات نظام الرولات الخاصة')
-    .setDescription('**اختر الإعداد الذي ترغب بتحديثه:**')
-    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136');
+    .setDescription('اختر الإعداد الذي ترغب بتحديثه.')
+    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+    .setThumbnail(message.client.user.displayAvatarURL({ size: 128 }));
 
   const menu = new StringSelectMenuBuilder()
     .setCustomId(`setroles_menu_${message.author.id}`)
@@ -28,7 +29,8 @@ async function execute(message, args, { client, BOT_OWNERS }) {
       { label: 'تحديد رولات المسؤولين', description: 'الرولات التي تتحكم بالنظام', value: 'manager_roles', emoji: '🛡️' },
       { label: 'تحديد مسؤولين بالأعضاء', description: 'أعضاء محددين للتحكم', value: 'manager_users', emoji: '👤' },
       { label: 'روم السجلات', description: 'تحديد روم سجلات النظام', value: 'log_channel', emoji: '📝' },
-      { label: 'روم الطلبات', description: 'تحديد روم الطلبات', value: 'requests_channel', emoji: '📥' },
+      { label: 'روم لوحة الطلبات', description: 'الروم الذي تعرض فيه لوحة الطلبات', value: 'requests_channel', emoji: '📥' },
+      { label: 'روم استقبال الطلبات', description: 'الروم الذي تصل إليه الطلبات', value: 'requests_inbox_channel', emoji: '📨' },
       { label: 'روم تحكم المسؤولين', description: 'لوحة الإدارة للرولات', value: 'admin_control_channel', emoji: '🧰' },
       { label: 'روم تحكم الأعضاء', description: 'لوحة الأعضاء للرولات', value: 'member_control_channel', emoji: '🎛️' }
     ]);
@@ -76,7 +78,7 @@ async function execute(message, args, { client, BOT_OWNERS }) {
       return;
     }
 
-    if (selection === 'log_channel' || selection === 'requests_channel' || selection === 'admin_control_channel' || selection === 'member_control_channel') {
+    if (selection === 'log_channel' || selection === 'requests_channel' || selection === 'requests_inbox_channel' || selection === 'admin_control_channel' || selection === 'member_control_channel') {
       const channelMenu = new ChannelSelectMenuBuilder()
         .setCustomId(`setroles_channel_${selection}_${message.author.id}`)
         .setPlaceholder('اختر الروم...')
@@ -114,17 +116,25 @@ async function execute(message, args, { client, BOT_OWNERS }) {
     }
 
     if (interaction.isChannelSelectMenu() && interaction.customId.startsWith('setroles_channel_')) {
-      const parts = interaction.customId.split('_');
-      const selection = parts[2];
+      const payload = interaction.customId.replace('setroles_channel_', '');
+      const parts = payload.split('_');
+      const targetUserId = parts.pop();
+      if (targetUserId !== message.author.id) {
+        await interaction.reply({ content: '❌ هذا الخيار ليس لك.', ephemeral: true });
+        return;
+      }
+      const selection = parts.join('_');
       const channelId = interaction.values[0];
 
-      if (selection === 'log') {
+      if (selection === 'log_channel') {
         updateGuildConfig(message.guild.id, { logChannelId: channelId });
-      } else if (selection === 'requests') {
+      } else if (selection === 'requests_channel') {
         updateGuildConfig(message.guild.id, { requestsChannelId: channelId });
-      } else if (selection === 'admin') {
+      } else if (selection === 'requests_inbox_channel') {
+        updateGuildConfig(message.guild.id, { requestInboxChannelId: channelId });
+      } else if (selection === 'admin_control_channel') {
         updateGuildConfig(message.guild.id, { adminControlChannelId: channelId });
-      } else if (selection === 'member') {
+      } else if (selection === 'member_control_channel') {
         updateGuildConfig(message.guild.id, { memberControlChannelId: channelId });
       }
 

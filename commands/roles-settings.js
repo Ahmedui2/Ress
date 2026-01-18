@@ -7,6 +7,121 @@ const myRoleCommand = require('./myrole.js');
 
 const activeTopSchedules = new Map();
 
+function buildPanelEmbed(type, guild) {
+  const color = colorManager.getColor ? colorManager.getColor() : '#2f3136';
+  const thumbnail = guild?.client?.user?.displayAvatarURL({ size: 128 });
+  switch (type) {
+    case 'member':
+      return new EmbedBuilder()
+        .setTitle('🎛️ لوحة رولي')
+        .setDescription('اضغط لإدارة رولك الخاص بسرعة.')
+        .setColor(color)
+        .setThumbnail(thumbnail);
+    case 'admin':
+      return new EmbedBuilder()
+        .setTitle('🧰 لوحة الإدارة')
+        .setDescription('إدارة الرولات الخاصة واسترجاعها.')
+        .setColor(color)
+        .setThumbnail(thumbnail);
+    case 'request':
+      return new EmbedBuilder()
+        .setTitle('📝 طلب رول خاص')
+        .setDescription('أرسل طلبك وسيتم مراجعته.')
+        .setColor(color)
+        .setThumbnail(thumbnail);
+    default:
+      return new EmbedBuilder()
+        .setTitle('🏆 توب الرولات الخاصة')
+        .setDescription('أعلى الرولات بحسب التفاعل.')
+        .setColor(color)
+        .setThumbnail(thumbnail);
+  }
+}
+
+function getPanelImageUrl(type, guildConfig) {
+  if (type === 'member') return guildConfig.memberImage;
+  if (type === 'admin') return guildConfig.adminImage;
+  if (type === 'request') return guildConfig.requestImage;
+  if (type === 'top') return guildConfig.topImage;
+  return null;
+}
+
+async function buildPanelPayload(type, guild, guildConfig) {
+  const imageUrl = getPanelImageUrl(type, guildConfig);
+  const payload = {};
+
+  if (type === 'top') {
+    const embed = await buildTopRolesEmbed(guild, guildConfig);
+    if (!imageUrl) payload.embeds = [embed];
+    if (imageUrl) payload.files = [imageUrl];
+    return payload;
+  }
+
+  if (!imageUrl) payload.embeds = [buildPanelEmbed(type, guild)];
+  if (type === 'member') {
+    payload.components = [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('customroles_member_action_manage').setLabel('إضافة/إزالة').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('customroles_member_action_color').setLabel('تغيير اللون').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('customroles_member_action_icon').setLabel('تغيير الأيقونة').setStyle(ButtonStyle.Secondary)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('customroles_member_action_members').setLabel('الأعضاء').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('customroles_member_action_transfer').setLabel('نقل الملكية').setStyle(ButtonStyle.Danger)
+      )
+    ];
+  }
+  if (type === 'admin') {
+    payload.components = [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('customroles_admin_manage').setLabel('إدارة رول').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('customroles_admin_restore').setLabel('استرجاع رول').setStyle(ButtonStyle.Secondary)
+      )
+    ];
+  }
+  if (type === 'request') {
+    payload.components = [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('customroles_request_button').setLabel('طلب رول خاص').setStyle(ButtonStyle.Success)
+      )
+    ];
+  }
+
+  if (imageUrl) {
+    payload.files = [imageUrl];
+  }
+
+  return payload;
+}
+
+async function refreshPanelMessage(guild, guildConfig, type) {
+  const channelIdMap = {
+    member: guildConfig.memberControlChannelId,
+    admin: guildConfig.adminControlChannelId,
+    request: guildConfig.requestsChannelId,
+    top: guildConfig.topChannelId
+  };
+  const messageIdMap = {
+    member: guildConfig.memberPanelMessageId,
+    admin: guildConfig.adminPanelMessageId,
+    request: guildConfig.requestPanelMessageId,
+    top: guildConfig.topMessageId
+  };
+
+  const channelId = channelIdMap[type];
+  const messageId = messageIdMap[type];
+  if (!channelId || !messageId) return false;
+
+  const channel = await guild.channels.fetch(channelId).catch(() => null);
+  if (!channel) return false;
+  const message = await channel.messages.fetch(messageId).catch(() => null);
+  if (!message) return false;
+
+  const payload = await buildPanelPayload(type, guild, guildConfig);
+  await message.edit({ ...payload, attachments: [] }).catch(() => {});
+  return true;
+}
+
 async function promptForMessage(channel, userId, promptText) {
   const prompt = await channel.send(promptText);
   const collected = await channel.awaitMessages({
@@ -57,66 +172,29 @@ async function sumActivity(userIds, resetDate) {
 }
 
 async function sendMemberPanel(guild, channel, guildConfig) {
-  const embed = new EmbedBuilder()
-    .setTitle('🎛️ تحكم الرولات الخاصة للأعضاء')
-    .setDescription('**اضغط على الزر لإدارة رولك الخاص بشكل منظم.**')
-    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136');
-
-  if (guildConfig.memberImage) {
-    embed.setImage(guildConfig.memberImage);
-  }
-
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('customroles_member_panel').setLabel('رولي').setStyle(ButtonStyle.Primary)
-  );
-
-  const message = await channel.send({ embeds: [embed], components: [row] });
+  const payload = await buildPanelPayload('member', guild, guildConfig);
+  const message = await channel.send(payload);
   updateGuildConfig(guild.id, { memberControlChannelId: channel.id, memberPanelMessageId: message.id });
   return message;
 }
 
 async function sendAdminPanel(guild, channel, guildConfig) {
-  const embed = new EmbedBuilder()
-    .setTitle('🧰 لوحة إدارة الرولات الخاصة')
-    .setDescription('**اختر عملية لإدارة الرولات الخاصة.**')
-    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136');
-
-  if (guildConfig.adminImage) {
-    embed.setImage(guildConfig.adminImage);
-  }
-
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('customroles_admin_manage').setLabel('إدارة رول').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('customroles_admin_restore').setLabel('استرجاع رول').setStyle(ButtonStyle.Secondary)
-  );
-
-  const message = await channel.send({ embeds: [embed], components: [row] });
+  const payload = await buildPanelPayload('admin', guild, guildConfig);
+  const message = await channel.send(payload);
   updateGuildConfig(guild.id, { adminControlChannelId: channel.id, adminPanelMessageId: message.id });
   return message;
 }
 
 async function sendRequestPanel(guild, channel, guildConfig) {
-  const embed = new EmbedBuilder()
-    .setTitle('📝 طلب رول خاص')
-    .setDescription('**اضغط على الزر لإرسال طلب رول خاص.**')
-    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136');
-
-  if (guildConfig.requestImage) {
-    embed.setImage(guildConfig.requestImage);
-  }
-
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('customroles_request_button').setLabel('طلب رول خاص').setStyle(ButtonStyle.Success)
-  );
-
-  const message = await channel.send({ embeds: [embed], components: [row] });
+  const payload = await buildPanelPayload('request', guild, guildConfig);
+  const message = await channel.send(payload);
   updateGuildConfig(guild.id, { requestsChannelId: channel.id, requestPanelMessageId: message.id });
   return message;
 }
 
 async function sendTopRolesPanel(guild, channel, guildConfig) {
-  const topRoles = await buildTopRolesEmbed(guild, guildConfig);
-  const message = await channel.send({ embeds: [topRoles] });
+  const payload = await buildPanelPayload('top', guild, guildConfig);
+  const message = await channel.send(payload);
 
   updateGuildConfig(guild.id, { topChannelId: channel.id, topMessageId: message.id, topEnabled: true });
 
@@ -126,6 +204,7 @@ async function sendTopRolesPanel(guild, channel, guildConfig) {
 async function buildTopRolesEmbed(guild, guildConfig) {
   const roles = getGuildRoles(guild.id);
   const resetDate = getResetDate(guildConfig.activityResetAt);
+  const thumbnail = guild?.client?.user?.displayAvatarURL({ size: 128 });
 
   const ranked = [];
   for (const roleEntry of roles) {
@@ -136,6 +215,7 @@ async function buildTopRolesEmbed(guild, guildConfig) {
     ranked.push({
       roleId: roleEntry.roleId,
       name: role.name,
+      ownerId: roleEntry.ownerId,
       total: activity.voice + activity.messages,
       voice: activity.voice,
       messages: activity.messages
@@ -148,14 +228,11 @@ async function buildTopRolesEmbed(guild, guildConfig) {
     .setTitle('🏆 توب الرولات الخاصة')
     .setDescription(ranked.slice(0, 10).map((role, index) => (
       `**${index + 1}. ${role.name}**\n` +
-      `🔹 <@&${role.roleId}> | 💬 ${role.messages} رسالة | 🔊 ${formatDuration(role.voice)}`
+      `🔹 <@&${role.roleId}> | 👤 <@${role.ownerId}> | 💬 ${role.messages} رسالة | 🔊 ${formatDuration(role.voice)}`
     )).join('\n\n') || 'لا توجد بيانات بعد.')
     .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
-    .setTimestamp();
-
-  if (guildConfig.topImage) {
-    embed.setImage(guildConfig.topImage);
-  }
+    .setTimestamp()
+    .setThumbnail(thumbnail);
 
   return embed;
 }
@@ -168,11 +245,11 @@ function startTopSchedule(guild, channel, messageId) {
   const interval = setInterval(async () => {
     const guildConfig = getGuildConfig(guild.id);
     if (!guildConfig.topEnabled) return;
-    const embed = await buildTopRolesEmbed(guild, guildConfig);
+    const payload = await buildPanelPayload('top', guild, guildConfig);
 
     const message = await channel.messages.fetch(messageId).catch(() => null);
     if (!message) return;
-    await message.edit({ embeds: [embed] }).catch(() => {});
+    await message.edit({ ...payload, attachments: [] }).catch(() => {});
   }, 180000);
 
   activeTopSchedules.set(guild.id, interval);
@@ -187,8 +264,9 @@ async function handleAdminRoleControl(message, targetRoleEntry) {
 
   const embed = new EmbedBuilder()
     .setTitle('🧰 إدارة رول خاص')
-    .setDescription(`**الرول:** <@&${role.id}>\n**المالك:** <@${targetRoleEntry.ownerId}>`)
-    .setColor(role.hexColor || (colorManager.getColor ? colorManager.getColor() : '#2f3136'));
+    .setDescription(`الرول: <@&${role.id}>\nالمالك: <@${targetRoleEntry.ownerId}>`)
+    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+    .setThumbnail(message.client.user.displayAvatarURL({ size: 128 }));
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`customroles_admin_delete_${role.id}_${message.author.id}`).setLabel('حذف الرول').setStyle(ButtonStyle.Danger),
@@ -261,8 +339,9 @@ async function executeRolesSettings(message, args, { client, BOT_OWNERS }) {
 
   const embed = new EmbedBuilder()
     .setTitle('⚙️ إعدادات الرولات الخاصة')
-    .setDescription('**اختر العملية التي تريدها من القائمة أدناه:**')
-    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136');
+    .setDescription('اختر العملية المطلوبة من القائمة.')
+    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+    .setThumbnail(message.client.user.displayAvatarURL({ size: 128 }));
 
   const row = new ActionRowBuilder().addComponents(menu);
   const sentMessage = await message.channel.send({ embeds: [embed], components: [row] });
@@ -307,12 +386,31 @@ async function executeRolesSettings(message, args, { client, BOT_OWNERS }) {
         return;
       }
 
-      if (type === 'member') updateGuildConfig(message.guild.id, { memberImage: imageUrl });
-      if (type === 'admin') updateGuildConfig(message.guild.id, { adminImage: imageUrl });
-      if (type === 'request') updateGuildConfig(message.guild.id, { requestImage: imageUrl });
-      if (type === 'top') updateGuildConfig(message.guild.id, { topImage: imageUrl });
+      let targetType = null;
+      if (type === 'member') {
+        updateGuildConfig(message.guild.id, { memberImage: imageUrl });
+        targetType = 'member';
+      }
+      if (type === 'admin') {
+        updateGuildConfig(message.guild.id, { adminImage: imageUrl });
+        targetType = 'admin';
+      }
+      if (type === 'request') {
+        updateGuildConfig(message.guild.id, { requestImage: imageUrl });
+        targetType = 'request';
+      }
+      if (type === 'top') {
+        updateGuildConfig(message.guild.id, { topImage: imageUrl });
+        targetType = 'top';
+      }
 
-      await message.channel.send('**✅ تم حفظ الصورة بنجاح.**');
+      if (!targetType) {
+        await message.channel.send('**❌ نوع الصورة غير معروف.**');
+        return;
+      }
+
+      await refreshPanelMessage(message.guild, getGuildConfig(message.guild.id), targetType);
+      await message.channel.send('**✅ تم حفظ الصورة وتحديث اللوحة بنجاح.**');
       return;
     }
 
@@ -330,12 +428,9 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
   const guildConfig = interaction.guild ? getGuildConfig(interaction.guild.id) : null;
   const isAdminUser = guildConfig ? isManager(interaction.member, guildConfig, BOT_OWNERS) : false;
 
-  if (interaction.customId === 'customroles_member_panel') {
-    await interaction.deferReply({ ephemeral: true });
-    const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
-    if (!member) return;
-    await myRoleCommand.startMyRoleFlow({ member, channel: interaction.channel, client });
-    await interaction.editReply({ content: '✅ تم فتح لوحة التحكم في القناة.' });
+  if (interaction.customId.startsWith('customroles_member_action_')) {
+    const action = interaction.customId.replace('customroles_member_action_', '');
+    await myRoleCommand.handleMemberAction(interaction, action, client);
     return;
   }
 
@@ -373,10 +468,35 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       await interaction.editReply({ content: '❌ لا توجد رولات محذوفة.' });
       return;
     }
-    const roleId = deleted[0].roleId;
+    const options = deleted.slice(0, 25).map(entry => ({
+      label: entry.name || entry.roleId,
+      value: entry.roleId,
+      description: `مالك: ${entry.ownerId}`
+    }));
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId(`customroles_restore_select_${interaction.user.id}`)
+      .setPlaceholder('اختر رولاً للاسترجاع...')
+      .setMinValues(1)
+      .setMaxValues(1)
+      .addOptions(options);
+    const row = new ActionRowBuilder().addComponents(menu);
+    await interaction.editReply({ content: 'اختر الرول المطلوب لاسترجاعه:', components: [row] });
+    return;
+  }
+
+  if (interaction.isStringSelectMenu() && interaction.customId.startsWith('customroles_restore_select_')) {
+    const targetUserId = interaction.customId.split('_').pop();
+    if (targetUserId !== interaction.user.id) {
+      await interaction.reply({ content: '❌ هذا الاختيار ليس لك.', ephemeral: true });
+      return;
+    }
+    await interaction.deferUpdate();
+    const roleId = interaction.values[0];
     const restored = restoreRoleEntry(roleId);
     if (restored) {
-      await interaction.editReply({ content: `✅ تم استرجاع الرول ${restored.name}.` });
+      await interaction.editReply({ content: `✅ تم استرجاع الرول ${restored.name || roleId}.`, components: [] });
+    } else {
+      await interaction.editReply({ content: '❌ تعذر استرجاع الرول.', components: [] });
     }
     return;
   }
@@ -410,23 +530,24 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
   if (interaction.customId === 'customroles_request_modal') {
     await interaction.deferReply({ ephemeral: true });
     const guildConfig = getGuildConfig(interaction.guild.id);
-    if (!guildConfig.requestsChannelId) {
-      await interaction.editReply({ content: '❌ لم يتم تحديد روم الطلبات.' });
+    if (!guildConfig.requestInboxChannelId) {
+      await interaction.editReply({ content: '❌ لم يتم تحديد روم استقبال الطلبات.' });
       return;
     }
 
     const roleName = interaction.fields.getTextInputValue('role_name');
     const reason = interaction.fields.getTextInputValue('role_reason');
-    const requestChannel = await interaction.guild.channels.fetch(guildConfig.requestsChannelId).catch(() => null);
+    const requestChannel = await interaction.guild.channels.fetch(guildConfig.requestInboxChannelId).catch(() => null);
     if (!requestChannel) {
-      await interaction.editReply({ content: '❌ روم الطلبات غير موجود.' });
+      await interaction.editReply({ content: '❌ روم استقبال الطلبات غير موجود.' });
       return;
     }
 
     const embed = new EmbedBuilder()
-      .setTitle('📥 طلب رول خاص جديد')
-      .setDescription(`**العضو:** <@${interaction.user.id}>\n**الرول المطلوب:** ${roleName}\n**السبب:** ${reason || 'بدون سبب'}`)
-      .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136');
+      .setTitle('📥 طلب رول خاص')
+      .setDescription(`العضو: <@${interaction.user.id}>\nالرول المطلوب: ${roleName}\nالسبب: ${reason || 'بدون سبب'}`)
+      .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+      .setThumbnail(interaction.client.user.displayAvatarURL({ size: 128 }));
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`customroles_request_approve_${interaction.user.id}`).setLabel('موافقة').setStyle(ButtonStyle.Success),
@@ -454,9 +575,17 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     const role = await interaction.guild.roles.create({
       name: roleName,
       reason: `موافقة على طلب رول خاص ${member.user.tag}`
-    });
+    }).catch(() => null);
 
-    await member.roles.add(role, 'منح رول خاص عبر الطلب').catch(() => {});
+    if (!role) {
+      await interaction.message.edit({ content: '❌ فشل إنشاء الرول. تحقق من الصلاحيات.', components: [] });
+      return;
+    }
+
+    const roleAddResult = await member.roles.add(role, 'منح رول خاص عبر الطلب').catch(() => null);
+    if (!roleAddResult) {
+      await interaction.message.edit({ content: '⚠️ تم إنشاء الرول لكن تعذر منحه للعضو.', components: [] });
+    }
 
     addRoleEntry(role.id, {
       roleId: role.id,
@@ -528,7 +657,10 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     if (!ownerId) return;
 
     const role = interaction.guild.roles.cache.get(roleId);
-    if (!role) return;
+    if (!role) {
+      await interaction.channel.send('**❌ الرول غير موجود في السيرفر.**');
+      return;
+    }
 
     addRoleEntry(role.id, {
       roleId: role.id,
@@ -542,7 +674,7 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       maxMembers: null
     });
 
-    await interaction.channel.send('**✅ تم إضافة الرول للقاعدة.**');
+    await interaction.followUp({ content: '**✅ تم إضافة الرول للقاعدة.**', ephemeral: true });
     return;
   }
 
@@ -564,7 +696,13 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     await interaction.deferUpdate();
     const roleId = interaction.customId.split('_')[3];
     const role = interaction.guild.roles.cache.get(roleId);
-    if (role) await role.delete(`حذف رول خاص بواسطة ${interaction.user.tag}`).catch(() => {});
+    if (role) {
+      if (!role.editable) {
+        await interaction.message.edit({ content: '❌ لا يمكن حذف هذا الرول بسبب صلاحيات البوت.', components: [] });
+        return;
+      }
+      await role.delete(`حذف رول خاص بواسطة ${interaction.user.tag}`).catch(() => {});
+    }
     deleteRoleEntry(roleId, interaction.user.id);
     await interaction.message.edit({ content: '✅ تم حذف الرول.', components: [] });
     return;
@@ -583,7 +721,10 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     if (!ownerId) return;
 
     const roleEntry = getRoleEntry(roleId);
-    if (!roleEntry) return;
+    if (!roleEntry) {
+      await interaction.channel.send('❌ هذا الرول غير مسجل في القاعدة.');
+      return;
+    }
     roleEntry.ownerId = ownerId;
     addRoleEntry(roleId, roleEntry);
 
@@ -591,7 +732,7 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     if (member) {
       await member.roles.add(roleId, 'نقل ملكية رول خاص').catch(() => {});
     }
-    await interaction.channel.send('✅ تم نقل الملكية بنجاح.');
+    await interaction.followUp({ content: '✅ تم نقل الملكية بنجاح.', ephemeral: true });
     return;
   }
 
@@ -603,7 +744,7 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     await interaction.deferUpdate();
     const roleId = interaction.customId.split('_')[3];
     deleteRoleEntry(roleId, interaction.user.id);
-    await interaction.channel.send('✅ تم إزالة الرول من قاعدة البيانات.');
+    await interaction.followUp({ content: '✅ تم إزالة الرول من قاعدة البيانات.', ephemeral: true });
     return;
   }
 
@@ -612,8 +753,15 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       await interaction.reply({ content: '❌ لا تملك صلاحية.', ephemeral: true });
       return;
     }
+    const payload = interaction.customId.replace('customroles_channel_', '');
+    const parts = payload.split('_');
+    const targetUserId = parts.pop();
+    if (targetUserId !== interaction.user.id) {
+      await interaction.reply({ content: '❌ هذا الخيار ليس لك.', ephemeral: true });
+      return;
+    }
+    const selection = parts.join('_');
     await interaction.deferUpdate();
-    const [, , selection] = interaction.customId.split('_');
     const channelId = interaction.values[0];
     const channel = await interaction.guild.channels.fetch(channelId).catch(() => null);
     if (!channel) return;
@@ -632,7 +780,25 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       await sendTopRolesPanel(interaction.guild, channel, guildConfig);
     }
 
-    await interaction.channel.send('✅ تم إرسال اللوحة بنجاح.');
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId(`customroles_settings_menu_${interaction.user.id}`)
+      .setPlaceholder('اختر إعداداً...')
+      .addOptions([
+        { label: 'إرسال لوحة الأعضاء', value: 'send_member_panel', emoji: '🎛️' },
+        { label: 'إرسال لوحة الإدارة', value: 'send_admin_panel', emoji: '🧰' },
+        { label: 'إرسال لوحة الطلبات', value: 'send_request_panel', emoji: '📝' },
+        { label: 'تحديد صور اللوحات', value: 'set_images', emoji: '🖼️' },
+        { label: 'تصفير التفاعل', value: 'reset_activity', emoji: '♻️' },
+        { label: 'تفعيل توب الرولات', value: 'top_roles', emoji: '🏆' }
+      ]);
+    const embed = new EmbedBuilder()
+      .setTitle('⚙️ إعدادات الرولات الخاصة')
+      .setDescription('اختر العملية المطلوبة من القائمة.')
+      .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+      .setThumbnail(interaction.client.user.displayAvatarURL({ size: 128 }));
+
+    await interaction.message.edit({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)] }).catch(() => {});
+    await interaction.followUp({ content: '✅ تم إرسال اللوحة بنجاح.', ephemeral: true });
     return;
   }
 }

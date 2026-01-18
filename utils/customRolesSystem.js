@@ -97,6 +97,7 @@ function getGuildConfig(guildId) {
       managerUserIds: [],
       logChannelId: null,
       requestsChannelId: null,
+      requestInboxChannelId: null,
       adminControlChannelId: null,
       memberControlChannelId: null,
       requestImage: null,
