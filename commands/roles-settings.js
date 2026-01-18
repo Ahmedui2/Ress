@@ -7,6 +7,28 @@ const myRoleCommand = require('./myrole.js');
 
 const activeTopSchedules = new Map();
 
+function buildSettingsMenu(userId, client) {
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`customroles_settings_menu_${userId}`)
+    .setPlaceholder('اختر إعداداً...')
+    .addOptions([
+      { label: 'إرسال لوحة الأعضاء', value: 'send_member_panel', emoji: '🎛️' },
+      { label: 'إرسال لوحة الإدارة', value: 'send_admin_panel', emoji: '🧰' },
+      { label: 'إرسال لوحة الطلبات', value: 'send_request_panel', emoji: '📝' },
+      { label: 'تحديد صور اللوحات', value: 'set_images', emoji: '🖼️' },
+      { label: 'تصفير التفاعل', value: 'reset_activity', emoji: '♻️' },
+      { label: 'تفعيل توب الرولات', value: 'top_roles', emoji: '🏆' }
+    ]);
+
+  const embed = new EmbedBuilder()
+    .setTitle('⚙️ إعدادات الرولات الخاصة')
+    .setDescription('اختر العملية المطلوبة من القائمة.')
+    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+    .setThumbnail(client.user.displayAvatarURL({ size: 128 }));
+
+  return { embed, row: new ActionRowBuilder().addComponents(menu) };
+}
+
 function buildPanelEmbed(type, guild) {
   const color = colorManager.getColor ? colorManager.getColor() : '#2f3136';
   const thumbnail = guild?.client?.user?.displayAvatarURL({ size: 128 });
@@ -325,25 +347,7 @@ async function executeRolesSettings(message, args, { client, BOT_OWNERS }) {
     return;
   }
 
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId(`customroles_settings_menu_${message.author.id}`)
-    .setPlaceholder('اختر إعداداً...')
-    .addOptions([
-      { label: 'إرسال لوحة الأعضاء', value: 'send_member_panel', emoji: '🎛️' },
-      { label: 'إرسال لوحة الإدارة', value: 'send_admin_panel', emoji: '🧰' },
-      { label: 'إرسال لوحة الطلبات', value: 'send_request_panel', emoji: '📝' },
-      { label: 'تحديد صور اللوحات', value: 'set_images', emoji: '🖼️' },
-      { label: 'تصفير التفاعل', value: 'reset_activity', emoji: '♻️' },
-      { label: 'تفعيل توب الرولات', value: 'top_roles', emoji: '🏆' }
-    ]);
-
-  const embed = new EmbedBuilder()
-    .setTitle('⚙️ إعدادات الرولات الخاصة')
-    .setDescription('اختر العملية المطلوبة من القائمة.')
-    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
-    .setThumbnail(message.client.user.displayAvatarURL({ size: 128 }));
-
-  const row = new ActionRowBuilder().addComponents(menu);
+  const { embed, row } = buildSettingsMenu(message.author.id, message.client);
   const sentMessage = await message.channel.send({ embeds: [embed], components: [row] });
 
   const collector = sentMessage.createMessageComponentCollector({
@@ -356,7 +360,7 @@ async function executeRolesSettings(message, args, { client, BOT_OWNERS }) {
 
     const selection = interaction.values[0];
     if (selection === 'send_member_panel' || selection === 'send_admin_panel' || selection === 'send_request_panel' || selection === 'top_roles') {
-  const channelMenu = new ChannelSelectMenuBuilder()
+      const channelMenu = new ChannelSelectMenuBuilder()
         .setCustomId(`customroles_channel_${selection}_${message.author.id}`)
         .setPlaceholder('اختر الروم...')
         .addChannelTypes(ChannelType.GuildText);
@@ -411,12 +415,13 @@ async function executeRolesSettings(message, args, { client, BOT_OWNERS }) {
 
       await refreshPanelMessage(message.guild, getGuildConfig(message.guild.id), targetType);
       await message.channel.send('**✅ تم حفظ الصورة وتحديث اللوحة بنجاح.**');
+      await sentMessage.edit({ embeds: [embed], components: [row] }).catch(() => {});
       return;
     }
 
     if (selection === 'reset_activity') {
       updateGuildConfig(message.guild.id, { activityResetAt: Date.now() });
-      await interaction.update({ content: '**✅ تم تصفير تفاعل الرولات الخاصة.**', embeds: [], components: [] });
+      await interaction.update({ content: '**✅ تم تصفير تفاعل الرولات الخاصة.**', embeds: [embed], components: [row] });
       return;
     }
   });
@@ -658,7 +663,7 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
 
     const role = interaction.guild.roles.cache.get(roleId);
     if (!role) {
-      await interaction.channel.send('**❌ الرول غير موجود في السيرفر.**');
+      await interaction.followUp({ content: '**❌ الرول غير موجود في السيرفر.**', ephemeral: true });
       return;
     }
 
@@ -722,7 +727,7 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
 
     const roleEntry = getRoleEntry(roleId);
     if (!roleEntry) {
-      await interaction.channel.send('❌ هذا الرول غير مسجل في القاعدة.');
+      await interaction.followUp({ content: '❌ هذا الرول غير مسجل في القاعدة.', ephemeral: true });
       return;
     }
     roleEntry.ownerId = ownerId;
@@ -780,24 +785,9 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       await sendTopRolesPanel(interaction.guild, channel, guildConfig);
     }
 
-    const menu = new StringSelectMenuBuilder()
-      .setCustomId(`customroles_settings_menu_${interaction.user.id}`)
-      .setPlaceholder('اختر إعداداً...')
-      .addOptions([
-        { label: 'إرسال لوحة الأعضاء', value: 'send_member_panel', emoji: '🎛️' },
-        { label: 'إرسال لوحة الإدارة', value: 'send_admin_panel', emoji: '🧰' },
-        { label: 'إرسال لوحة الطلبات', value: 'send_request_panel', emoji: '📝' },
-        { label: 'تحديد صور اللوحات', value: 'set_images', emoji: '🖼️' },
-        { label: 'تصفير التفاعل', value: 'reset_activity', emoji: '♻️' },
-        { label: 'تفعيل توب الرولات', value: 'top_roles', emoji: '🏆' }
-      ]);
-    const embed = new EmbedBuilder()
-      .setTitle('⚙️ إعدادات الرولات الخاصة')
-      .setDescription('اختر العملية المطلوبة من القائمة.')
-      .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
-      .setThumbnail(interaction.client.user.displayAvatarURL({ size: 128 }));
+    const { embed, row } = buildSettingsMenu(interaction.user.id, interaction.client);
 
-    await interaction.message.edit({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)] }).catch(() => {});
+    await interaction.message.edit({ embeds: [embed], components: [row] }).catch(() => {});
     await interaction.followUp({ content: '✅ تم إرسال اللوحة بنجاح.', ephemeral: true });
     return;
   }
