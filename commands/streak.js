@@ -692,6 +692,16 @@ async function createDivider(channel, user, settings, guildId, userMessageIds = 
             console.log(`✅ تم إرسال الخط الفاصل كـ attachment - معرف الرسالة: ${dividerMsg.id}`);
         } catch (downloadError) {
             console.log(`❌ فشل تحميل صورة الخط الفاصل:`, downloadError.message);
+            try {
+                const filename = getDividerFilename(dividerUrl);
+                dividerMsg = await channel.send({
+                    files: [{ attachment: dividerUrl, name: filename }],
+                    components: [deleteButton]
+                });
+                console.log(`✅ تم إرسال الخط الفاصل من الرابط مباشرة - معرف الرسالة: ${dividerMsg.id}`);
+            } catch (sendError) {
+                console.log(`❌ فشل إرسال الخط الفاصل من الرابط:`, sendError.message);
+            }
         }
         
         if (!dividerMsg) {
@@ -1113,7 +1123,7 @@ module.exports = {
     async handleInteraction(interaction, context) {
         console.log(`🔍 معالجة تفاعل Streak: ${interaction.customId}`);
         
-        const { client, BOT_OWNERS } = context;
+        const { client, BOT_OWNERS = [] } = context || {};
         const customId = interaction.customId;
         
         // استخراج guildId من customId إذا كان التفاعل من DM
