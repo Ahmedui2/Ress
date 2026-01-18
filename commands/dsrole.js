@@ -35,7 +35,7 @@ async function execute(message, args, { client, BOT_OWNERS }) {
     const role = message.guild.roles.cache.get(targetRoleId);
     const embed = new EmbedBuilder()
       .setTitle('⚠️ تأكيد حذف الرول')
-      .setDescription(`**الرول:** ${role ? `<@&${targetRoleId}>` : targetRoleId}\n**المالك:** <@${roleEntry.ownerId}>`)
+      .setDescription(`الرول: ${role ? `<@&${targetRoleId}>` : targetRoleId}\nالمالك: <@${roleEntry.ownerId}>`)
       .setColor('#e74c3c');
 
     const row = new ActionRowBuilder().addComponents(
@@ -60,6 +60,11 @@ async function execute(message, args, { client, BOT_OWNERS }) {
       await interaction.deferUpdate();
       const targetRole = message.guild.roles.cache.get(targetRoleId);
       if (targetRole) {
+        if (!targetRole.editable) {
+          await sentMessage.edit({ content: '**❌ لا يمكن حذف هذا الرول بسبب صلاحيات البوت.**', embeds: [], components: [] });
+          collector.stop('forbidden');
+          return;
+        }
         await targetRole.delete(`حذف رول خاص بواسطة ${message.author.tag}`).catch(() => {});
       }
       deleteRoleEntry(targetRoleId, message.author.id);

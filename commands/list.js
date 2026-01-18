@@ -44,8 +44,8 @@ async function renderRoleDetails(message, roleEntry) {
   const activity = await sumActivity(members.map(member => member.id), resetDate);
 
   const embed = new EmbedBuilder()
-    .setTitle(`📌 تفاصيل رول خاص`) 
-    .setDescription(`**الرول:** ${role ? `<@&${role.id}>` : roleEntry.name}\n**المالك:** <@${roleEntry.ownerId}>`)
+    .setTitle('📌 تفاصيل رول خاص') 
+    .setDescription(`الرول: ${role ? `<@&${role.id}>` : roleEntry.name}\nالمالك: <@${roleEntry.ownerId}>`)
     .addFields(
       { name: 'الأعضاء', value: `${members.length} عضو`, inline: true },
       { name: 'تفاعل الشات', value: `${activity.messages} رسالة`, inline: true },
@@ -113,9 +113,8 @@ async function execute(message, args, { client, BOT_OWNERS }) {
   const embed = new EmbedBuilder()
     .setTitle('📊 قائمة الرولات الخاصة')
     .setDescription(listEntries.map((entry, index) => (
-      `**${index + 1}. ${entry.name}** \n` +
-      `🔹 رول: <@&${entry.roleId}> \n` +
-      `👥 أعضاء: ${entry.members} | 💬 رسائل: ${entry.messages} | 🔊 فويس: ${formatDuration(entry.voice)}`
+      `**${index + 1}. ${entry.name}** — <@&${entry.roleId}>\n` +
+      `👥 ${entry.members} | 💬 ${entry.messages} | 🔊 ${formatDuration(entry.voice)}`
     )).join('\n\n'))
     .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136');
 
