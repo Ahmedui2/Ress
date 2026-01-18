@@ -62,6 +62,11 @@ class DatabaseManager {
                     console.log('⚠️ Adding missing "config" column to responsibilities table');
                     await this.run('ALTER TABLE responsibilities ADD COLUMN config TEXT');
                 }
+                const hasImage = tableInfo.some(col => col.name === 'image');
+                if (!hasImage) {
+                    console.log('⚠️ Adding missing "image" column to responsibilities table');
+                    await this.run('ALTER TABLE responsibilities ADD COLUMN image TEXT');
+                }
             } catch (migrationError) {
                 console.error('❌ Migration Error:', migrationError);
             }
