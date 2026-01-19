@@ -214,7 +214,11 @@ async function handleIconChange({ channel, userId, role, roleEntry, interaction,
   try {
     const buffer = await resolveIconBuffer(response.content, [...response.attachments.values()]);
     if (!buffer) {
-      await channel.send('**❌ لم أتمكن من معالجة هذه الأيقونة.**');
+      if (interaction) {
+        await respondEphemeral(interaction, { content: '**❌ لم أتمكن من معالجة هذه الأيقونة.**' });
+      } else {
+        await channel.send('**❌ لم أتمكن من معالجة هذه الأيقونة.**');
+      }
       return;
     }
     await role.setIcon(buffer).catch(() => {});

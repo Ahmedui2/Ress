@@ -17,6 +17,12 @@ function parseUnicodeEmoji(input) {
   return `https://twemoji.maxcdn.com/v/latest/72x72/${codePoints}.png`;
 }
 
+function extractFirstEmoji(input) {
+  if (!input) return null;
+  const match = input.match(/(\p{Extended_Pictographic}|\p{Emoji_Presentation}|\p{Emoji}\uFE0F)/u);
+  return match ? match[0] : null;
+}
+
 async function fetchImageBuffer(url) {
   const response = await fetch(url);
   if (!response.ok) {
@@ -47,7 +53,8 @@ async function resolveIconBuffer(input, attachments = []) {
       return fetchImageBuffer(customEmojiUrl);
     }
 
-    const unicodeUrl = parseUnicodeEmoji(candidate);
+    const emojiToken = extractFirstEmoji(candidate) || candidate;
+    const unicodeUrl = parseUnicodeEmoji(emojiToken);
     if (unicodeUrl) {
       return fetchImageBuffer(unicodeUrl);
     }
@@ -59,6 +66,7 @@ async function resolveIconBuffer(input, attachments = []) {
 module.exports = {
   parseCustomEmoji,
   parseUnicodeEmoji,
+  extractFirstEmoji,
   fetchImageBuffer,
   resolveIconBuffer
 };
