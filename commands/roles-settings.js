@@ -84,6 +84,39 @@ function getPanelImageUrl(type, guildConfig) {
   return null;
 }
 
+function buildAdminRoleMenu(action, userId) {
+  const menu = new RoleSelectMenuBuilder()
+    .setCustomId(`customroles_admin_panel_select_${action}_${userId}`)
+    .setPlaceholder('اختر رولاً...')
+    .setMinValues(1)
+    .setMaxValues(1);
+
+  return new ActionRowBuilder().addComponents(menu);
+}
+
+async function logRoleAction(guild, guildConfig, description, fields = []) {
+  if (!guildConfig?.logChannelId) return;
+  const channel = await guild.channels.fetch(guildConfig.logChannelId).catch(() => null);
+  if (!channel) return;
+  const embed = new EmbedBuilder()
+    .setTitle('📝 سجل الرولات الخاصة')
+    .setDescription(description)
+    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+    .setTimestamp();
+  if (fields.length) embed.addFields(fields);
+  await channel.send({ embeds: [embed] }).catch(() => {});
+}
+
+function buildInteractionMessage(interaction) {
+  return {
+    author: interaction.user,
+    member: interaction.member,
+    guild: interaction.guild,
+    channel: interaction.channel,
+    client: interaction.client
+  };
+}
+
 async function buildPanelPayload(type, guild, guildConfig) {
   const imageUrl = getPanelImageUrl(type, guildConfig);
   const payload = {};
@@ -587,22 +620,36 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     if (action === 'reset_all') {
       updateGuildConfig(interaction.guild.id, { activityResetAt: Date.now() });
       await interaction.reply({ content: '✅ تم تصفير التفاعل بالكامل.', ephemeral: true });
+      await logRoleAction(interaction.guild, guildConfig, 'تم تصفير تفاعل جميع الرولات الخاصة.', [
+        { name: 'بواسطة', value: `<@${interaction.user.id}>`, inline: true }
+      ]);
       return;
     }
 
-    await interaction.deferReply({ ephemeral: true });
-    const response = await promptForMessage(interaction.channel, interaction.user.id, 'منشن الرول أو اكتب ID:');
-    if (!response) return;
-    const roleId = response.mentions.roles.first()?.id || response.content.match(/\d{17,19}/)?.[0];
-    if (!roleId) {
-      await interaction.editReply({ content: '❌ لم يتم العثور على رول.' });
+    await interaction.reply({
+      content: 'اختر الرول المطلوب:',
+      components: [buildAdminRoleMenu(action, interaction.user.id)],
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (interaction.isRoleSelectMenu() && interaction.customId.startsWith('customroles_admin_panel_select_')) {
+    const payload = interaction.customId.replace('customroles_admin_panel_select_', '');
+    const lastUnderscore = payload.lastIndexOf('_');
+    const action = payload.slice(0, lastUnderscore);
+    const requesterId = payload.slice(lastUnderscore + 1);
+    if (requesterId !== interaction.user.id) {
+      await interaction.reply({ content: '❌ هذا الاختيار ليس لك.', ephemeral: true });
       return;
     }
+    const roleId = interaction.values[0];
+    await interaction.deferReply({ ephemeral: true });
 
     if (action === 'add') {
       const roleEntry = getRoleEntry(roleId);
       if (roleEntry) {
-        await handleAdminRoleControl(response, roleEntry);
+        await handleAdminRoleControl(buildInteractionMessage(interaction), roleEntry);
         await interaction.editReply({ content: '✅ تم عرض لوحة التحكم.' });
         return;
       }
@@ -627,7 +674,7 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
         await interaction.editReply({ content: '❌ هذا الرول غير مسجل كرول خاص.' });
         return;
       }
-      await handleAdminRoleControl(response, roleEntry);
+      await handleAdminRoleControl(buildInteractionMessage(interaction), roleEntry);
       await interaction.editReply({ content: '✅ تم عرض لوحة التحكم.' });
       return;
     }
@@ -641,6 +688,10 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       const infoMessage = await listCommand.renderRoleDetails({ guild: interaction.guild, channel: interaction.channel, client: interaction.client }, roleEntry);
       scheduleDelete(infoMessage);
       await interaction.editReply({ content: '✅ تم إرسال المعلومات.' });
+      await logRoleAction(interaction.guild, getGuildConfig(interaction.guild.id), 'تم طلب معلومات رول خاص.', [
+        { name: 'الرول', value: `<@&${roleId}>`, inline: true },
+        { name: 'بواسطة', value: `<@${interaction.user.id}>`, inline: true }
+      ]);
       return;
     }
 
@@ -655,6 +706,21 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       guildConfig.roleActivityResetAt[roleId] = Date.now();
       updateGuildConfig(interaction.guild.id, { roleActivityResetAt: guildConfig.roleActivityResetAt });
       await interaction.editReply({ content: '✅ تم تصفير تفاعل الرول.' });
+      await logRoleAction(interaction.guild, guildConfig, 'تم تصفير تفاعل رول خاص.', [
+        { name: 'الرول', value: `<@&${roleId}>`, inline: true },
+        { name: 'بواسطة', value: `<@${interaction.user.id}>`, inline: true }
+      ]);
+      return;
+    }
+
+    if (action === 'manage') {
+      const roleEntry = getRoleEntry(roleId);
+      if (!roleEntry) {
+        await interaction.editReply({ content: '❌ هذا الرول غير مسجل كرول خاص.' });
+        return;
+      }
+      await handleAdminRoleControl(buildInteractionMessage(interaction), roleEntry);
+      await interaction.editReply({ content: '✅ تم إرسال لوحة التحكم.' });
       return;
     }
 
@@ -694,21 +760,11 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       await interaction.reply({ content: '❌ لا تملك صلاحية.', ephemeral: true });
       return;
     }
-    await interaction.deferReply({ ephemeral: true });
-    const response = await promptForMessage(interaction.channel, interaction.user.id, '**منشن الرول أو اكتب ID لإدارته:**');
-    if (!response) return;
-    const roleId = response.mentions.roles.first()?.id || response.content.match(/\d{17,19}/)?.[0];
-    if (!roleId) {
-      await interaction.editReply({ content: '❌ لم يتم العثور على رول.' });
-      return;
-    }
-    const roleEntry = getRoleEntry(roleId);
-    if (!roleEntry) {
-      await interaction.editReply({ content: '❌ هذا الرول غير مسجل كرول خاص.' });
-      return;
-    }
-    await handleAdminRoleControl(response, roleEntry);
-    await interaction.editReply({ content: '✅ تم إرسال لوحة التحكم.' });
+    await interaction.reply({
+      content: 'اختر الرول المطلوب لإدارته:',
+      components: [buildAdminRoleMenu('manage', interaction.user.id)],
+      ephemeral: true
+    });
     return;
   }
 
@@ -750,6 +806,10 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     const restored = restoreRoleEntry(roleId);
     if (restored) {
       await interaction.editReply({ content: `✅ تم استرجاع الرول ${restored.name || roleId}.`, components: [] });
+      await logRoleAction(interaction.guild, getGuildConfig(interaction.guild.id), 'تم استرجاع رول خاص من المحذوفات.', [
+        { name: 'الرول', value: `<@&${roleId}>`, inline: true },
+        { name: 'بواسطة', value: `<@${interaction.user.id}>`, inline: true }
+      ]);
     } else {
       await interaction.editReply({ content: '❌ تعذر استرجاع الرول.', components: [] });
     }
@@ -930,6 +990,11 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     });
 
     await interaction.followUp({ content: '**✅ تم إضافة الرول للقاعدة.**', ephemeral: true });
+    await logRoleAction(interaction.guild, getGuildConfig(interaction.guild.id), 'تم إضافة رول خاص للقاعدة.', [
+      { name: 'الرول', value: `<@&${role.id}>`, inline: true },
+      { name: 'المالك', value: `<@${ownerId}>`, inline: true },
+      { name: 'بواسطة', value: `<@${interaction.user.id}>`, inline: true }
+    ]);
     return;
   }
 
@@ -960,6 +1025,10 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     }
     deleteRoleEntry(roleId, interaction.user.id);
     await interaction.message.edit({ content: '✅ تم حذف الرول.', components: [] });
+    await logRoleAction(interaction.guild, getGuildConfig(interaction.guild.id), 'تم حذف رول خاص.', [
+      { name: 'الرول', value: `<@&${roleId}>`, inline: true },
+      { name: 'بواسطة', value: `<@${interaction.user.id}>`, inline: true }
+    ]);
     return;
   }
 
@@ -988,6 +1057,11 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       await member.roles.add(roleId, 'نقل ملكية رول خاص').catch(() => {});
     }
     await interaction.followUp({ content: '✅ تم نقل الملكية بنجاح.', ephemeral: true });
+    await logRoleAction(interaction.guild, getGuildConfig(interaction.guild.id), 'تم نقل ملكية رول خاص.', [
+      { name: 'الرول', value: `<@&${roleId}>`, inline: true },
+      { name: 'المالك الجديد', value: `<@${ownerId}>`, inline: true },
+      { name: 'بواسطة', value: `<@${interaction.user.id}>`, inline: true }
+    ]);
     return;
   }
 
@@ -1000,6 +1074,10 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     const roleId = interaction.customId.split('_')[3];
     deleteRoleEntry(roleId, interaction.user.id);
     await interaction.followUp({ content: '✅ تم إزالة الرول من قاعدة البيانات.', ephemeral: true });
+    await logRoleAction(interaction.guild, getGuildConfig(interaction.guild.id), 'تمت إزالة رول خاص من القاعدة.', [
+      { name: 'الرول', value: `<@&${roleId}>`, inline: true },
+      { name: 'بواسطة', value: `<@${interaction.user.id}>`, inline: true }
+    ]);
     return;
   }
 
@@ -1039,6 +1117,11 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
 
     await interaction.message.edit({ embeds: [embed], components: [row] }).catch(() => {});
     await interaction.followUp({ content: '✅ تم إرسال اللوحة بنجاح.', ephemeral: true });
+    await logRoleAction(interaction.guild, guildConfig, 'تم إرسال لوحة رولات خاصة.', [
+      { name: 'اللوحة', value: selection, inline: true },
+      { name: 'الروم', value: `<#${channelId}>`, inline: true },
+      { name: 'بواسطة', value: `<@${interaction.user.id}>`, inline: true }
+    ]);
     return;
   }
 }

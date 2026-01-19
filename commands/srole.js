@@ -16,6 +16,19 @@ function scheduleDelete(message, delay = 180000) {
   }, delay);
 }
 
+async function logRoleAction(guild, guildConfig, description, fields = []) {
+  if (!guildConfig?.logChannelId) return;
+  const channel = await guild.channels.fetch(guildConfig.logChannelId).catch(() => null);
+  if (!channel) return;
+  const embed = new EmbedBuilder()
+    .setTitle('📝 سجل الرولات الخاصة')
+    .setDescription(description)
+    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+    .setTimestamp();
+  if (fields.length) embed.addFields(fields);
+  await channel.send({ embeds: [embed] }).catch(() => {});
+}
+
 const PRESET_COLORS = [
   { label: 'أحمر', value: '#e74c3c' },
   { label: 'أزرق', value: '#3498db' },
@@ -229,6 +242,12 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
           icon: role.iconURL(),
           maxMembers: state.maxMembers
         });
+
+        await logRoleAction(message.guild, guildConfig, 'تم إنشاء رول خاص جديد.', [
+          { name: 'الرول', value: `<@&${role.id}>`, inline: true },
+          { name: 'المالك', value: `<@${state.ownerId}>`, inline: true },
+          { name: 'بواسطة', value: `<@${state.createdBy}>`, inline: true }
+        ]);
 
         const details = new EmbedBuilder()
           .setTitle('✅ تم إنشاء الرول الخاص')

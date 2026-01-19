@@ -19,7 +19,9 @@ const cache = {
   rolesDirty: false,
   configDirty: false,
   rolesSaveTimeout: null,
-  configSaveTimeout: null
+  configSaveTimeout: null,
+  rolesByGuild: null,
+  rolesIndexDirty: false
 };
 
 function ensureFile(filePath, defaultData) {
@@ -78,6 +80,7 @@ function getRolesData() {
     cache.roles = loadJson(rolesPath, DEFAULT_ROLES_DATA);
     if (!cache.roles.roles) cache.roles.roles = {};
     if (!cache.roles.deleted) cache.roles.deleted = {};
+    cache.rolesIndexDirty = true;
   }
   return cache.roles;
 }
@@ -125,6 +128,7 @@ function updateGuildConfig(guildId, patch) {
 function addRoleEntry(roleId, entry) {
   const data = getRolesData();
   data.roles[roleId] = entry;
+  cache.rolesIndexDirty = true;
   scheduleRolesSave();
   return data.roles[roleId];
 }
@@ -140,6 +144,7 @@ function deleteRoleEntry(roleId, deletedBy) {
   };
   data.deleted[roleId] = deletedEntry;
   delete data.roles[roleId];
+  cache.rolesIndexDirty = true;
   scheduleRolesSave();
   return deletedEntry;
 }
@@ -155,8 +160,20 @@ function restoreRoleEntry(roleId) {
   delete restored.deletedBy;
   data.roles[roleId] = restored;
   delete data.deleted[roleId];
+  cache.rolesIndexDirty = true;
   scheduleRolesSave();
   return restored;
+}
+
+function rebuildRoleIndex() {
+  const data = getRolesData();
+  const index = {};
+  for (const roleEntry of Object.values(data.roles)) {
+    if (!index[roleEntry.guildId]) index[roleEntry.guildId] = [];
+    index[roleEntry.guildId].push(roleEntry);
+  }
+  cache.rolesByGuild = index;
+  cache.rolesIndexDirty = false;
 }
 
 function findRoleByOwner(guildId, ownerId) {
@@ -165,8 +182,10 @@ function findRoleByOwner(guildId, ownerId) {
 }
 
 function getGuildRoles(guildId) {
-  const data = getRolesData();
-  return Object.values(data.roles).filter(role => role.guildId === guildId);
+  if (!cache.rolesByGuild || cache.rolesIndexDirty) {
+    rebuildRoleIndex();
+  }
+  return cache.rolesByGuild[guildId] ? [...cache.rolesByGuild[guildId]] : [];
 }
 
 function getRoleEntry(roleId) {

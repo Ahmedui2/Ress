@@ -1,7 +1,7 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, PermissionsBitField } = require('discord.js');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
-const { findRoleByOwner, addRoleEntry } = require('../utils/customRolesSystem.js');
+const { findRoleByOwner, addRoleEntry, getGuildConfig } = require('../utils/customRolesSystem.js');
 const { resolveIconBuffer } = require('../utils/roleIconUtils.js');
 const moment = require('moment-timezone');
 
@@ -51,6 +51,20 @@ function scheduleDelete(message, delay = 180000) {
   setTimeout(() => {
     message.delete().catch(() => {});
   }, delay);
+}
+
+async function logRoleAction(guild, description, fields = []) {
+  const guildConfig = getGuildConfig(guild.id);
+  if (!guildConfig?.logChannelId) return;
+  const channel = await guild.channels.fetch(guildConfig.logChannelId).catch(() => null);
+  if (!channel) return;
+  const embed = new EmbedBuilder()
+    .setTitle('📝 سجل الرولات الخاصة')
+    .setDescription(description)
+    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+    .setTimestamp();
+  if (fields.length) embed.addFields(fields);
+  await channel.send({ embeds: [embed] }).catch(() => {});
 }
 
 function buildControlEmbed(roleEntry, role, membersCount) {
@@ -150,6 +164,13 @@ async function handleManageMembers({ channel, userId, role, roleEntry, interacti
     const refreshed = buildControlEmbed(roleEntry, role, role.members.size);
     await panelMessage.edit({ embeds: [refreshed], components: panelMessage.components }).catch(() => {});
   }
+
+  await logRoleAction(role.guild, 'تم تحديث أعضاء رول خاص.', [
+    { name: 'الرول', value: `<@&${role.id}>`, inline: true },
+    { name: 'المالك', value: `<@${roleEntry.ownerId}>`, inline: true },
+    { name: 'إضافة', value: `${added.length}`, inline: true },
+    { name: 'إزالة', value: `${removed.length}`, inline: true }
+  ]);
 }
 
 async function handleColorChange({ interaction, role, roleEntry, panelMessage }) {
@@ -197,6 +218,11 @@ async function handleColorChange({ interaction, role, roleEntry, panelMessage })
     await panelMessage.edit({ embeds: [refreshed], components: panelMessage.components }).catch(() => {});
   }
   await respondEphemeral(interaction, { content: '**✅ تم تحديث لون الرول.**' });
+  await logRoleAction(role.guild, 'تم تغيير لون رول خاص.', [
+    { name: 'الرول', value: `<@&${role.id}>`, inline: true },
+    { name: 'المالك', value: `<@${roleEntry.ownerId}>`, inline: true },
+    { name: 'اللون', value: roleEntry.color || 'غير محدد', inline: true }
+  ]);
 }
 
 async function handleIconChange({ channel, userId, role, roleEntry, interaction, panelMessage }) {
@@ -233,6 +259,10 @@ async function handleIconChange({ channel, userId, role, roleEntry, interaction,
     } else {
       await channel.send('**✅ تم تحديث أيقونة الرول.**');
     }
+    await logRoleAction(role.guild, 'تم تحديث أيقونة رول خاص.', [
+      { name: 'الرول', value: `<@&${role.id}>`, inline: true },
+      { name: 'المالك', value: `<@${roleEntry.ownerId}>`, inline: true }
+    ]);
   } catch (error) {
     if (interaction) {
       await respondEphemeral(interaction, { content: '**❌ فشل تحديث الأيقونة.**' });
@@ -313,6 +343,7 @@ async function handleTransfer({ channel, userId, role, roleEntry, interaction, p
     return;
   }
 
+  const previousOwnerId = roleEntry.ownerId;
   roleEntry.ownerId = mentionId;
   addRoleEntry(role.id, roleEntry);
   await newOwner.roles.add(role, 'نقل ملكية رول خاص').catch(() => {});
@@ -325,6 +356,11 @@ async function handleTransfer({ channel, userId, role, roleEntry, interaction, p
   } else {
     await channel.send('**✅ تم نقل ملكية الرول.**');
   }
+  await logRoleAction(role.guild, 'تم نقل ملكية رول خاص.', [
+    { name: 'الرول', value: `<@&${role.id}>`, inline: true },
+    { name: 'المالك الجديد', value: `<@${mentionId}>`, inline: true },
+    { name: 'المالك السابق', value: `<@${previousOwnerId}>`, inline: true }
+  ]);
 }
 
 async function startMyRoleFlow({ member, channel, client }) {
