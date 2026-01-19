@@ -1,7 +1,7 @@
 const { EmbedBuilder } = require('discord.js');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
-const { getGuildConfig, getGuildRoles, getRoleEntry, findRoleByOwner, formatDuration, getResetDate } = require('../utils/customRolesSystem.js');
+const { getGuildConfig, getGuildRoles, getRoleEntry, findRoleByOwner, formatDuration, getRoleResetDate } = require('../utils/customRolesSystem.js');
 const { getDatabase } = require('../utils/database.js');
 const moment = require('moment-timezone');
 
@@ -39,7 +39,7 @@ async function renderRoleDetails(message, roleEntry) {
   const role = message.guild.roles.cache.get(roleEntry.roleId);
   const members = role ? [...role.members.values()] : [];
   const guildConfig = getGuildConfig(message.guild.id);
-  const resetDate = getResetDate(guildConfig.activityResetAt);
+  const resetDate = getRoleResetDate(guildConfig, roleEntry.roleId);
 
   const activity = await sumActivity(members.map(member => member.id), resetDate);
 
@@ -56,7 +56,7 @@ async function renderRoleDetails(message, roleEntry) {
     .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
     .setThumbnail(message.client.user.displayAvatarURL({ size: 128 }));
 
-  await message.channel.send({ embeds: [embed] });
+  return message.channel.send({ embeds: [embed] });
 }
 
 async function execute(message, args, { client, BOT_OWNERS }) {
@@ -95,14 +95,14 @@ async function execute(message, args, { client, BOT_OWNERS }) {
   }
 
   const guildConfig = getGuildConfig(message.guild.id);
-  const resetDate = getResetDate(guildConfig.activityResetAt);
 
   const listEntries = [];
 
   for (const roleEntry of guildRoles) {
     const role = message.guild.roles.cache.get(roleEntry.roleId);
     const members = role ? [...role.members.values()] : [];
-    const activity = await sumActivity(members.map(member => member.id), resetDate);
+    const roleResetDate = getRoleResetDate(guildConfig, roleEntry.roleId);
+    const activity = await sumActivity(members.map(member => member.id), roleResetDate);
     listEntries.push({
       name: role ? role.name : roleEntry.name,
       roleId: roleEntry.roleId,
@@ -124,4 +124,4 @@ async function execute(message, args, { client, BOT_OWNERS }) {
   await message.channel.send({ embeds: [embed] });
 }
 
-module.exports = { name, execute };
+module.exports = { name, execute, renderRoleDetails };

@@ -79,29 +79,29 @@ async function promptForMessage(channel, userId, promptText) {
   return response;
 }
 
-async function execute(message, args, { client, BOT_OWNERS }) {
+async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverride }) {
   if (isUserBlocked(message.author.id)) return;
 
-  const mentionId = message.mentions.users.first()?.id || args.find(arg => /^\d{17,19}$/.test(arg));
-  const ownerId = mentionId || message.author.id;
+  const mentionId = message.mentions?.users?.first()?.id || args.find(arg => /^\d{17,19}$/.test(arg));
+  const ownerId = ownerIdOverride || mentionId || message.author.id;
 
   const guildConfig = getGuildConfig(message.guild.id);
   const canManage = isManager(message.member, guildConfig, BOT_OWNERS);
 
   if (!canManage && ownerId !== message.author.id) {
-    await message.reply('**❌ لا يمكنك إنشاء رول لشخص آخر.**');
+    await message.channel.send('❌ لا يمكنك إنشاء رول لشخص آخر.');
     return;
   }
 
   const existingRole = findRoleByOwner(message.guild.id, ownerId);
   if (existingRole) {
-    await message.reply('**⚠️ هذا العضو يمتلك رول خاص بالفعل.**');
+    await message.channel.send('⚠️ هذا العضو يمتلك رول خاص بالفعل.');
     return;
   }
 
   const botMember = message.guild.members.me || await message.guild.members.fetchMe().catch(() => null);
   if (!botMember || !botMember.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
-    await message.reply('**❌ البوت يحتاج صلاحية Manage Roles لإنشاء الرولات.**');
+    await message.channel.send('❌ البوت يحتاج صلاحية Manage Roles لإنشاء الرولات.');
     return;
   }
 
@@ -188,13 +188,13 @@ async function execute(message, args, { client, BOT_OWNERS }) {
       try {
         const buffer = await resolveIconBuffer(response.content, [...response.attachments.values()]);
         if (!buffer) {
-          await message.channel.send('**❌ لم يتم العثور على صورة أو إيموجي صالح.**');
+          await message.channel.send('❌ لم يتم العثور على صورة أو إيموجي صالح.');
           return;
         }
         state.iconBuffer = buffer;
         state.iconLabel = 'تم التحديد';
       } catch (error) {
-        await message.channel.send('**❌ فشل تحميل الأيقونة، تأكد من صحة الرابط أو الإيموجي.**');
+        await message.channel.send('❌ فشل تحميل الأيقونة، تأكد من صحة الرابط أو الإيموجي.');
       }
     }
 
@@ -257,7 +257,7 @@ async function execute(message, args, { client, BOT_OWNERS }) {
         return;
       } catch (error) {
         console.error('خطأ في إنشاء الرول الخاص:', error);
-        await message.channel.send('**❌ حدث خطأ أثناء إنشاء الرول.**');
+        await message.channel.send('❌ حدث خطأ أثناء إنشاء الرول.');
       }
     }
 
@@ -300,4 +300,8 @@ async function execute(message, args, { client, BOT_OWNERS }) {
   });
 }
 
-module.exports = { name, aliases, execute };
+async function execute(message, args, { client, BOT_OWNERS }) {
+  await startCreateFlow({ message, args, client, BOT_OWNERS });
+}
+
+module.exports = { name, aliases, execute, startCreateFlow };

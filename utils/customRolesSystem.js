@@ -107,7 +107,8 @@ function getGuildConfig(guildId) {
       topImage: null,
       topMessageId: null,
       topEnabled: false,
-      activityResetAt: null
+      activityResetAt: null,
+      roleActivityResetAt: {}
     };
     scheduleConfigSave();
   }
@@ -205,6 +206,12 @@ function getResetDate(activityResetAt) {
   return moment(activityResetAt).tz('Asia/Riyadh').format('YYYY-MM-DD');
 }
 
+function getRoleResetDate(guildConfig, roleId) {
+  if (!guildConfig) return null;
+  const roleReset = guildConfig.roleActivityResetAt?.[roleId] || null;
+  return getResetDate(roleReset || guildConfig.activityResetAt);
+}
+
 module.exports = {
   getRolesData,
   getConfigData,
@@ -220,6 +227,7 @@ module.exports = {
   isManager,
   formatDuration,
   getResetDate,
+  getRoleResetDate,
   rolesPath,
   configPath
 };

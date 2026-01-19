@@ -1,9 +1,11 @@
 const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder, RoleSelectMenuBuilder, UserSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ChannelType } = require('discord.js');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
-const { getGuildConfig, updateGuildConfig, isManager, getRoleEntry, addRoleEntry, deleteRoleEntry, restoreRoleEntry, getGuildRoles, getDeletedRoles, formatDuration, getResetDate } = require('../utils/customRolesSystem.js');
+const { getGuildConfig, updateGuildConfig, isManager, getRoleEntry, addRoleEntry, deleteRoleEntry, restoreRoleEntry, getGuildRoles, getDeletedRoles, formatDuration, getRoleResetDate } = require('../utils/customRolesSystem.js');
 const { getDatabase } = require('../utils/database.js');
 const myRoleCommand = require('./myrole.js');
+const sroleCommand = require('./srole.js');
+const listCommand = require('./list.js');
 
 const activeTopSchedules = new Map();
 
@@ -109,6 +111,16 @@ async function buildPanelPayload(type, guild, guildConfig) {
   }
   if (type === 'admin') {
     payload.components = [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('customroles_admin_panel_create').setLabel('إنشاء رول').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('customroles_admin_panel_add').setLabel('إضافة رول').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('customroles_admin_panel_delete').setLabel('حذف رول').setStyle(ButtonStyle.Secondary)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('customroles_admin_panel_info').setLabel('معلومات رول').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('customroles_admin_panel_reset_role').setLabel('تصفير رول').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('customroles_admin_panel_reset_all').setLabel('تصفير الكل').setStyle(ButtonStyle.Secondary)
+      ),
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('customroles_admin_manage').setLabel('إدارة رول').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId('customroles_admin_restore').setLabel('استرجاع رول').setStyle(ButtonStyle.Secondary)
@@ -239,7 +251,6 @@ async function sendTopRolesPanel(guild, channel, guildConfig) {
 
 async function buildTopRolesEmbed(guild, guildConfig) {
   const roles = getGuildRoles(guild.id);
-  const resetDate = getResetDate(guildConfig.activityResetAt);
   const thumbnail = guild?.client?.user?.displayAvatarURL({ size: 128 });
 
   const ranked = [];
@@ -247,7 +258,8 @@ async function buildTopRolesEmbed(guild, guildConfig) {
     const role = guild.roles.cache.get(roleEntry.roleId);
     if (!role) continue;
     const members = [...role.members.values()];
-    const activity = await sumActivity(members.map(member => member.id), resetDate);
+    const roleResetDate = getRoleResetDate(guildConfig, roleEntry.roleId);
+    const activity = await sumActivity(members.map(member => member.id), roleResetDate);
     ranked.push({
       roleId: roleEntry.roleId,
       name: role.name,
@@ -549,6 +561,104 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
   if (interaction.customId.startsWith('customroles_member_action_')) {
     const action = interaction.customId.replace('customroles_member_action_', '');
     await myRoleCommand.handleMemberAction(interaction, action, client);
+    return;
+  }
+
+  if (interaction.customId.startsWith('customroles_admin_panel_')) {
+    if (!isAdminUser) {
+      await interaction.reply({ content: '❌ لا تملك صلاحية.', ephemeral: true });
+      return;
+    }
+    const action = interaction.customId.replace('customroles_admin_panel_', '');
+
+    if (action === 'create') {
+      const fakeMessage = {
+        author: interaction.user,
+        member: interaction.member,
+        guild: interaction.guild,
+        channel: interaction.channel,
+        client: interaction.client
+      };
+      await sroleCommand.startCreateFlow({ message: fakeMessage, args: [], client, BOT_OWNERS, ownerIdOverride: interaction.user.id });
+      await interaction.reply({ content: '✅ تم فتح إنشاء الرول في هذه القناة.', ephemeral: true });
+      return;
+    }
+
+    if (action === 'reset_all') {
+      updateGuildConfig(interaction.guild.id, { activityResetAt: Date.now() });
+      await interaction.reply({ content: '✅ تم تصفير التفاعل بالكامل.', ephemeral: true });
+      return;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+    const response = await promptForMessage(interaction.channel, interaction.user.id, 'منشن الرول أو اكتب ID:');
+    if (!response) return;
+    const roleId = response.mentions.roles.first()?.id || response.content.match(/\d{17,19}/)?.[0];
+    if (!roleId) {
+      await interaction.editReply({ content: '❌ لم يتم العثور على رول.' });
+      return;
+    }
+
+    if (action === 'add') {
+      const roleEntry = getRoleEntry(roleId);
+      if (roleEntry) {
+        await handleAdminRoleControl(response, roleEntry);
+        await interaction.editReply({ content: '✅ تم عرض لوحة التحكم.' });
+        return;
+      }
+
+      const role = interaction.guild.roles.cache.get(roleId);
+      if (!role || isDangerousRole(role)) {
+        await interaction.editReply({ content: '❌ لا يمكن إضافة هذا الرول ضمن الرولات الخاصة.' });
+        return;
+      }
+
+      const confirmRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`customroles_add_${roleId}_${interaction.user.id}`).setLabel('إضافة للقاعدة').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`customroles_add_cancel_${roleId}_${interaction.user.id}`).setLabel('إلغاء').setStyle(ButtonStyle.Secondary)
+      );
+      await interaction.editReply({ content: 'هذا الرول غير موجود في القاعدة، هل تريد إضافته؟', components: [confirmRow] });
+      return;
+    }
+
+    if (action === 'delete') {
+      const roleEntry = getRoleEntry(roleId);
+      if (!roleEntry) {
+        await interaction.editReply({ content: '❌ هذا الرول غير مسجل كرول خاص.' });
+        return;
+      }
+      await handleAdminRoleControl(response, roleEntry);
+      await interaction.editReply({ content: '✅ تم عرض لوحة التحكم.' });
+      return;
+    }
+
+    if (action === 'info') {
+      const roleEntry = getRoleEntry(roleId);
+      if (!roleEntry) {
+        await interaction.editReply({ content: '❌ هذا الرول غير مسجل كرول خاص.' });
+        return;
+      }
+      const infoMessage = await listCommand.renderRoleDetails({ guild: interaction.guild, channel: interaction.channel, client: interaction.client }, roleEntry);
+      scheduleDelete(infoMessage);
+      await interaction.editReply({ content: '✅ تم إرسال المعلومات.' });
+      return;
+    }
+
+    if (action === 'reset_role') {
+      const roleEntry = getRoleEntry(roleId);
+      if (!roleEntry) {
+        await interaction.editReply({ content: '❌ هذا الرول غير مسجل كرول خاص.' });
+        return;
+      }
+      const guildConfig = getGuildConfig(interaction.guild.id);
+      guildConfig.roleActivityResetAt = guildConfig.roleActivityResetAt || {};
+      guildConfig.roleActivityResetAt[roleId] = Date.now();
+      updateGuildConfig(interaction.guild.id, { roleActivityResetAt: guildConfig.roleActivityResetAt });
+      await interaction.editReply({ content: '✅ تم تصفير تفاعل الرول.' });
+      return;
+    }
+
+    await interaction.editReply({ content: '❌ خيار غير معروف.' });
     return;
   }
 
