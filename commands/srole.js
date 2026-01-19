@@ -2,7 +2,7 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelect
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
 const { addRoleEntry, findRoleByOwner, getGuildConfig, isManager } = require('../utils/customRolesSystem.js');
-const { resolveIconBuffer } = require('../utils/roleIconUtils.js');
+const { resolveIconBuffer, applyRoleIcon } = require('../utils/roleIconUtils.js');
 
 const name = 'انشاء';
 const aliases = ['srole'];
@@ -23,6 +23,15 @@ async function sendTemp(channel, payload, delay = 5000) {
     : await channel.send(payload);
   scheduleDelete(message, delay);
   return message;
+}
+
+async function respondEphemeral(interaction, payload) {
+  if (!interaction) return;
+  if (interaction.deferred || interaction.replied) {
+    await interaction.followUp({ ...payload, ephemeral: true }).catch(() => {});
+  } else {
+    await interaction.reply({ ...payload, ephemeral: true }).catch(() => {});
+  }
 }
 
 async function logRoleAction(guild, guildConfig, description, fields = []) {
@@ -83,8 +92,10 @@ function buildButtons(state) {
   return [row, row2];
 }
 
-async function promptForMessage(channel, userId, promptText) {
-  const prompt = await channel.send(promptText);
+async function promptForMessage(channel, userId, promptText, interaction) {
+  const prompt = interaction
+    ? await interaction.followUp({ content: promptText, ephemeral: true, fetchReply: true }).catch(() => null)
+    : await channel.send(promptText);
   const collected = await channel.awaitMessages({
     filter: msg => msg.author.id === userId,
     max: 1,
@@ -93,10 +104,8 @@ async function promptForMessage(channel, userId, promptText) {
 
   const response = collected.first();
 
-  setTimeout(() => {
-    prompt.delete().catch(() => {});
-    if (response) response.delete().catch(() => {});
-  }, 3000);
+  if (prompt && !interaction) scheduleDelete(prompt, 1000);
+  if (response) scheduleDelete(response, 1000);
 
   return response;
 }
@@ -118,10 +127,11 @@ async function promptForOwnerSelection(channel, userId) {
   }).catch(() => null);
   if (!selection) return null;
   await selection.deferUpdate().catch(() => {});
+  await selectMessage.edit({ components: [] }).catch(() => {});
   return selection.values[0];
 }
 
-async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverride }) {
+async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverride, interaction }) {
   if (isUserBlocked(message.author.id)) return;
 
   const mentionId = message.mentions?.users?.first()?.id || args.find(arg => /^\d{17,19}$/.test(arg));
@@ -135,19 +145,31 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
   const canManage = isManager(message.member, guildConfig, BOT_OWNERS);
 
   if (!canManage) {
-    await sendTemp(message.channel, '❌ هذا الأمر متاح للمسؤولين والأونرز فقط.');
+    if (interaction) {
+      await interaction.reply({ content: '❌ هذا الأمر متاح للمسؤولين والأونرز فقط.', ephemeral: true }).catch(() => {});
+    } else {
+      await sendTemp(message.channel, '❌ هذا الأمر متاح للمسؤولين والأونرز فقط.');
+    }
     return;
   }
 
   const existingRole = findRoleByOwner(message.guild.id, ownerId);
   if (existingRole) {
-    await sendTemp(message.channel, '⚠️ هذا العضو يمتلك رول خاص بالفعل.');
+    if (interaction) {
+      await interaction.reply({ content: '⚠️ هذا العضو يمتلك رول خاص بالفعل.', ephemeral: true }).catch(() => {});
+    } else {
+      await sendTemp(message.channel, '⚠️ هذا العضو يمتلك رول خاص بالفعل.');
+    }
     return;
   }
 
   const botMember = message.guild.members.me || await message.guild.members.fetchMe().catch(() => null);
   if (!botMember || !botMember.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
-    await sendTemp(message.channel, '❌ البوت يحتاج صلاحية Manage Roles لإنشاء الرولات.');
+    if (interaction) {
+      await interaction.reply({ content: '❌ البوت يحتاج صلاحية Manage Roles لإنشاء الرولات.', ephemeral: true }).catch(() => {});
+    } else {
+      await sendTemp(message.channel, '❌ البوت يحتاج صلاحية Manage Roles لإنشاء الرولات.');
+    }
     return;
   }
 
@@ -168,8 +190,14 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
 
   const embed = buildStateEmbed(state);
   const components = buildButtons(state);
-  const sentMessage = await message.channel.send({ embeds: [embed], components });
-  scheduleDelete(sentMessage);
+  let sentMessage = null;
+  if (interaction) {
+    sentMessage = await interaction.reply({ embeds: [embed], components, ephemeral: true, fetchReply: true }).catch(() => null);
+  } else {
+    sentMessage = await message.channel.send({ embeds: [embed], components });
+    scheduleDelete(sentMessage);
+  }
+  if (!sentMessage) return;
 
   const collector = sentMessage.createMessageComponentCollector({
     filter: interaction => interaction.user.id === message.author.id,
@@ -191,14 +219,14 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
 
     if (action === 'name') {
       await interaction.deferUpdate();
-      const response = await promptForMessage(message.channel, message.author.id, '**اكتب اسم الرول المطلوب:**');
+      const response = await promptForMessage(message.channel, message.author.id, '**اكتب اسم الرول المطلوب:**', interaction);
       if (!response) return;
       state.name = response.content.slice(0, 100);
     }
 
     if (action === 'limit') {
       await interaction.deferUpdate();
-      const response = await promptForMessage(message.channel, message.author.id, '**اكتب حد الأعضاء (رقم) أو اكتب "بدون" لإزالته:**');
+      const response = await promptForMessage(message.channel, message.author.id, '**اكتب حد الأعضاء (رقم) أو اكتب "بدون" لإزالته:**', interaction);
       if (!response) return;
       if (response.content.trim().toLowerCase() === 'بدون') {
         state.maxMembers = null;
@@ -229,18 +257,18 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
 
     if (action === 'icon') {
       await interaction.deferUpdate();
-      const response = await promptForMessage(message.channel, message.author.id, '**أرسل إيموجي أو رابط صورة أو أرفق صورة لاستخدامها كأيقونة:**');
+      const response = await promptForMessage(message.channel, message.author.id, '**أرسل إيموجي أو رابط صورة أو أرفق صورة لاستخدامها كأيقونة:**', interaction);
       if (!response) return;
       try {
         const buffer = await resolveIconBuffer(response.content, [...response.attachments.values()]);
         if (!buffer) {
-          await sendTemp(message.channel, '❌ لم يتم العثور على صورة أو إيموجي صالح.');
+          await respondEphemeral(interaction, { content: '❌ لم يتم العثور على صورة أو إيموجي صالح.' });
           return;
         }
         state.iconBuffer = buffer;
         state.iconLabel = 'تم التحديد';
       } catch (error) {
-        await sendTemp(message.channel, '❌ فشل تحميل الأيقونة، تأكد من صحة الرابط أو الإيموجي.');
+        await respondEphemeral(interaction, { content: '❌ فشل تحميل الأيقونة، تأكد من صحة الرابط أو الإيموجي.' });
       }
     }
 
@@ -255,8 +283,9 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
           reason: `إنشاء رول خاص بواسطة ${message.author.tag}`
         });
 
+        let finalRole = role;
         if (state.iconBuffer) {
-          await role.setIcon(state.iconBuffer).catch(() => {});
+          finalRole = await applyRoleIcon(role, state.iconBuffer);
         }
 
         const ownerMember = await message.guild.members.fetch(state.ownerId).catch(() => null);
@@ -270,9 +299,9 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
           ownerId: state.ownerId,
           createdAt: Date.now(),
           createdBy: state.createdBy,
-          name: role.name,
-          color: role.hexColor,
-          icon: role.iconURL(),
+          name: finalRole.name,
+          color: finalRole.hexColor,
+          icon: finalRole.iconURL(),
           maxMembers: state.maxMembers
         });
 
@@ -330,7 +359,7 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
       const selected = interaction.values[0];
       if (selected === 'custom') {
         await interaction.deferUpdate();
-        const response = await promptForMessage(message.channel, message.author.id, '**اكتب كود اللون (Hex) مثل #ff0000:**');
+        const response = await promptForMessage(message.channel, message.author.id, '**اكتب كود اللون (Hex) مثل #ff0000:**', interaction);
         if (response && /^#?[0-9A-Fa-f]{6}$/.test(response.content.trim())) {
           const value = response.content.trim().startsWith('#') ? response.content.trim() : `#${response.content.trim()}`;
           state.color = value;

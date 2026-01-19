@@ -2,7 +2,7 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelect
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
 const { findRoleByOwner, addRoleEntry, deleteRoleEntry, getGuildConfig } = require('../utils/customRolesSystem.js');
-const { resolveIconBuffer } = require('../utils/roleIconUtils.js');
+const { resolveIconBuffer, applyRoleIcon } = require('../utils/roleIconUtils.js');
 const moment = require('moment-timezone');
 
 const name = 'رولي';
@@ -19,8 +19,10 @@ const PRESET_COLORS = [
   { label: 'رمادي', value: '#95a5a6' }
 ];
 
-async function promptForMessage(channel, userId, promptText) {
-  const prompt = await channel.send(promptText);
+async function promptForMessage(channel, userId, promptText, interaction) {
+  const prompt = interaction
+    ? await respondEphemeralWithMessage(interaction, { content: promptText })
+    : await channel.send(promptText);
   const collected = await channel.awaitMessages({
     filter: msg => msg.author.id === userId,
     max: 1,
@@ -28,11 +30,8 @@ async function promptForMessage(channel, userId, promptText) {
   });
 
   const response = collected.first();
-
-  setTimeout(() => {
-    prompt.delete().catch(() => {});
-    if (response) response.delete().catch(() => {});
-  }, 3000);
+  if (prompt && !interaction) scheduleDelete(prompt, 1000);
+  if (response) scheduleDelete(response, 1000);
 
   return response;
 }
@@ -44,6 +43,14 @@ async function respondEphemeral(interaction, payload) {
   } else {
     await interaction.reply({ ...payload, ephemeral: true }).catch(() => {});
   }
+}
+
+async function respondEphemeralWithMessage(interaction, payload) {
+  if (!interaction) return null;
+  if (interaction.deferred || interaction.replied) {
+    return interaction.followUp({ ...payload, ephemeral: true, fetchReply: true }).catch(() => null);
+  }
+  return interaction.reply({ ...payload, ephemeral: true, fetchReply: true }).catch(() => null);
 }
 
 function scheduleDelete(message, delay = 180000) {
@@ -94,21 +101,25 @@ function buildControlEmbed(roleEntry, role, membersCount) {
     .setThumbnail(role.guild.client.user.displayAvatarURL({ size: 128 }));
 }
 
-function buildControlButtons(sessionId) {
-  return [
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`myrole_name_${sessionId}`).setLabel('تغيير الاسم').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId(`myrole_color_${sessionId}`).setLabel('تغيير اللون').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId(`myrole_icon_${sessionId}`).setLabel('تغيير الأيقونة').setStyle(ButtonStyle.Secondary)
-    ),
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`myrole_manage_${sessionId}`).setLabel('إضافة/إزالة').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId(`myrole_members_${sessionId}`).setLabel('الأعضاء').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId(`myrole_transfer_${sessionId}`).setLabel('نقل الملكية').setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId(`myrole_delete_${sessionId}`).setLabel('حذف الرول').setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId(`myrole_close_${sessionId}`).setLabel('إغلاق').setStyle(ButtonStyle.Secondary)
-    )
-  ];
+function buildControlComponents(sessionId) {
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`myrole_action_${sessionId}`)
+    .setPlaceholder('اختر إجراءً...')
+    .addOptions([
+      { label: 'تغيير الاسم', value: 'name', emoji: '✏️' },
+      { label: 'تغيير اللون', value: 'color', emoji: '🎨' },
+      { label: 'تغيير الأيقونة', value: 'icon', emoji: '✨' },
+      { label: 'إضافة/إزالة', value: 'manage', emoji: '➕' },
+      { label: 'الأعضاء', value: 'members', emoji: '👥' },
+      { label: 'نقل الملكية', value: 'transfer', emoji: '🔁' }
+    ]);
+
+  const buttons = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`myrole_delete_${sessionId}`).setLabel('حذف الرول').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(`myrole_close_${sessionId}`).setLabel('إغلاق').setStyle(ButtonStyle.Secondary)
+  );
+
+  return [new ActionRowBuilder().addComponents(menu), buttons];
 }
 
 async function handleManageMembers({ channel, userId, role, roleEntry, interaction, panelMessage }) {
@@ -133,7 +144,7 @@ async function handleManageMembers({ channel, userId, role, roleEntry, interacti
     .setMaxValues(Math.min(10, removeOptionsWithFallback.length))
     .addOptions(removeOptionsWithFallback);
 
-  const infoMessage = await channel.send({
+  const payload = {
     embeds: [
       new EmbedBuilder()
         .setTitle('👥 إدارة الأعضاء')
@@ -145,8 +156,13 @@ async function handleManageMembers({ channel, userId, role, roleEntry, interacti
       new ActionRowBuilder().addComponents(addMenu),
       new ActionRowBuilder().addComponents(removeMenu)
     ]
-  });
-  scheduleDelete(infoMessage);
+  };
+  const infoMessage = interaction
+    ? await respondEphemeralWithMessage(interaction, payload)
+    : await channel.send(payload);
+  if (!interaction) {
+    scheduleDelete(infoMessage);
+  }
 
   const selection = await infoMessage.awaitMessageComponent({
     filter: i => i.user.id === userId,
@@ -215,12 +231,12 @@ async function handleColorChange({ interaction, role, roleEntry, panelMessage })
       { label: 'لون مخصص', value: 'custom' }
     ]);
 
-  await respondEphemeral(interaction, {
+  const colorMessage = await respondEphemeralWithMessage(interaction, {
     content: '**اختر لون الرول:**',
     components: [new ActionRowBuilder().addComponents(colorMenu)],
   });
 
-  const selection = await interaction.channel.awaitMessageComponent({
+  const selection = await colorMessage?.awaitMessageComponent({
     filter: i => i.user.id === interaction.user.id && i.customId === `myrole_color_select_${interaction.id}`,
     time: 60000
   }).catch(() => null);
@@ -228,7 +244,7 @@ async function handleColorChange({ interaction, role, roleEntry, panelMessage })
   if (!selection) return;
   if (selection.values[0] === 'custom') {
     await selection.deferUpdate();
-    const response = await promptForMessage(interaction.channel, interaction.user.id, '**اكتب كود اللون (Hex) مثل #ff0000:**');
+    const response = await promptForMessage(interaction.channel, interaction.user.id, '**اكتب كود اللون (Hex) مثل #ff0000:**', interaction);
     if (response && /^#?[0-9A-Fa-f]{6}$/.test(response.content.trim())) {
       const value = response.content.trim().startsWith('#') ? response.content.trim() : `#${response.content.trim()}`;
       await role.setColor(value).catch(() => {});
@@ -260,7 +276,7 @@ async function handleNameChange({ channel, userId, role, roleEntry, interaction,
     return;
   }
 
-  const response = await promptForMessage(channel, userId, '**اكتب الاسم الجديد للرول:**');
+  const response = await promptForMessage(channel, userId, '**اكتب الاسم الجديد للرول:**', interaction);
   if (!response) return;
   const newName = response.content.trim().slice(0, 100);
   if (!newName) {
@@ -296,7 +312,7 @@ async function handleIconChange({ channel, userId, role, roleEntry, interaction,
     }
     return;
   }
-  const response = await promptForMessage(channel, userId, '**أرسل إيموجي أو رابط صورة أو أرفق صورة لتعيين أيقونة الرول:**');
+  const response = await promptForMessage(channel, userId, '**أرسل إيموجي أو رابط صورة أو أرفق صورة لتعيين أيقونة الرول:**', interaction);
   if (!response) return;
 
   try {
@@ -309,8 +325,8 @@ async function handleIconChange({ channel, userId, role, roleEntry, interaction,
       }
       return;
     }
-    await role.setIcon(buffer).catch(() => {});
-    roleEntry.icon = role.iconURL();
+    const refreshedRole = await applyRoleIcon(role, buffer);
+    roleEntry.icon = refreshedRole.iconURL();
     addRoleEntry(role.id, roleEntry);
     if (panelMessage) {
       const refreshed = buildControlEmbed(roleEntry, role, role.members.size);
@@ -366,11 +382,16 @@ async function handleTransfer({ channel, userId, role, roleEntry, interaction, p
     .setMinValues(1)
     .setMaxValues(1);
 
-  const transferMessage = await channel.send({
+  const transferPayload = {
     content: '**اختر المالك الجديد:**',
     components: [new ActionRowBuilder().addComponents(transferMenu)]
-  });
-  scheduleDelete(transferMessage);
+  };
+  const transferMessage = interaction
+    ? await respondEphemeralWithMessage(interaction, transferPayload)
+    : await channel.send(transferPayload);
+  if (!interaction) {
+    scheduleDelete(transferMessage);
+  }
 
   const selection = await transferMessage.awaitMessageComponent({
     filter: i => i.user.id === userId,
@@ -381,13 +402,17 @@ async function handleTransfer({ channel, userId, role, roleEntry, interaction, p
   const mentionId = selection.values[0];
   await selection.update({ content: '**تم اختيار المالك الجديد.**', components: [] }).catch(() => {});
 
-  const confirmMessage = await channel.send('**هل تريد تأكيد نقل الملكية؟**');
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`myrole_transfer_confirm_${Date.now()}`).setLabel('تأكيد').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(`myrole_transfer_cancel_${Date.now()}`).setLabel('إلغاء').setStyle(ButtonStyle.Secondary)
   );
-  await confirmMessage.edit({ components: [row] });
-  scheduleDelete(confirmMessage);
+  const confirmPayload = { content: '**هل تريد تأكيد نقل الملكية؟**', components: [row] };
+  const confirmMessage = interaction
+    ? await respondEphemeralWithMessage(interaction, confirmPayload)
+    : await channel.send(confirmPayload);
+  if (!interaction) {
+    scheduleDelete(confirmMessage);
+  }
 
   const confirm = await confirmMessage.awaitMessageComponent({
     filter: i => i.user.id === userId,
@@ -456,7 +481,7 @@ async function startMyRoleFlow({ member, channel, client }) {
   const embed = buildControlEmbed(roleEntry, role, membersCount);
 
   const sessionId = `${member.id}_${Date.now()}`;
-  const sentMessage = await channel.send({ embeds: [embed], components: buildControlButtons(sessionId) });
+  const sentMessage = await channel.send({ embeds: [embed], components: buildControlComponents(sessionId) });
   scheduleDelete(sentMessage);
 
   const collector = sentMessage.createMessageComponentCollector({
@@ -465,6 +490,51 @@ async function startMyRoleFlow({ member, channel, client }) {
   });
 
   collector.on('collect', async interaction => {
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('myrole_action_')) {
+      const session = interaction.customId.split('_').slice(2).join('_');
+      if (session !== sessionId) return;
+      const action = interaction.values[0];
+
+      if (action === 'name') {
+        await interaction.deferUpdate();
+        await handleNameChange({ channel, userId: member.id, role, roleEntry, interaction, panelMessage: sentMessage });
+        return;
+      }
+
+      if (action === 'color') {
+        await handleColorChange({ interaction, role, roleEntry, panelMessage: sentMessage });
+        return;
+      }
+
+      if (action === 'icon') {
+        await interaction.deferUpdate();
+        await handleIconChange({ channel, userId: member.id, role, roleEntry, interaction, panelMessage: sentMessage });
+        return;
+      }
+
+      if (action === 'manage') {
+        await interaction.deferUpdate();
+        if (!role.editable) {
+          await respondEphemeral(interaction, { content: '**❌ لا يمكن تعديل الأعضاء بسبب صلاحيات البوت.**' });
+          return;
+        }
+        await handleManageMembers({ channel, userId: member.id, role, roleEntry, interaction, panelMessage: sentMessage });
+        return;
+      }
+
+      if (action === 'members') {
+        await interaction.deferUpdate();
+        await handleMembersList({ channel, role, interaction });
+        return;
+      }
+
+      if (action === 'transfer') {
+        await interaction.deferUpdate();
+        await handleTransfer({ channel, userId: member.id, role, roleEntry, interaction, panelMessage: sentMessage });
+        return;
+      }
+    }
+
     const parts = interaction.customId.split('_');
     const action = parts[1];
     const session = parts.slice(2).join('_');
@@ -476,50 +546,16 @@ async function startMyRoleFlow({ member, channel, client }) {
       return;
     }
 
-    if (action === 'manage') {
-      await interaction.deferUpdate();
-      if (!role.editable) {
-        await sendTemp(channel, '**❌ لا يمكن تعديل الأعضاء بسبب صلاحيات البوت.**');
-        return;
-      }
-      await handleManageMembers({ channel, userId: member.id, role, roleEntry, interaction, panelMessage: sentMessage });
-    }
-
-    if (action === 'name') {
-      await interaction.deferUpdate();
-      await handleNameChange({ channel, userId: member.id, role, roleEntry, interaction, panelMessage: sentMessage });
-    }
-
-    if (action === 'color') {
-      await handleColorChange({ interaction, role, roleEntry, panelMessage: sentMessage });
-    }
-
-    if (action === 'icon') {
-      await interaction.deferUpdate();
-      await handleIconChange({ channel, userId: member.id, role, roleEntry, interaction, panelMessage: sentMessage });
-    }
-
-    if (action === 'members') {
-      await interaction.deferUpdate();
-      await handleMembersList({ channel, role, interaction });
-    }
-
-    if (action === 'transfer') {
-      await interaction.deferUpdate();
-      await handleTransfer({ channel, userId: member.id, role, roleEntry, interaction, panelMessage: sentMessage });
-    }
-
     if (action === 'delete') {
       await interaction.deferUpdate();
       const confirmRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`myrole_delete_confirm_${sessionId}`).setLabel('تأكيد الحذف').setStyle(ButtonStyle.Danger),
         new ButtonBuilder().setCustomId(`myrole_delete_cancel_${sessionId}`).setLabel('إلغاء').setStyle(ButtonStyle.Secondary)
       );
-      const confirmMessage = await channel.send({
+      const confirmMessage = await respondEphemeralWithMessage(interaction, {
         content: '**هل أنت متأكد من حذف الرول الخاص؟**',
         components: [confirmRow]
       });
-      scheduleDelete(confirmMessage);
       const confirmation = await confirmMessage.awaitMessageComponent({
         filter: i => i.user.id === member.id,
         time: 60000
