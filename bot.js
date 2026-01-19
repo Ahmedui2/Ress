@@ -23,7 +23,6 @@ const dotenv = require('dotenv');
 const fs = require('fs');
 const path = require('path');
 const { logEvent } = require('./utils/logs_system.js');
-const { getRoleEntry, getGuildConfig, getGuildRoles, initializeCustomRolesStorage } = require('./utils/customRolesSystem.js');
 const { startReminderSystem } = require('./commands/notifications.js');
 // تعريف downManager في المستوى العلوي للوصول عبر جميع معالجات الأحداث
 const downManager = require('./utils/downManager');
@@ -34,8 +33,6 @@ const vacationManager = require('./utils/vacationManager');
 const promoteManager = require('./utils/promoteManager');
 const { handleAdminApplicationInteraction } = require('./commands/admin-apply.js');
 const interactiveRolesManager = require('./utils/interactiveRolesManager.js');
-const { isUserBlocked } = require('./commands/block.js');
-const { isChannelBlocked } = require('./commands/chatblock.js');
 
 
 dotenv.config();
@@ -118,7 +115,6 @@ async function initializeResponsibilities() {
         if (!dbManager.isInitialized) {
             await dbManager.initialize();
         }
-        await initializeCustomRolesStorage();
         const data = await dbManager.getResponsibilities();
         if (data && Object.keys(data).length > 0) {
             global.responsibilities = data;
@@ -414,7 +410,16 @@ try {
 
   // تسجيل معالج setactive ونظام الرولات التفاعلية
   try {
-    require('./commands/setactive.js');
+    const setactiveCommand = require('./commands/setactive.js');
+    const interactiveRolesManager = require('./utils/interactiveRolesManager.js');
+    
+    
+
+    client.on('messageCreate', async (message) => {
+      if (interactiveRolesManager.handleMessage) {
+        await interactiveRolesManager.handleMessage(message);
+      }
+    });
   } catch (error) {
     console.error('❌ خطأ في تسجيل نظام الرولات التفاعلية:', error);
   }
@@ -881,14 +886,6 @@ async function syncAllResponsibilityRoles(client) {
 
 client.once(Events.ClientReady, async () => {
   try {
-    // مسح الكاش عند بدء تشغيل البوت لضمان بيانات نظيفة
-    dataCache.prefix = null;
-    dataCache.adminRoles = [];
-    dataCache.lastUpdate = 0;
-    guildInvites.clear();
-    if (client.modalData) client.modalData.clear();
-    if (client.bulkPromotionMembers) client.bulkPromotionMembers.clear();
-
     // تهيئة كاش الدعوات
     for (const guild of client.guilds.cache.values()) {
         try {
@@ -1344,18 +1341,6 @@ client.once(Events.ClientReady, async () => {
     setupGlobalSetupCollector(client);
   }, 3000);
 
-  // استعادة جدولة توب الرولات الخاصة
-  try {
-    const rolesSettings = require('./commands/roles-settings.js');
-    if (rolesSettings.restoreTopSchedules) {
-      setTimeout(() => {
-        rolesSettings.restoreTopSchedules(client);
-      }, 5000);
-    }
-  } catch (error) {
-    console.error('❌ خطأ في استعادة توب الرولات الخاصة:', error);
-  }
-
   // Check for expired vacations every 2 minutes
   // This is a duplicate of the setInterval above, keeping the one added by the change.
   /*
@@ -1373,42 +1358,6 @@ client.on('roleUpdate', async (oldRole, newRole) => {
         await handleRoleUpdate(oldRole, newRole, client);
     } catch (error) {
         console.error('❌ خطأ في معالجة تحديث الرول:', error);
-    }
-});
-
-async function logRoleLimitViolation(guild, role, member, roleEntry) {
-    const guildConfig = getGuildConfig(guild.id);
-    if (!guildConfig?.logChannelId) return;
-    const logChannel = await guild.channels.fetch(guildConfig.logChannelId).catch(() => null);
-    if (!logChannel) return;
-    const embed = new EmbedBuilder()
-        .setTitle('⚠️ تجاوز حد أعضاء الرول')
-        .setDescription(`تم منع إضافة عضو بسبب تجاوز الحد.`)
-        .addFields(
-            { name: 'الرول', value: `<@&${role.id}>`, inline: true },
-            { name: 'العضو', value: `<@${member.id}>`, inline: true },
-            { name: 'الحد الأقصى', value: `${roleEntry.maxMembers}`, inline: true }
-        )
-        .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
-        .setTimestamp();
-    await logChannel.send({ embeds: [embed] }).catch(() => {});
-}
-
-client.on('guildMemberUpdate', async (oldMember, newMember) => {
-    try {
-        const addedRoles = newMember.roles.cache.filter(role => !oldMember.roles.cache.has(role.id));
-        if (addedRoles.size === 0) return;
-
-        for (const role of addedRoles.values()) {
-            const roleEntry = getRoleEntry(role.id);
-            if (!roleEntry?.maxMembers) continue;
-            if (role.members.size <= roleEntry.maxMembers) continue;
-
-            await newMember.roles.remove(role, 'تجاوز حد أعضاء الرول الخاص').catch(() => {});
-            await logRoleLimitViolation(newMember.guild, role, newMember, roleEntry);
-        }
-    } catch (error) {
-        console.error('❌ خطأ في التحقق من حد الرول:', error);
     }
 });
 
@@ -1548,11 +1497,7 @@ client.on('messageCreate', async message => {
   // 1. نظام الرولات التفاعلية
   if (typeof interactiveRolesManager !== 'undefined' && interactiveRolesManager.handleMessage) {
     try {
-      setImmediate(() => {
-        interactiveRolesManager.handleMessage(message).catch((e) => {
-          console.error('Error in interactiveRolesManager handleMessage:', e);
-        });
-      });
+      await interactiveRolesManager.handleMessage(message);
     } catch (e) {
       console.error('Error in interactiveRolesManager handleMessage:', e);
     }
@@ -1675,9 +1620,11 @@ client.on('messageCreate', async message => {
   }
 
   // فحص البلوك قبل معالجة أي أمر
+  const { isUserBlocked } = require('./commands/block.js');
   if (isUserBlocked(message.author.id)) {
     return; // تجاهل المستخدمين المحظورين بصمت لتوفير الأداء
   }
+  const { isChannelBlocked } = require('./commands/chatblock.js');
   if (isChannelBlocked(message.channel.id)) {
     return; // تجاهل الأوامر في القنوات المحظورة بصمت
   }
@@ -2455,36 +2402,6 @@ client.on('guildMemberRemove', async (member) => {
         // Handle vacation system member leave
         await vacationManager.handleMemberLeave(member);
 
-        const guildConfig = getGuildConfig(member.guild.id);
-        const ownerRoles = getGuildRoles(member.guild.id).filter(roleEntry => roleEntry.ownerId === member.id);
-        if (ownerRoles.length > 0) {
-            const targetChannelId = guildConfig.requestInboxChannelId || guildConfig.requestsChannelId;
-            if (targetChannelId) {
-                const targetChannel = await member.guild.channels.fetch(targetChannelId).catch(() => null);
-                if (targetChannel) {
-                    for (const roleEntry of ownerRoles) {
-                        const embed = new EmbedBuilder()
-                            .setTitle('📤 مغادرة مالك رول خاص')
-                            .setDescription(`العضو: <@${member.id}>\nالرول: <@&${roleEntry.roleId}>`)
-                            .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
-                            .setThumbnail(member.guild.client.user.displayAvatarURL({ size: 128 }))
-                            .setTimestamp();
-                        const row = new ActionRowBuilder().addComponents(
-                            new ButtonBuilder()
-                                .setCustomId(`customroles_owner_left_delete_${roleEntry.roleId}_${member.id}`)
-                                .setLabel('حذف الرول')
-                                .setStyle(ButtonStyle.Danger),
-                            new ButtonBuilder()
-                                .setCustomId(`customroles_owner_left_keep_${roleEntry.roleId}_${member.id}`)
-                                .setLabel('إلغاء')
-                                .setStyle(ButtonStyle.Secondary)
-                        );
-                        await targetChannel.send({ embeds: [embed], components: [row] });
-                    }
-                }
-            }
-        }
-
     } catch (error) {
         console.error('خطأ في معالج الانسحاب:', error);
     }
@@ -2775,45 +2692,32 @@ client.on('interactionCreate', async (interaction) => {
   try {
     // تعريف customId في البداية
     const customId = interaction?.customId || '';
-    const isButton = interaction.isButton?.() || false;
-    const isModalSubmit = interaction.isModalSubmit?.() || false;
-    const isSelectMenu = interaction.isStringSelectMenu?.() || false;
 
     // --- Start of Consolidated Handlers ---
 
     // 1. Handle setactive and interactiveRolesManager
-    if (customId.startsWith('setactive_')) {
-        const setactiveCommand = client.commands.get('setactive');
-        if (setactiveCommand && typeof setactiveCommand.handleSetActiveInteraction === 'function') {
-            try {
-                await setactiveCommand.handleSetActiveInteraction(interaction);
-            } catch (e) {
-                console.error('Error in setactiveCommand:', e);
-            }
+    const setactiveCommand = client.commands.get('setactive');
+    if (setactiveCommand && typeof setactiveCommand.handleSetActiveInteraction === 'function') {
+        try {
+            await setactiveCommand.handleSetActiveInteraction(interaction);
+        } catch (e) {
+            console.error('Error in setactiveCommand:', e);
         }
     }
     
-    if (customId.startsWith('int_')) {
-        if (typeof interactiveRolesManager !== 'undefined' && interactiveRolesManager && typeof interactiveRolesManager.handleInteraction === 'function') {
-            try {
-                await interactiveRolesManager.handleInteraction(interaction);
-            } catch (e) {
-                console.error('Error in interactiveRolesManager:', e);
-            }
+    // Check if interactiveRolesManager is defined and has the method
+    if (typeof interactiveRolesManager !== 'undefined' && interactiveRolesManager && typeof interactiveRolesManager.handleInteraction === 'function') {
+        try {
+            await interactiveRolesManager.handleInteraction(interaction);
+        } catch (e) {
+            console.error('Error in interactiveRolesManager:', e);
         }
     }
 
     // 2. Handle resp command modals/buttons and serverMapConfig modals
-    if (customId.startsWith('apply_resp_') ||
-        customId.startsWith('reject_reason_modal_') ||
-        customId === 'apply_resp_button' ||
-        customId === 'apply_resp_select' ||
-        customId === 'suggestion_button' ||
-        customId === 'resp_info_select' ||
-        customId === 'suggestion_modal' ||
-        customId.startsWith('modal_edit_btn_')) {
-        const respCommand = client.commands.get('resp');
-        if (respCommand && isModalSubmit) {
+    const respCommand = client.commands.get('resp');
+    if (respCommand) {
+        if (interaction.isModalSubmit()) {
             // معالجة مودال تعديل زر الخريطة
             if (interaction.customId.startsWith('modal_edit_btn_')) {
                 const idx = parseInt(interaction.customId.replace('modal_edit_btn_', ''));
@@ -2858,13 +2762,13 @@ client.on('interactionCreate', async (interaction) => {
             } else if (interaction.customId.startsWith('reject_reason_modal_') && typeof respCommand.handleRejectReasonModal === 'function') {
                 await respCommand.handleRejectReasonModal(interaction, client);
             }
-        } else if (respCommand && isButton) {
+        } else if (interaction.isButton()) {
             if (interaction.customId === 'apply_resp_button' && typeof respCommand.handleApplyRespButton === 'function') {
                 await respCommand.handleApplyRespButton(interaction, client);
             } else if ((interaction.customId.startsWith('approve_apply_') || interaction.customId.startsWith('reject_apply_')) && typeof respCommand.handleApplyAction === 'function') {
                 await respCommand.handleApplyAction(interaction, client);
             }
-        } else if (respCommand && isSelectMenu) {
+        } else if (interaction.isStringSelectMenu()) {
             if (interaction.customId === 'apply_resp_select' && typeof respCommand.handleApplyRespSelect === 'function') {
                 await respCommand.handleApplyRespSelect(interaction, client);
             }
@@ -2966,16 +2870,6 @@ client.on('interactionCreate', async (interaction) => {
             });
         }
         return;
-    }
-
-    // 4. Handle custom roles interactions
-    try {
-        const rolesSettings = require('./commands/roles-settings.js');
-        if (rolesSettings && typeof rolesSettings.handleCustomRolesInteraction === 'function') {
-            await rolesSettings.handleCustomRolesInteraction(interaction, client, BOT_OWNERS);
-        }
-    } catch (error) {
-        console.error('Error in custom roles interaction handler:', error);
     }
 
     // --- End of Consolidated Handlers ---
@@ -3395,7 +3289,7 @@ client.on('interactionCreate', async (interaction) => {
         }
         return;
       }
-    if (customId === 'suggestion_button') {
+        if (customId === 'suggestion_button') {
 
       const respCommand = client.commands.get('resp');
 
@@ -3419,7 +3313,8 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // Handle resp modal submissions
-    if (isModalSubmit && customId === 'suggestion_modal') {
+
+    if (interaction.isModalSubmit() && customId === 'suggestion_modal') {
 
       const respCommand = client.commands.get('resp');
 
