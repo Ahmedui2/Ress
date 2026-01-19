@@ -9,6 +9,13 @@ const aliases = ['srole'];
 
 const activeCreates = new Map();
 
+function scheduleDelete(message, delay = 180000) {
+  if (!message) return;
+  setTimeout(() => {
+    message.delete().catch(() => {});
+  }, delay);
+}
+
 const PRESET_COLORS = [
   { label: 'أحمر', value: '#e74c3c' },
   { label: 'أزرق', value: '#3498db' },
@@ -116,6 +123,7 @@ async function execute(message, args, { client, BOT_OWNERS }) {
   const embed = buildStateEmbed(state);
   const components = buildButtons(state);
   const sentMessage = await message.channel.send({ embeds: [embed], components });
+  scheduleDelete(sentMessage);
 
   const collector = sentMessage.createMessageComponentCollector({
     filter: interaction => interaction.user.id === message.author.id,
@@ -184,7 +192,7 @@ async function execute(message, args, { client, BOT_OWNERS }) {
           return;
         }
         state.iconBuffer = buffer;
-        state.iconLabel = response.content || 'صورة مرفقة';
+        state.iconLabel = 'تم التحديد';
       } catch (error) {
         await message.channel.send('**❌ فشل تحميل الأيقونة، تأكد من صحة الرابط أو الإيموجي.**');
       }
@@ -228,7 +236,8 @@ async function execute(message, args, { client, BOT_OWNERS }) {
           .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
           .setThumbnail(message.client.user.displayAvatarURL({ size: 128 }));
 
-        await message.channel.send({ embeds: [details] });
+        const detailsMessage = await message.channel.send({ embeds: [details] });
+        scheduleDelete(detailsMessage);
 
         if (ownerMember) {
           await ownerMember.send({

@@ -46,6 +46,13 @@ async function respondEphemeral(interaction, payload) {
   }
 }
 
+function scheduleDelete(message, delay = 180000) {
+  if (!message) return;
+  setTimeout(() => {
+    message.delete().catch(() => {});
+  }, delay);
+}
+
 function buildControlEmbed(roleEntry, role, membersCount) {
   const createdAt = moment(roleEntry.createdAt).tz('Asia/Riyadh').format('YYYY-MM-DD HH:mm');
   const description = [
@@ -81,7 +88,7 @@ async function handleManageMembers({ channel, userId, role, roleEntry, interacti
   const members = [...role.members.values()];
   const list = members.slice(0, 40).map((member, index) => `${index + 1}. ${member.displayName} (<@${member.id}>)`).join('\n') || 'لا يوجد أعضاء حالياً.';
 
-  await channel.send({
+  const infoMessage = await channel.send({
     embeds: [
       new EmbedBuilder()
         .setTitle('👥 إدارة الأعضاء')
@@ -90,6 +97,7 @@ async function handleManageMembers({ channel, userId, role, roleEntry, interacti
         .setThumbnail(channel.client.user.displayAvatarURL({ size: 128 }))
     ]
   });
+  scheduleDelete(infoMessage);
 
   const response = await promptForMessage(channel, userId, '**اكتب الآن اختياراتك:**');
   if (!response) return;
@@ -275,6 +283,7 @@ async function handleTransfer({ channel, userId, role, roleEntry, interaction, p
     new ButtonBuilder().setCustomId(`myrole_transfer_cancel_${Date.now()}`).setLabel('إلغاء').setStyle(ButtonStyle.Secondary)
   );
   await confirmMessage.edit({ components: [row] });
+  scheduleDelete(confirmMessage);
 
   const confirm = await confirmMessage.awaitMessageComponent({
     filter: i => i.user.id === userId,
@@ -338,6 +347,7 @@ async function startMyRoleFlow({ member, channel, client }) {
 
   const sessionId = `${member.id}_${Date.now()}`;
   const sentMessage = await channel.send({ embeds: [embed], components: buildControlButtons(sessionId) });
+  scheduleDelete(sentMessage);
 
   const collector = sentMessage.createMessageComponentCollector({
     filter: interaction => interaction.user.id === member.id,
@@ -443,4 +453,38 @@ async function handleMemberAction(interaction, action, client) {
   await interaction.reply({ content: '❌ خيار غير معروف.', ephemeral: true });
 }
 
-module.exports = { name, aliases, execute, startMyRoleFlow, handleMemberAction };
+async function runRoleAction({ interaction, action, roleEntry, role, panelMessage }) {
+  if (action === 'members') {
+    await handleMembersList({ channel: interaction.channel, role, interaction });
+    return;
+  }
+  if (action === 'color') {
+    await handleColorChange({ interaction, role, roleEntry, panelMessage });
+    return;
+  }
+  if (action === 'icon') {
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply({ ephemeral: true });
+    }
+    await handleIconChange({ channel: interaction.channel, userId: interaction.user.id, role, roleEntry, interaction, panelMessage });
+    return;
+  }
+  if (action === 'transfer') {
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply({ ephemeral: true });
+    }
+    await handleTransfer({ channel: interaction.channel, userId: interaction.user.id, role, roleEntry, interaction, panelMessage });
+    return;
+  }
+  if (action === 'manage') {
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply({ ephemeral: true });
+    }
+    await handleManageMembers({ channel: interaction.channel, userId: interaction.user.id, role, roleEntry, interaction, panelMessage });
+    return;
+  }
+
+  await respondEphemeral(interaction, { content: '❌ خيار غير معروف.' });
+}
+
+module.exports = { name, aliases, execute, startMyRoleFlow, handleMemberAction, runRoleAction };
