@@ -1,4 +1,4 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, UserSelectMenuBuilder, PermissionsBitField } = require('discord.js');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
 const { addRoleEntry, findRoleByOwner, getGuildConfig, isManager } = require('../utils/customRolesSystem.js');
@@ -8,6 +8,35 @@ const name = 'انشاء';
 const aliases = ['srole'];
 
 const activeCreates = new Map();
+
+function scheduleDelete(message, delay = 180000) {
+  if (!message) return;
+  setTimeout(() => {
+    message.delete().catch(() => {});
+  }, delay);
+}
+
+async function sendTemp(channel, payload, delay = 5000) {
+  if (!channel) return null;
+  const message = typeof payload === 'string'
+    ? await channel.send(payload)
+    : await channel.send(payload);
+  scheduleDelete(message, delay);
+  return message;
+}
+
+async function logRoleAction(guild, guildConfig, description, fields = []) {
+  if (!guildConfig?.logChannelId) return;
+  const channel = await guild.channels.fetch(guildConfig.logChannelId).catch(() => null);
+  if (!channel) return;
+  const embed = new EmbedBuilder()
+    .setTitle('📝 سجل الرولات الخاصة')
+    .setDescription(description)
+    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+    .setTimestamp();
+  if (fields.length) embed.addFields(fields);
+  await channel.send({ embeds: [embed] }).catch(() => {});
+}
 
 const PRESET_COLORS = [
   { label: 'أحمر', value: '#e74c3c' },
@@ -21,17 +50,21 @@ const PRESET_COLORS = [
 ];
 
 function buildStateEmbed(state) {
+  const created = state.createdBy ? `<@${state.createdBy}>` : 'غير محدد';
+  const description = [
+    `المالك: <@${state.ownerId}>`,
+    `الاسم: ${state.name ? `**${state.name}**` : 'غير محدد'}`,
+    `الحد: ${state.maxMembers ? `${state.maxMembers} عضو` : 'غير محدد'}`,
+    `اللون: ${state.color || 'غير محدد'}`,
+    `الأيقونة: ${state.iconLabel || 'غير محددة'}`,
+    `المنشئ: ${created}`
+  ].join('\n');
+
   return new EmbedBuilder()
     .setTitle('✨ إنشاء رول خاص')
-    .setDescription('**حدد إعدادات الرول الخاصة بك من الأزرار أدناه.**')
-    .addFields(
-      { name: 'المالك', value: `<@${state.ownerId}>`, inline: true },
-      { name: 'اسم الرول', value: state.name ? `**${state.name}**` : 'غير محدد', inline: true },
-      { name: 'حد الأعضاء', value: state.maxMembers ? `${state.maxMembers} عضو` : 'غير محدد', inline: true },
-      { name: 'لون الرول', value: state.color ? `${state.color}` : 'غير محدد', inline: true },
-      { name: 'أيقونة الرول', value: state.iconLabel || 'غير محددة', inline: true }
-    )
-    .setColor(state.color || (colorManager.getColor ? colorManager.getColor() : '#2f3136'));
+    .setDescription(description)
+    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+    .setThumbnail(state.clientAvatar);
 }
 
 function buildButtons(state) {
@@ -68,23 +101,53 @@ async function promptForMessage(channel, userId, promptText) {
   return response;
 }
 
-async function execute(message, args, { client, BOT_OWNERS }) {
+async function promptForOwnerSelection(channel, userId) {
+  const menu = new UserSelectMenuBuilder()
+    .setCustomId(`srole_owner_select_${Date.now()}`)
+    .setPlaceholder('اختر المالك...')
+    .setMinValues(1)
+    .setMaxValues(1);
+  const selectMessage = await channel.send({
+    content: 'اختر العضو المالك للرول:',
+    components: [new ActionRowBuilder().addComponents(menu)]
+  });
+  scheduleDelete(selectMessage);
+  const selection = await selectMessage.awaitMessageComponent({
+    filter: interaction => interaction.user.id === userId,
+    time: 60000
+  }).catch(() => null);
+  if (!selection) return null;
+  await selection.deferUpdate().catch(() => {});
+  return selection.values[0];
+}
+
+async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverride }) {
   if (isUserBlocked(message.author.id)) return;
 
-  const mentionId = message.mentions.users.first()?.id || args.find(arg => /^\d{17,19}$/.test(arg));
-  const ownerId = mentionId || message.author.id;
+  const mentionId = message.mentions?.users?.first()?.id || args.find(arg => /^\d{17,19}$/.test(arg));
+  let ownerId = ownerIdOverride || mentionId;
+  if (!ownerId) {
+    ownerId = await promptForOwnerSelection(message.channel, message.author.id);
+    if (!ownerId) return;
+  }
 
   const guildConfig = getGuildConfig(message.guild.id);
   const canManage = isManager(message.member, guildConfig, BOT_OWNERS);
 
-  if (!canManage && ownerId !== message.author.id) {
-    await message.reply('**❌ لا يمكنك إنشاء رول لشخص آخر.**');
+  if (!canManage) {
+    await sendTemp(message.channel, '❌ هذا الأمر متاح للمسؤولين والأونرز فقط.');
     return;
   }
 
   const existingRole = findRoleByOwner(message.guild.id, ownerId);
   if (existingRole) {
-    await message.reply('**⚠️ هذا العضو يمتلك رول خاص بالفعل.**');
+    await sendTemp(message.channel, '⚠️ هذا العضو يمتلك رول خاص بالفعل.');
+    return;
+  }
+
+  const botMember = message.guild.members.me || await message.guild.members.fetchMe().catch(() => null);
+  if (!botMember || !botMember.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+    await sendTemp(message.channel, '❌ البوت يحتاج صلاحية Manage Roles لإنشاء الرولات.');
     return;
   }
 
@@ -97,7 +160,8 @@ async function execute(message, args, { client, BOT_OWNERS }) {
     color: null,
     maxMembers: null,
     iconBuffer: null,
-    iconLabel: null
+    iconLabel: null,
+    clientAvatar: message.client.user.displayAvatarURL({ size: 128 })
   };
 
   activeCreates.set(sessionId, state);
@@ -105,6 +169,7 @@ async function execute(message, args, { client, BOT_OWNERS }) {
   const embed = buildStateEmbed(state);
   const components = buildButtons(state);
   const sentMessage = await message.channel.send({ embeds: [embed], components });
+  scheduleDelete(sentMessage);
 
   const collector = sentMessage.createMessageComponentCollector({
     filter: interaction => interaction.user.id === message.author.id,
@@ -112,7 +177,9 @@ async function execute(message, args, { client, BOT_OWNERS }) {
   });
 
   collector.on('collect', async interaction => {
-    const [prefix, action, id] = interaction.customId.split('_');
+    const parts = interaction.customId.split('_');
+    const action = parts[1];
+    const id = parts.slice(2).join('_');
     if (id !== sessionId) return;
 
     if (action === 'cancel') {
@@ -166,12 +233,14 @@ async function execute(message, args, { client, BOT_OWNERS }) {
       if (!response) return;
       try {
         const buffer = await resolveIconBuffer(response.content, [...response.attachments.values()]);
-        if (buffer) {
-          state.iconBuffer = buffer;
-          state.iconLabel = response.content || 'صورة مرفقة';
+        if (!buffer) {
+          await sendTemp(message.channel, '❌ لم يتم العثور على صورة أو إيموجي صالح.');
+          return;
         }
+        state.iconBuffer = buffer;
+        state.iconLabel = 'تم التحديد';
       } catch (error) {
-        await message.channel.send('**❌ فشل تحميل الأيقونة، تأكد من صحة الرابط أو الإيموجي.**');
+        await sendTemp(message.channel, '❌ فشل تحميل الأيقونة، تأكد من صحة الرابط أو الإيموجي.');
       }
     }
 
@@ -207,20 +276,28 @@ async function execute(message, args, { client, BOT_OWNERS }) {
           maxMembers: state.maxMembers
         });
 
+        await logRoleAction(message.guild, guildConfig, 'تم إنشاء رول خاص جديد.', [
+          { name: 'الرول', value: `<@&${role.id}>`, inline: true },
+          { name: 'المالك', value: `<@${state.ownerId}>`, inline: true },
+          { name: 'بواسطة', value: `<@${state.createdBy}>`, inline: true }
+        ]);
+
         const details = new EmbedBuilder()
           .setTitle('✅ تم إنشاء الرول الخاص')
-          .setDescription(`**الرول:** <@&${role.id}>\n**المالك:** <@${state.ownerId}>`)
-          .setColor(role.hexColor || '#2f3136');
+          .setDescription(`الرول: <@&${role.id}>\nالمالك: <@${state.ownerId}>`)
+          .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+          .setThumbnail(message.client.user.displayAvatarURL({ size: 128 }));
 
-        await message.channel.send({ embeds: [details] });
+        await sendTemp(message.channel, { embeds: [details] });
 
         if (ownerMember) {
           await ownerMember.send({
             embeds: [
               new EmbedBuilder()
                 .setTitle('🎉 تم إنشاء رولك الخاص')
-                .setDescription(`**الرول:** <@&${role.id}>\n**تم الإنشاء بواسطة:** <@${state.createdBy}>`)
-                .setColor(role.hexColor || '#2f3136')
+                .setDescription(`الرول: ${role.name}\nتم الإنشاء بواسطة: <@${state.createdBy}>`)
+                .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+                .setThumbnail(message.client.user.displayAvatarURL({ size: 128 }))
             ]
           }).catch(() => {});
         }
@@ -231,15 +308,18 @@ async function execute(message, args, { client, BOT_OWNERS }) {
         return;
       } catch (error) {
         console.error('خطأ في إنشاء الرول الخاص:', error);
-        await message.channel.send('**❌ حدث خطأ أثناء إنشاء الرول.**');
+        await sendTemp(message.channel, '❌ حدث خطأ أثناء إنشاء الرول.');
       }
     }
 
     await sentMessage.edit({ embeds: [buildStateEmbed(state)], components: buildButtons(state) });
   });
 
-  collector.on('end', () => {
+  collector.on('end', async (_collected, reason) => {
     activeCreates.delete(sessionId);
+    if (reason === 'completed' || reason === 'cancelled') return;
+    if (!sentMessage.editable) return;
+    await sentMessage.edit({ components: [], content: '**⏱️ انتهت مهلة الإنشاء.**' }).catch(() => {});
   });
 
   const interactionHandler = async interaction => {
@@ -271,4 +351,8 @@ async function execute(message, args, { client, BOT_OWNERS }) {
   });
 }
 
-module.exports = { name, aliases, execute };
+async function execute(message, args, { client, BOT_OWNERS }) {
+  await startCreateFlow({ message, args, client, BOT_OWNERS });
+}
+
+module.exports = { name, aliases, execute, startCreateFlow };

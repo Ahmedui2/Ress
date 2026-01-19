@@ -17,6 +17,12 @@ function parseUnicodeEmoji(input) {
   return `https://twemoji.maxcdn.com/v/latest/72x72/${codePoints}.png`;
 }
 
+function extractFirstEmoji(input) {
+  if (!input) return null;
+  const match = input.match(/(\p{Extended_Pictographic}|\p{Emoji_Presentation}|\p{Emoji}\uFE0F)/u);
+  return match ? match[0] : null;
+}
+
 async function fetchImageBuffer(url) {
   const response = await fetch(url);
   if (!response.ok) {
@@ -34,18 +40,29 @@ async function resolveIconBuffer(input, attachments = []) {
 
   if (!input) return null;
 
-  if (input.startsWith('http://') || input.startsWith('https://')) {
-    return fetchImageBuffer(input);
+  const trimmedInput = input.trim();
+  const tokens = trimmedInput.split(/\s+/).filter(Boolean);
+
+  for (const token of tokens) {
+    if (token.startsWith('http://') || token.startsWith('https://')) {
+      return fetchImageBuffer(token);
+    }
   }
 
-  const customEmojiUrl = parseCustomEmoji(input);
-  if (customEmojiUrl) {
-    return fetchImageBuffer(customEmojiUrl);
+  const customMatch = trimmedInput.match(/<(a?):\w+:(\d+)>/);
+  if (customMatch) {
+    const customEmojiUrl = parseCustomEmoji(customMatch[0]);
+    if (customEmojiUrl) {
+      return fetchImageBuffer(customEmojiUrl);
+    }
   }
 
-  const unicodeUrl = parseUnicodeEmoji(input);
-  if (unicodeUrl) {
-    return fetchImageBuffer(unicodeUrl);
+  const emojiToken = extractFirstEmoji(trimmedInput);
+  if (emojiToken) {
+    const unicodeUrl = parseUnicodeEmoji(emojiToken);
+    if (unicodeUrl) {
+      return fetchImageBuffer(unicodeUrl);
+    }
   }
 
   return null;
@@ -54,6 +71,7 @@ async function resolveIconBuffer(input, attachments = []) {
 module.exports = {
   parseCustomEmoji,
   parseUnicodeEmoji,
+  extractFirstEmoji,
   fetchImageBuffer,
   resolveIconBuffer
 };

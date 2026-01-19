@@ -35,8 +35,9 @@ async function execute(message, args, { client, BOT_OWNERS }) {
     const role = message.guild.roles.cache.get(targetRoleId);
     const embed = new EmbedBuilder()
       .setTitle('⚠️ تأكيد حذف الرول')
-      .setDescription(`**الرول:** ${role ? `<@&${targetRoleId}>` : targetRoleId}\n**المالك:** <@${roleEntry.ownerId}>`)
-      .setColor('#e74c3c');
+      .setDescription(`الرول: ${role ? `<@&${targetRoleId}>` : targetRoleId}\nالمالك: <@${roleEntry.ownerId}>`)
+      .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+      .setThumbnail(message.client.user.displayAvatarURL({ size: 128 }));
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`dsrole_confirm_${targetRoleId}_${message.author.id}`).setLabel('تأكيد الحذف').setStyle(ButtonStyle.Danger),
@@ -60,6 +61,11 @@ async function execute(message, args, { client, BOT_OWNERS }) {
       await interaction.deferUpdate();
       const targetRole = message.guild.roles.cache.get(targetRoleId);
       if (targetRole) {
+        if (!targetRole.editable) {
+          await sentMessage.edit({ content: '**❌ لا يمكن حذف هذا الرول بسبب صلاحيات البوت.**', embeds: [], components: [] });
+          collector.stop('forbidden');
+          return;
+        }
         await targetRole.delete(`حذف رول خاص بواسطة ${message.author.tag}`).catch(() => {});
       }
       deleteRoleEntry(targetRoleId, message.author.id);
@@ -100,7 +106,8 @@ async function execute(message, args, { client, BOT_OWNERS }) {
   const embed = new EmbedBuilder()
     .setTitle('🗑️ حذف متعدد للرولات الخاصة')
     .setDescription('**اختر الرولات المراد حذفها:**')
-    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136');
+    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+    .setThumbnail(message.client.user.displayAvatarURL({ size: 128 }));
 
   const sentMessage = await message.channel.send({ embeds: [embed], components: [row] });
 
