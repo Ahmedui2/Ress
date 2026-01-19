@@ -97,11 +97,12 @@ function buildControlEmbed(roleEntry, role, membersCount) {
 function buildControlButtons(sessionId) {
   return [
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`myrole_manage_${sessionId}`).setLabel('إضافة/إزالة').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`myrole_name_${sessionId}`).setLabel('تغيير الاسم').setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId(`myrole_color_${sessionId}`).setLabel('تغيير اللون').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId(`myrole_icon_${sessionId}`).setLabel('تغيير الأيقونة').setStyle(ButtonStyle.Secondary)
     ),
     new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`myrole_manage_${sessionId}`).setLabel('إضافة/إزالة').setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId(`myrole_members_${sessionId}`).setLabel('الأعضاء').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId(`myrole_transfer_${sessionId}`).setLabel('نقل الملكية').setStyle(ButtonStyle.Danger),
       new ButtonBuilder().setCustomId(`myrole_delete_${sessionId}`).setLabel('حذف الرول').setStyle(ButtonStyle.Danger),
@@ -251,6 +252,39 @@ async function handleColorChange({ interaction, role, roleEntry, panelMessage })
     { name: 'المالك', value: `<@${roleEntry.ownerId}>`, inline: true },
     { name: 'اللون', value: roleEntry.color || 'غير محدد', inline: true }
   ]);
+}
+
+async function handleNameChange({ channel, userId, role, roleEntry, interaction, panelMessage }) {
+  if (!role.editable) {
+    await respondEphemeral(interaction, { content: '**❌ لا يمكن تعديل اسم هذا الرول بسبب صلاحيات البوت.**' });
+    return;
+  }
+
+  const response = await promptForMessage(channel, userId, '**اكتب الاسم الجديد للرول:**');
+  if (!response) return;
+  const newName = response.content.trim().slice(0, 100);
+  if (!newName) {
+    await respondEphemeral(interaction, { content: '**❌ الاسم غير صالح.**' });
+    return;
+  }
+
+  try {
+    await role.setName(newName).catch(() => {});
+    roleEntry.name = newName;
+    addRoleEntry(role.id, roleEntry);
+    if (panelMessage) {
+      const refreshed = buildControlEmbed(roleEntry, role, role.members.size);
+      await panelMessage.edit({ embeds: [refreshed], components: panelMessage.components }).catch(() => {});
+    }
+    await respondEphemeral(interaction, { content: '**✅ تم تحديث اسم الرول.**' });
+    await logRoleAction(role.guild, 'تم تحديث اسم رول خاص.', [
+      { name: 'الرول', value: `<@&${role.id}>`, inline: true },
+      { name: 'المالك', value: `<@${roleEntry.ownerId}>`, inline: true },
+      { name: 'الاسم الجديد', value: newName, inline: true }
+    ]);
+  } catch (error) {
+    await respondEphemeral(interaction, { content: '**❌ فشل تحديث اسم الرول.**' });
+  }
 }
 
 async function handleIconChange({ channel, userId, role, roleEntry, interaction, panelMessage }) {
@@ -451,6 +485,11 @@ async function startMyRoleFlow({ member, channel, client }) {
       await handleManageMembers({ channel, userId: member.id, role, roleEntry, interaction, panelMessage: sentMessage });
     }
 
+    if (action === 'name') {
+      await interaction.deferUpdate();
+      await handleNameChange({ channel, userId: member.id, role, roleEntry, interaction, panelMessage: sentMessage });
+    }
+
     if (action === 'color') {
       await handleColorChange({ interaction, role, roleEntry, panelMessage: sentMessage });
     }
@@ -541,6 +580,11 @@ async function handleMemberAction(interaction, action, client) {
     await handleMembersList({ channel: interaction.channel, role, interaction });
     return;
   }
+  if (action === 'name') {
+    await interaction.deferReply({ ephemeral: true });
+    await handleNameChange({ channel: interaction.channel, userId: member.id, role, roleEntry, interaction });
+    return;
+  }
   if (action === 'color') {
     await handleColorChange({ interaction, role, roleEntry });
     return;
@@ -567,6 +611,13 @@ async function handleMemberAction(interaction, action, client) {
 async function runRoleAction({ interaction, action, roleEntry, role, panelMessage }) {
   if (action === 'members') {
     await handleMembersList({ channel: interaction.channel, role, interaction });
+    return;
+  }
+  if (action === 'name') {
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply({ ephemeral: true });
+    }
+    await handleNameChange({ channel: interaction.channel, userId: interaction.user.id, role, roleEntry, interaction, panelMessage });
     return;
   }
   if (action === 'color') {
