@@ -396,6 +396,7 @@ async function handleAdminRoleControl(message, targetRoleEntry) {
   );
 
   const controlRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`customroles_admin_action_name_${role.id}_${message.author.id}`).setLabel('تغيير الاسم').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId(`customroles_admin_action_manage_${role.id}_${message.author.id}`).setLabel('إضافة/إزالة').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId(`customroles_admin_action_color_${role.id}_${message.author.id}`).setLabel('تغيير اللون').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`customroles_admin_action_icon_${role.id}_${message.author.id}`).setLabel('تغيير الأيقونة').setStyle(ButtonStyle.Secondary)
