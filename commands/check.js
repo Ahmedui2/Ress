@@ -6,6 +6,36 @@ const path = require('path');
 
 const name = 'check';
 
+function normalizeName(value) {
+    return (value || '').toLowerCase().replace(/\s+/g, '');
+}
+
+function findBestRoleMatch(roles, searchTerm) {
+    const normalizedSearch = normalizeName(searchTerm);
+    return roles.find(role => normalizeName(role.name) === normalizedSearch)
+        || roles.find(role => normalizeName(role.name).startsWith(normalizedSearch))
+        || roles.find(role => normalizeName(role.name).includes(normalizedSearch));
+}
+
+function findBestMemberMatch(members, searchTerm) {
+    const normalizedSearch = normalizeName(searchTerm);
+    const getDisplayName = member => normalizeName(member.displayName);
+    const getUsername = member => normalizeName(member.user.username);
+    return members.find(member => getDisplayName(member) === normalizedSearch || getUsername(member) === normalizedSearch)
+        || members.find(member => getDisplayName(member).startsWith(normalizedSearch) || getUsername(member).startsWith(normalizedSearch))
+        || members.find(member => getDisplayName(member).includes(normalizedSearch) || getUsername(member).includes(normalizedSearch));
+}
+
+async function mapWithConcurrency(items, limit, mapper) {
+    const results = [];
+    for (let i = 0; i < items.length; i += limit) {
+        const batch = items.slice(i, i + limit);
+        const batchResults = await Promise.all(batch.map(mapper));
+        results.push(...batchResults);
+    }
+    return results;
+}
+
 function getDatabaseManager() {
     const { getDatabase } = require('../utils/database.js');
     return getDatabase();
@@ -52,29 +82,43 @@ async function execute(message, args, { client, BOT_OWNERS, ADMIN_ROLES }) {
     }
 
     if (args.length === 0) {
-        await message.channel.send('**يرجى منشن رول أو عضو أو كتابة الآيدي**');
+        await message.channel.send('**يرجى منشن رول أو عضو أو كتابة الآيدي أو الاسم**');
         return;
     }
 
     const mentionRegex = /<@!?(\d+)>|<@&(\d+)>|(\b\d{17,19}\b)/g;
     const matches = [...message.content.matchAll(mentionRegex)];
-    
-    if (matches.length === 0) {
-        return await message.channel.send('**لم يتم العثور على منشن أو آيدي في الرسالة**');
+    const uniqueIds = [...new Set(matches.map(m => m[1] || m[2] || m[3]).filter(Boolean))];
+
+    if (uniqueIds.length > 0) {
+        await mapWithConcurrency(uniqueIds, 5, async (id) => {
+            const roleMatch = message.guild.roles.cache.get(id);
+            const userMatch = await client.users.fetch(id).catch(() => null);
+
+            if (roleMatch) {
+                await showRoleActivityStats(message, roleMatch, client);
+            } else if (userMatch) {
+                await showUserActivityStats(message, userMatch, client);
+            }
+        });
+        return;
     }
 
-    const uniqueIds = [...new Set(matches.map(m => m[1] || m[2] || m[3]))];
-    
-    for (const id of uniqueIds) {
-        const roleMatch = message.guild.roles.cache.get(id);
-        const userMatch = await client.users.fetch(id).catch(() => null);
+    const searchTerm = args.join(' ');
+    const roleByName = findBestRoleMatch(message.guild.roles.cache, searchTerm);
+    const memberByName = findBestMemberMatch(message.guild.members.cache, searchTerm);
 
-        if (roleMatch) {
-            await showRoleActivityStats(message, roleMatch, client);
-        } else if (userMatch) {
-            await showUserActivityStats(message, userMatch, client);
-        }
+    if (roleByName) {
+        await showRoleActivityStats(message, roleByName, client);
+        return;
     }
+
+    if (memberByName) {
+        await showUserActivityStats(message, memberByName.user, client);
+        return;
+    }
+
+    await message.channel.send('**لم يتم العثور على منشن أو آيدي أو اسم مطابق في الرسالة**');
 }
 
 async function getColorIndicator(userId, client, dbManager) {

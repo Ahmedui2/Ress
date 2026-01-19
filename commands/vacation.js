@@ -286,11 +286,6 @@ async function handleInteraction(interaction, context) {
 
     // Handle regular vacation approvals and rejections
     if (interaction.isButton() && (interaction.customId.startsWith('vac_approve_') || interaction.customId.startsWith('vac_reject_'))) {
-        // تأجيل الرد فقط للموافقة، أما الرفض فيحتاج لإظهار نافذة Modal
-        if (interaction.customId.startsWith('vac_approve_')) {
-            await interaction.deferUpdate().catch(() => {});
-        }
-
         const parts = interaction.customId.split('_');
         const action = parts[1]; // approve or reject
         const userId = parts[2];
@@ -309,6 +304,11 @@ async function handleInteraction(interaction, context) {
                 content: '❌ ** خوي ها؟.**', 
                 ephemeral: true 
             });
+        }
+
+        // تأجيل الرد فقط للموافقة، أما الرفض فيحتاج لإظهار نافذة Modal
+        if (interaction.customId.startsWith('vac_approve_')) {
+            await interaction.deferUpdate().catch(() => {});
         }
 
         const vacationsData = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));

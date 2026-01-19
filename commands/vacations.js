@@ -350,22 +350,27 @@ async function handleInteraction(interaction, context) {
             let results = [];
             
             for (const userId of userIds) {
-                const res = await vacationManager.approveVacation(interaction, userId, interaction.user.id);
-                if (res.success) {
-                    // تحديث الرسالة الأصلية
-                    await updateOriginalMessage(interaction.guild, userId, 'vacation', 'approved', { adminId: interaction.user.id });
+                try {
+                    const res = await vacationManager.approveVacation(interaction, userId, interaction.user.id);
+                    if (res.success) {
+                        // تحديث الرسالة الأصلية
+                        await updateOriginalMessage(interaction.guild, userId, 'vacation', 'approved', { adminId: interaction.user.id });
 
-                    const member = await interaction.guild.members.fetch(userId).catch(() => null);
-                    if (member) {
-                        const dmEmbed = colorManager.createEmbed()
-                            .setTitle('✅ تم قبول طلب إجازتك')
-                            .setColor('#2ECC71')
-                            .setDescription(`أهلاً بك، لقد تمت الموافقة على طلب إجازتك في **${interaction.guild.name}**.\nتم سحب رولاتك الإدارية مؤقتاً.`)
-                            .setTimestamp();
-                        await member.user.send({ embeds: [dmEmbed] }).catch(() => {});
+                        const member = await interaction.guild.members.fetch(userId).catch(() => null);
+                        if (member) {
+                            const dmEmbed = colorManager.createEmbed()
+                                .setTitle('✅ تم قبول طلب إجازتك')
+                                .setColor('#2ECC71')
+                                .setDescription(`أهلاً بك، لقد تمت الموافقة على طلب إجازتك في **${interaction.guild.name}**.\nتم سحب رولاتك الإدارية مؤقتاً.`)
+                                .setTimestamp();
+                            await member.user.send({ embeds: [dmEmbed] }).catch(() => {});
+                        }
                     }
+                    results.push(`<@${userId}>: ${res.success ? '✅ تم القبول' : '❌ فشل'}`);
+                } catch (error) {
+                    console.error('[Vacations] Bulk approve error:', error);
+                    results.push(`<@${userId}>: ❌ خطأ`);
                 }
-                results.push(`<@${userId}>: ${res.success ? '✅ تم القبول' : '❌ فشل'}`);
             }
 
             const { embed, row } = await getPendingListEmbed(interaction.guild);
@@ -411,8 +416,13 @@ async function handleInteraction(interaction, context) {
             let results = [];
             
             for (const userId of userIds) {
-                const res = await rejectVacation(interaction, userId);
-                results.push(`<@${userId}>: ${res.success ? '❌ تم الرفض' : '❌ فشل'}`);
+                try {
+                    const res = await rejectVacation(interaction, userId);
+                    results.push(`<@${userId}>: ${res.success ? '❌ تم الرفض' : '❌ فشل'}`);
+                } catch (error) {
+                    console.error('[Vacations] Bulk reject error:', error);
+                    results.push(`<@${userId}>: ❌ خطأ`);
+                }
             }
 
             const { embed, row } = await getPendingListEmbed(interaction.guild);
@@ -458,26 +468,31 @@ async function handleInteraction(interaction, context) {
             let results = [];
             
             for (const userId of userIds) {
-                const res = await vacationManager.endVacation(interaction.guild, client, userId, `تم قبول الإنهاء بواسطة المسؤول: ${interaction.user.tag}`);
-                if (res.success) {
-                    // تحديث الرسالة الأصلية
-                    await updateOriginalMessage(interaction.guild, userId, 'termination', 'approved', { adminId: interaction.user.id });
+                try {
+                    const res = await vacationManager.endVacation(interaction.guild, client, userId, `تم قبول الإنهاء بواسطة المسؤول: ${interaction.user.tag}`);
+                    if (res.success) {
+                        // تحديث الرسالة الأصلية
+                        await updateOriginalMessage(interaction.guild, userId, 'termination', 'approved', { adminId: interaction.user.id });
 
-                    const currentVacations = readJson(vacationsPath);
-                    if (currentVacations.pendingTermination) delete currentVacations.pendingTermination[userId];
-                    writeJson(vacationsPath, currentVacations);
+                        const currentVacations = readJson(vacationsPath);
+                        if (currentVacations.pendingTermination) delete currentVacations.pendingTermination[userId];
+                        writeJson(vacationsPath, currentVacations);
 
-                    const member = await interaction.guild.members.fetch(userId).catch(() => null);
-                    if (member) {
-                        const dmEmbed = colorManager.createEmbed()
-                            .setTitle('✅ تم قبول إنهاء إجازتك')
-                            .setColor('#2ECC71')
-                            .setDescription(`أهلاً بك، لقد تمت الموافقة على طلب إنهاء إجازتك مبكراً في **${interaction.guild.name}**.\nتمت استعادة رولاتك بنجاح.`)
-                            .setTimestamp();
-                        await member.user.send({ embeds: [dmEmbed] }).catch(() => {});
+                        const member = await interaction.guild.members.fetch(userId).catch(() => null);
+                        if (member) {
+                            const dmEmbed = colorManager.createEmbed()
+                                .setTitle('✅ تم قبول إنهاء إجازتك')
+                                .setColor('#2ECC71')
+                                .setDescription(`أهلاً بك، لقد تمت الموافقة على طلب إنهاء إجازتك مبكراً في **${interaction.guild.name}**.\nتمت استعادة رولاتك بنجاح.`)
+                                .setTimestamp();
+                            await member.user.send({ embeds: [dmEmbed] }).catch(() => {});
+                        }
                     }
+                    results.push(`<@${userId}>: ${res.success ? '✅ تم الإنهاء' : '❌ فشل'}`);
+                } catch (error) {
+                    console.error('[Vacations] Bulk termination approve error:', error);
+                    results.push(`<@${userId}>: ❌ خطأ`);
                 }
-                results.push(`<@${userId}>: ${res.success ? '✅ تم الإنهاء' : '❌ فشل'}`);
             }
 
             const { embed, row } = await getPendingTerminationListEmbed(interaction.guild);
@@ -523,8 +538,13 @@ async function handleInteraction(interaction, context) {
             let results = [];
             
             for (const userId of userIds) {
-                const res = await rejectTermination(interaction, userId);
-                results.push(`<@${userId}>: ${res.success ? '❌ تم الرفض' : '❌ فشل'}`);
+                try {
+                    const res = await rejectTermination(interaction, userId);
+                    results.push(`<@${userId}>: ${res.success ? '❌ تم الرفض' : '❌ فشل'}`);
+                } catch (error) {
+                    console.error('[Vacations] Bulk termination reject error:', error);
+                    results.push(`<@${userId}>: ❌ خطأ`);
+                }
             }
 
             const { embed, row } = await getPendingTerminationListEmbed(interaction.guild);

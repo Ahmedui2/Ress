@@ -34,6 +34,8 @@ const vacationManager = require('./utils/vacationManager');
 const promoteManager = require('./utils/promoteManager');
 const { handleAdminApplicationInteraction } = require('./commands/admin-apply.js');
 const interactiveRolesManager = require('./utils/interactiveRolesManager.js');
+const { isUserBlocked } = require('./commands/block.js');
+const { isChannelBlocked } = require('./commands/chatblock.js');
 
 
 dotenv.config();
@@ -412,16 +414,7 @@ try {
 
   // تسجيل معالج setactive ونظام الرولات التفاعلية
   try {
-    const setactiveCommand = require('./commands/setactive.js');
-    const interactiveRolesManager = require('./utils/interactiveRolesManager.js');
-    
-    
-
-    client.on('messageCreate', async (message) => {
-      if (interactiveRolesManager.handleMessage) {
-        await interactiveRolesManager.handleMessage(message);
-      }
-    });
+    require('./commands/setactive.js');
   } catch (error) {
     console.error('❌ خطأ في تسجيل نظام الرولات التفاعلية:', error);
   }
@@ -888,6 +881,14 @@ async function syncAllResponsibilityRoles(client) {
 
 client.once(Events.ClientReady, async () => {
   try {
+    // مسح الكاش عند بدء تشغيل البوت لضمان بيانات نظيفة
+    dataCache.prefix = null;
+    dataCache.adminRoles = [];
+    dataCache.lastUpdate = 0;
+    guildInvites.clear();
+    if (client.modalData) client.modalData.clear();
+    if (client.bulkPromotionMembers) client.bulkPromotionMembers.clear();
+
     // تهيئة كاش الدعوات
     for (const guild of client.guilds.cache.values()) {
         try {
@@ -1547,7 +1548,11 @@ client.on('messageCreate', async message => {
   // 1. نظام الرولات التفاعلية
   if (typeof interactiveRolesManager !== 'undefined' && interactiveRolesManager.handleMessage) {
     try {
-      await interactiveRolesManager.handleMessage(message);
+      setImmediate(() => {
+        interactiveRolesManager.handleMessage(message).catch((e) => {
+          console.error('Error in interactiveRolesManager handleMessage:', e);
+        });
+      });
     } catch (e) {
       console.error('Error in interactiveRolesManager handleMessage:', e);
     }
@@ -1670,11 +1675,9 @@ client.on('messageCreate', async message => {
   }
 
   // فحص البلوك قبل معالجة أي أمر
-  const { isUserBlocked } = require('./commands/block.js');
   if (isUserBlocked(message.author.id)) {
     return; // تجاهل المستخدمين المحظورين بصمت لتوفير الأداء
   }
-  const { isChannelBlocked } = require('./commands/chatblock.js');
   if (isChannelBlocked(message.channel.id)) {
     return; // تجاهل الأوامر في القنوات المحظورة بصمت
   }
@@ -2772,32 +2775,45 @@ client.on('interactionCreate', async (interaction) => {
   try {
     // تعريف customId في البداية
     const customId = interaction?.customId || '';
+    const isButton = interaction.isButton?.() || false;
+    const isModalSubmit = interaction.isModalSubmit?.() || false;
+    const isSelectMenu = interaction.isStringSelectMenu?.() || false;
 
     // --- Start of Consolidated Handlers ---
 
     // 1. Handle setactive and interactiveRolesManager
-    const setactiveCommand = client.commands.get('setactive');
-    if (setactiveCommand && typeof setactiveCommand.handleSetActiveInteraction === 'function') {
-        try {
-            await setactiveCommand.handleSetActiveInteraction(interaction);
-        } catch (e) {
-            console.error('Error in setactiveCommand:', e);
+    if (customId.startsWith('setactive_')) {
+        const setactiveCommand = client.commands.get('setactive');
+        if (setactiveCommand && typeof setactiveCommand.handleSetActiveInteraction === 'function') {
+            try {
+                await setactiveCommand.handleSetActiveInteraction(interaction);
+            } catch (e) {
+                console.error('Error in setactiveCommand:', e);
+            }
         }
     }
     
-    // Check if interactiveRolesManager is defined and has the method
-    if (typeof interactiveRolesManager !== 'undefined' && interactiveRolesManager && typeof interactiveRolesManager.handleInteraction === 'function') {
-        try {
-            await interactiveRolesManager.handleInteraction(interaction);
-        } catch (e) {
-            console.error('Error in interactiveRolesManager:', e);
+    if (customId.startsWith('int_')) {
+        if (typeof interactiveRolesManager !== 'undefined' && interactiveRolesManager && typeof interactiveRolesManager.handleInteraction === 'function') {
+            try {
+                await interactiveRolesManager.handleInteraction(interaction);
+            } catch (e) {
+                console.error('Error in interactiveRolesManager:', e);
+            }
         }
     }
 
     // 2. Handle resp command modals/buttons and serverMapConfig modals
-    const respCommand = client.commands.get('resp');
-    if (respCommand) {
-        if (interaction.isModalSubmit()) {
+    if (customId.startsWith('apply_resp_') ||
+        customId.startsWith('reject_reason_modal_') ||
+        customId === 'apply_resp_button' ||
+        customId === 'apply_resp_select' ||
+        customId === 'suggestion_button' ||
+        customId === 'resp_info_select' ||
+        customId === 'suggestion_modal' ||
+        customId.startsWith('modal_edit_btn_')) {
+        const respCommand = client.commands.get('resp');
+        if (respCommand && isModalSubmit) {
             // معالجة مودال تعديل زر الخريطة
             if (interaction.customId.startsWith('modal_edit_btn_')) {
                 const idx = parseInt(interaction.customId.replace('modal_edit_btn_', ''));
@@ -2842,13 +2858,13 @@ client.on('interactionCreate', async (interaction) => {
             } else if (interaction.customId.startsWith('reject_reason_modal_') && typeof respCommand.handleRejectReasonModal === 'function') {
                 await respCommand.handleRejectReasonModal(interaction, client);
             }
-        } else if (interaction.isButton()) {
+        } else if (respCommand && isButton) {
             if (interaction.customId === 'apply_resp_button' && typeof respCommand.handleApplyRespButton === 'function') {
                 await respCommand.handleApplyRespButton(interaction, client);
             } else if ((interaction.customId.startsWith('approve_apply_') || interaction.customId.startsWith('reject_apply_')) && typeof respCommand.handleApplyAction === 'function') {
                 await respCommand.handleApplyAction(interaction, client);
             }
-        } else if (interaction.isStringSelectMenu()) {
+        } else if (respCommand && isSelectMenu) {
             if (interaction.customId === 'apply_resp_select' && typeof respCommand.handleApplyRespSelect === 'function') {
                 await respCommand.handleApplyRespSelect(interaction, client);
             }
@@ -3379,7 +3395,7 @@ client.on('interactionCreate', async (interaction) => {
         }
         return;
       }
-        if (customId === 'suggestion_button') {
+    if (customId === 'suggestion_button') {
 
       const respCommand = client.commands.get('resp');
 
@@ -3403,8 +3419,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // Handle resp modal submissions
-
-    if (interaction.isModalSubmit() && customId === 'suggestion_modal') {
+    if (isModalSubmit && customId === 'suggestion_modal') {
 
       const respCommand = client.commands.get('resp');
 

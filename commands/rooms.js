@@ -46,6 +46,36 @@ function formatDuration(milliseconds) {
     return parts.length > 0 ? parts.join(' و ') : '**أقل من دقيقة**';
 }
 
+function normalizeName(value) {
+    return (value || '').toLowerCase().replace(/\s+/g, '');
+}
+
+function findBestRoleMatch(roles, searchTerm) {
+    const normalizedSearch = normalizeName(searchTerm);
+    return roles.find(role => normalizeName(role.name) === normalizedSearch)
+        || roles.find(role => normalizeName(role.name).startsWith(normalizedSearch))
+        || roles.find(role => normalizeName(role.name).includes(normalizedSearch));
+}
+
+function findBestMemberMatch(members, searchTerm) {
+    const normalizedSearch = normalizeName(searchTerm);
+    const getDisplayName = member => normalizeName(member.displayName);
+    const getUsername = member => normalizeName(member.user.username);
+    return members.find(member => getDisplayName(member) === normalizedSearch || getUsername(member) === normalizedSearch)
+        || members.find(member => getDisplayName(member).startsWith(normalizedSearch) || getUsername(member).startsWith(normalizedSearch))
+        || members.find(member => getDisplayName(member).includes(normalizedSearch) || getUsername(member).includes(normalizedSearch));
+}
+
+async function mapWithConcurrency(items, limit, mapper) {
+    const results = [];
+    for (let i = 0; i < items.length; i += limit) {
+        const batch = items.slice(i, i + limit);
+        const batchResults = await Promise.all(batch.map(mapper));
+        results.push(...batchResults);
+    }
+    return results;
+}
+
 async function getUserActivity(userId) {
     try {
         const { getDatabase } = require('../utils/database');
@@ -168,10 +198,22 @@ async function execute(message, args, { client, BOT_OWNERS, ADMIN_ROLES }) {
         }
     }
 
+    if (!targetRole && !targetUser && args.length > 0) {
+        const searchTerm = args.join(' ');
+        const roleByName = findBestRoleMatch(message.guild.roles.cache, searchTerm);
+        const memberByName = findBestMemberMatch(message.guild.members.cache, searchTerm);
+
+        if (roleByName) {
+            targetRole = roleByName;
+        } else if (memberByName) {
+            targetUser = memberByName.user;
+        }
+    }
+
     if (!targetRole && !targetUser) {
         const embed = colorManager.createEmbed()
             .setTitle('**Rooms System**')
-            .setDescription('**الرجاء منشن رول أو عضو أو كتابة ID**\n\n**أمثلة :**\n`rooms @Role`\n`rooms @User`\n`rooms 636930315503534110`\n`rooms admin` - لعرض جميع الأدمن')
+            .setDescription('**الرجاء منشن رول أو عضو أو كتابة ID أو الاسم**\n\n**أمثلة :**\n`rooms @Role`\n`rooms @User`\n`rooms 636930315503534110`\n`rooms اسم-العضو`\n`rooms admin` - لعرض جميع الأدمن')
             .setThumbnail(client.user.displayAvatarURL({ format: 'png', size: 128 }));
 
         await message.channel.send({ embeds: [embed] });
@@ -252,19 +294,18 @@ async function showAdminRolesActivity(message, client, ADMIN_ROLES) {
             return;
         }
 
-        const memberActivities = [];
-
-        for (const [userId, member] of allAdminMembers) {
+        const memberEntries = [...allAdminMembers.entries()];
+        const memberActivities = (await mapWithConcurrency(memberEntries, 10, async ([userId, member]) => {
             const activity = await getUserActivity(userId);
             const totalActivity = activity.totalMessages + (activity.totalVoiceTime / 60000);
 
-            memberActivities.push({
+            return {
                 member: member,
                 activity: activity,
                 totalActivity: totalActivity,
                 xp: Math.floor(activity.totalMessages / 10)
-            });
-        }
+            };
+        })).filter(Boolean);
 
         memberActivities.sort((a, b) => b.totalActivity - a.totalActivity);
 
@@ -662,22 +703,18 @@ async function showRoleActivity(message, role, client) {
             return;
         }
 
-        const memberActivities = [];
-
-        for (const [userId, member] of members) {
-            if (member.user.bot) continue;
-
+        const memberEntries = [...members.entries()].filter(([, member]) => !member.user.bot);
+        const memberActivities = (await mapWithConcurrency(memberEntries, 10, async ([userId, member]) => {
             const activity = await getUserActivity(userId);
-
             const totalActivity = activity.totalMessages + (activity.totalVoiceTime / 60000);
 
-            memberActivities.push({
+            return {
                 member: member,
                 activity: activity,
                 totalActivity: totalActivity,
                 xp: Math.floor(activity.totalMessages / 10)
-            });
-        }
+            };
+        })).filter(Boolean);
 
         memberActivities.sort((a, b) => b.totalActivity - a.totalActivity);
 
