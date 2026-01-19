@@ -511,11 +511,15 @@ async function executeRolesSettings(message, args, { client, BOT_OWNERS }) {
 
     const selection = interaction.values[0];
     if (selection === 'manager_roles') {
+      const currentRoles = guildConfig?.managerRoleIds || [];
       const roleMenu = new RoleSelectMenuBuilder()
         .setCustomId(`customroles_manager_roles_${message.author.id}`)
         .setPlaceholder('اختر رولات المسؤولين...')
         .setMinValues(1)
         .setMaxValues(10);
+      if (currentRoles.length) {
+        roleMenu.setDefaultRoles(currentRoles.slice(0, 10));
+      }
 
       await interaction.update({
         content: 'اختر رولات المسؤولين:',
@@ -526,11 +530,15 @@ async function executeRolesSettings(message, args, { client, BOT_OWNERS }) {
     }
 
     if (selection === 'manager_users') {
+      const currentUsers = guildConfig?.managerUserIds || [];
       const userMenu = new UserSelectMenuBuilder()
         .setCustomId(`customroles_manager_users_${message.author.id}`)
         .setPlaceholder('اختر المسؤولين بالأعضاء...')
         .setMinValues(1)
         .setMaxValues(10);
+      if (currentUsers.length) {
+        userMenu.setDefaultUsers(currentUsers.slice(0, 10));
+      }
 
       await interaction.update({
         content: 'اختر المسؤولين بالأعضاء:',
