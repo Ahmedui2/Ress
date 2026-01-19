@@ -1,4 +1,4 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, PermissionsBitField } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, UserSelectMenuBuilder, PermissionsBitField } = require('discord.js');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
 const { findRoleByOwner, addRoleEntry, getGuildConfig } = require('../utils/customRolesSystem.js');
@@ -73,7 +73,9 @@ function buildControlEmbed(roleEntry, role, membersCount) {
     `الرول: <@&${roleEntry.roleId}>`,
     `المالك: <@${roleEntry.ownerId}>`,
     `الإنشاء: ${createdAt}`,
-    `الأعضاء: ${membersCount}`
+    `الأعضاء: ${membersCount}`,
+    `الحد: ${roleEntry.maxMembers ? `${roleEntry.maxMembers} عضو` : 'بدون'}`,
+    `اللون: ${roleEntry.color || role.hexColor || 'غير محدد'}`
   ].join('\n');
 
   return new EmbedBuilder()
@@ -100,58 +102,74 @@ function buildControlButtons(sessionId) {
 
 async function handleManageMembers({ channel, userId, role, roleEntry, interaction, panelMessage }) {
   const members = [...role.members.values()];
-  const list = members.slice(0, 40).map((member, index) => `${index + 1}. ${member.displayName} (<@${member.id}>)`).join('\n') || 'لا يوجد أعضاء حالياً.';
+  const list = members.slice(0, 25).map((member, index) => `${index + 1}. ${member.displayName} (<@${member.id}>)`).join('\n') || 'لا يوجد أعضاء حالياً.';
+
+  const addMenu = new UserSelectMenuBuilder()
+    .setCustomId(`myrole_manage_add_${Date.now()}`)
+    .setPlaceholder('إضافة أعضاء...')
+    .setMinValues(1)
+    .setMaxValues(10);
+
+  const removeOptions = members.slice(0, 25).map(member => ({
+    label: member.displayName,
+    value: member.id
+  }));
+  const removeOptionsWithFallback = removeOptions.length ? removeOptions : [{ label: 'لا يوجد أعضاء', value: 'none' }];
+  const removeMenu = new StringSelectMenuBuilder()
+    .setCustomId(`myrole_manage_remove_${Date.now()}`)
+    .setPlaceholder('إزالة أعضاء...')
+    .setMinValues(1)
+    .setMaxValues(Math.min(10, removeOptionsWithFallback.length))
+    .addOptions(removeOptionsWithFallback);
 
   const infoMessage = await channel.send({
     embeds: [
       new EmbedBuilder()
         .setTitle('👥 إدارة الأعضاء')
-        .setDescription(`**الأعضاء الحاليون:**\n${list}\n\n**أوامر الإدخال:**\n- اكتب أرقام الأعضاء للحذف (مثال: 1 3 5)\n- أو اكتب منشن/ID لإضافة أعضاء جدد\n**يمكنك دمج الاثنين في رسالة واحدة.**`)
+        .setDescription(`**الأعضاء الحاليون (أول 25):**\n${list}\n\n**اختر من القوائم لإضافة أو إزالة الأعضاء.**`)
         .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
         .setThumbnail(channel.client.user.displayAvatarURL({ size: 128 }))
+    ],
+    components: [
+      new ActionRowBuilder().addComponents(addMenu),
+      new ActionRowBuilder().addComponents(removeMenu)
     ]
   });
   scheduleDelete(infoMessage);
 
-  const response = await promptForMessage(channel, userId, '**اكتب الآن اختياراتك:**');
-  if (!response) return;
+  const selection = await infoMessage.awaitMessageComponent({
+    filter: i => i.user.id === userId,
+    time: 60000
+  }).catch(() => null);
 
-  const tokens = response.content.split(/\s+/);
-  const idsToAdd = new Set();
-  const numbersToRemove = new Set();
-
-  for (const token of tokens) {
-    if (/^\d{17,19}$/.test(token)) {
-      idsToAdd.add(token);
-    } else if (/^<@!?\d{17,19}>$/.test(token)) {
-      idsToAdd.add(token.replace(/<@!?|>/g, ''));
-    } else if (/^\d+$/.test(token)) {
-      numbersToRemove.add(parseInt(token, 10));
-    }
-  }
-
-  const membersToRemove = [...numbersToRemove]
-    .map(num => members[num - 1])
-    .filter(Boolean);
+  if (!selection) return;
 
   const maxMembers = roleEntry.maxMembers || null;
-
   const added = [];
   const removed = [];
 
-  for (const member of membersToRemove) {
-    await member.roles.remove(role, 'إزالة من رول خاص').catch(() => {});
-    removed.push(member.id);
+  if (selection.customId.startsWith('myrole_manage_add_')) {
+    for (const id of selection.values) {
+      const member = await role.guild.members.fetch(id).catch(() => null);
+      if (!member) continue;
+      if (maxMembers && role.members.size >= maxMembers) break;
+      await member.roles.add(role, 'إضافة إلى رول خاص').catch(() => {});
+      added.push(member.id);
+    }
   }
 
-  for (const id of idsToAdd) {
-    const member = await role.guild.members.fetch(id).catch(() => null);
-    if (!member) continue;
-
-    if (maxMembers && role.members.size >= maxMembers) break;
-    await member.roles.add(role, 'إضافة إلى رول خاص').catch(() => {});
-    added.push(member.id);
+  if (selection.customId.startsWith('myrole_manage_remove_')) {
+    if (!selection.values.includes('none')) {
+      for (const id of selection.values) {
+        const member = await role.guild.members.fetch(id).catch(() => null);
+        if (!member) continue;
+        await member.roles.remove(role, 'إزالة من رول خاص').catch(() => {});
+        removed.push(member.id);
+      }
+    }
   }
+
+  await selection.update({ components: [] }).catch(() => {});
 
   const summary = `**تم التحديث:**\n✅ تمت إضافة ${added.length} عضو\n🗑️ تمت إزالة ${removed.length} عضو`;
   if (interaction) {
@@ -298,18 +316,26 @@ async function handleTransfer({ channel, userId, role, roleEntry, interaction, p
     }
     return;
   }
-  const response = await promptForMessage(channel, userId, '**منشن أو اكتب ID المالك الجديد:**');
-  if (!response) return;
+  const transferMenu = new UserSelectMenuBuilder()
+    .setCustomId(`myrole_transfer_select_${Date.now()}`)
+    .setPlaceholder('اختر المالك الجديد...')
+    .setMinValues(1)
+    .setMaxValues(1);
 
-  const mentionId = response.mentions.users.first()?.id || response.content.match(/\d{17,19}/)?.[0];
-  if (!mentionId) {
-    if (interaction) {
-      await respondEphemeral(interaction, { content: '**❌ لم يتم العثور على عضو صالح.**' });
-    } else {
-      await channel.send('**❌ لم يتم العثور على عضو صالح.**');
-    }
-    return;
-  }
+  const transferMessage = await channel.send({
+    content: '**اختر المالك الجديد:**',
+    components: [new ActionRowBuilder().addComponents(transferMenu)]
+  });
+  scheduleDelete(transferMessage);
+
+  const selection = await transferMessage.awaitMessageComponent({
+    filter: i => i.user.id === userId,
+    time: 60000
+  }).catch(() => null);
+
+  if (!selection) return;
+  const mentionId = selection.values[0];
+  await selection.update({ content: '**تم اختيار المالك الجديد.**', components: [] }).catch(() => {});
 
   const confirmMessage = await channel.send('**هل تريد تأكيد نقل الملكية؟**');
   const row = new ActionRowBuilder().addComponents(
