@@ -23,6 +23,7 @@ const dotenv = require('dotenv');
 const fs = require('fs');
 const path = require('path');
 const { logEvent } = require('./utils/logs_system.js');
+const { getRoleEntry, getGuildConfig } = require('./utils/customRolesSystem.js');
 const { startReminderSystem } = require('./commands/notifications.js');
 // تعريف downManager في المستوى العلوي للوصول عبر جميع معالجات الأحداث
 const downManager = require('./utils/downManager');
@@ -1370,6 +1371,42 @@ client.on('roleUpdate', async (oldRole, newRole) => {
         await handleRoleUpdate(oldRole, newRole, client);
     } catch (error) {
         console.error('❌ خطأ في معالجة تحديث الرول:', error);
+    }
+});
+
+async function logRoleLimitViolation(guild, role, member, roleEntry) {
+    const guildConfig = getGuildConfig(guild.id);
+    if (!guildConfig?.logChannelId) return;
+    const logChannel = await guild.channels.fetch(guildConfig.logChannelId).catch(() => null);
+    if (!logChannel) return;
+    const embed = new EmbedBuilder()
+        .setTitle('⚠️ تجاوز حد أعضاء الرول')
+        .setDescription(`تم منع إضافة عضو بسبب تجاوز الحد.`)
+        .addFields(
+            { name: 'الرول', value: `<@&${role.id}>`, inline: true },
+            { name: 'العضو', value: `<@${member.id}>`, inline: true },
+            { name: 'الحد الأقصى', value: `${roleEntry.maxMembers}`, inline: true }
+        )
+        .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+        .setTimestamp();
+    await logChannel.send({ embeds: [embed] }).catch(() => {});
+}
+
+client.on('guildMemberUpdate', async (oldMember, newMember) => {
+    try {
+        const addedRoles = newMember.roles.cache.filter(role => !oldMember.roles.cache.has(role.id));
+        if (addedRoles.size === 0) return;
+
+        for (const role of addedRoles.values()) {
+            const roleEntry = getRoleEntry(role.id);
+            if (!roleEntry?.maxMembers) continue;
+            if (role.members.size <= roleEntry.maxMembers) continue;
+
+            await newMember.roles.remove(role, 'تجاوز حد أعضاء الرول الخاص').catch(() => {});
+            await logRoleLimitViolation(newMember.guild, role, newMember, roleEntry);
+        }
+    } catch (error) {
+        console.error('❌ خطأ في التحقق من حد الرول:', error);
     }
 });
 
