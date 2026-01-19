@@ -1,12 +1,25 @@
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
+const MAX_ICON_BYTES = 256 * 1024;
+
 function parseCustomEmoji(input) {
   const match = input.match(/<(a?):\w+:(\d+)>/);
   if (!match) return null;
   const isAnimated = match[1] === 'a';
   const id = match[2];
-  const ext = isAnimated ? 'gif' : 'png';
-  return `https://cdn.discordapp.com/emojis/${id}.${ext}`;
+  const urls = isAnimated
+    ? [
+        `https://cdn.discordapp.com/emojis/${id}.gif`,
+        `https://cdn.discordapp.com/emojis/${id}.png`
+      ]
+    : [`https://cdn.discordapp.com/emojis/${id}.png`];
+  return { id, isAnimated, urls };
+}
+
+function parseEmojiId(input) {
+  const match = input.match(/\b\d{17,19}\b/);
+  if (!match) return null;
+  return match[0];
 }
 
 function parseUnicodeEmoji(input) {
@@ -17,13 +30,43 @@ function parseUnicodeEmoji(input) {
   return `https://twemoji.maxcdn.com/v/latest/72x72/${codePoints}.png`;
 }
 
-async function fetchImageBuffer(url) {
+function extractFirstEmoji(input) {
+  if (!input) return null;
+  const match = input.match(/(\p{Extended_Pictographic}|\p{Emoji_Presentation}|\p{Emoji}\uFE0F)/u);
+  return match ? match[0] : null;
+}
+
+async function fetchImageBuffer(url, maxBytes = MAX_ICON_BYTES) {
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`فشل تحميل الصورة: ${response.status}`);
   }
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.startsWith('image/')) {
+    throw new Error('الملف ليس صورة.');
+  }
+  const contentLength = Number(response.headers.get('content-length') || 0);
+  if (contentLength && contentLength > maxBytes) {
+    throw new Error('حجم الصورة كبير جداً.');
+  }
   const arrayBuffer = await response.arrayBuffer();
-  return Buffer.from(arrayBuffer);
+  const buffer = Buffer.from(arrayBuffer);
+  if (buffer.length > maxBytes) {
+    throw new Error('حجم الصورة كبير جداً.');
+  }
+  return buffer;
+}
+
+async function tryFetchImage(urls) {
+  for (const url of urls) {
+    try {
+      const buffer = await fetchImageBuffer(url);
+      if (buffer) return buffer;
+    } catch (error) {
+      continue;
+    }
+  }
+  return null;
 }
 
 async function resolveIconBuffer(input, attachments = []) {
@@ -34,26 +77,63 @@ async function resolveIconBuffer(input, attachments = []) {
 
   if (!input) return null;
 
-  if (input.startsWith('http://') || input.startsWith('https://')) {
-    return fetchImageBuffer(input);
+  const trimmedInput = input.trim();
+  const tokens = trimmedInput.split(/\s+/).filter(Boolean);
+
+  for (const token of tokens) {
+    if (token.startsWith('http://') || token.startsWith('https://')) {
+      const buffer = await tryFetchImage([token]);
+      if (buffer) return buffer;
+    }
   }
 
-  const customEmojiUrl = parseCustomEmoji(input);
-  if (customEmojiUrl) {
-    return fetchImageBuffer(customEmojiUrl);
+  const customMatches = [...trimmedInput.matchAll(/<(a?):\w+:(\d+)>/g)];
+  for (const match of customMatches) {
+    const customEmoji = parseCustomEmoji(match[0]);
+    if (!customEmoji) continue;
+    const buffer = await tryFetchImage(customEmoji.urls);
+    if (buffer) return buffer;
   }
 
-  const unicodeUrl = parseUnicodeEmoji(input);
-  if (unicodeUrl) {
-    return fetchImageBuffer(unicodeUrl);
+  const emojiId = parseEmojiId(trimmedInput);
+  if (emojiId) {
+    const buffer = await tryFetchImage([
+      `https://cdn.discordapp.com/emojis/${emojiId}.png`,
+      `https://cdn.discordapp.com/emojis/${emojiId}.gif`
+    ]);
+    if (buffer) return buffer;
+  }
+
+  const emojiToken = extractFirstEmoji(trimmedInput);
+  if (emojiToken) {
+    const unicodeUrl = parseUnicodeEmoji(emojiToken);
+    if (unicodeUrl) {
+      const buffer = await tryFetchImage([unicodeUrl]);
+      if (buffer) return buffer;
+    }
   }
 
   return null;
 }
 
+async function applyRoleIcon(role, buffer) {
+  const updatedRole = await role.setIcon(buffer).catch(() => null);
+  const refreshedRole = updatedRole
+    ? await updatedRole.fetch().catch(() => null)
+    : await role.fetch().catch(() => null);
+  if (!refreshedRole || !refreshedRole.icon) {
+    throw new Error('icon_not_applied');
+  }
+  return refreshedRole;
+}
+
 module.exports = {
   parseCustomEmoji,
+  parseEmojiId,
   parseUnicodeEmoji,
+  extractFirstEmoji,
   fetchImageBuffer,
-  resolveIconBuffer
+  tryFetchImage,
+  resolveIconBuffer,
+  applyRoleIcon
 };
