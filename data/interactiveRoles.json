@@ -2,7 +2,11 @@
   "settings": {
     "approvers": [],
     "interactiveRoles": [],
-    "requestChannel": null
+    "requestChannel": null,
+    "interactiveRoleException": {
+      "roleId": null,
+      "keyword": null
+    }
   },
   "pendingRequests": {},
   "cooldowns": {}

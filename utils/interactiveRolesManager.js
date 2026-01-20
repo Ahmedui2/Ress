@@ -15,7 +15,7 @@ function loadSettings() {
         console.error('Error loading interactive roles settings:', error);
     }
     return {
-        settings: { approvers: [], interactiveRoles: [], requestChannel: null },
+        settings: { approvers: [], interactiveRoles: [], requestChannel: null, interactiveRoleException: { roleId: null, keyword: null } },
         pendingRequests: {},
         cooldowns: {}
     };
@@ -53,9 +53,23 @@ async function handleMessage(message) {
 
     if (!targetMember) return;
 
+    const exceptionSettings = settings.settings.interactiveRoleException || {};
+    const exceptionKeyword = typeof exceptionSettings.keyword === 'string' ? exceptionSettings.keyword.trim() : '';
+    const exceptionRoleId = exceptionSettings.roleId || null;
+    const hasExceptionKeyword = exceptionKeyword && message.content.includes(exceptionKeyword);
+    const hasExceptionRole = exceptionRoleId && targetMember.roles.cache.has(exceptionRoleId);
+    const exceptionConfigured = Boolean(exceptionKeyword && exceptionRoleId);
+
+    if (exceptionConfigured && hasExceptionKeyword && hasExceptionRole) {
+        const reply = await message.channel.send(`⚠️ <@${targetId}> لديه بالفعل رول الاستثناء.`);
+        setTimeout(() => reply.delete().catch(() => {}), 5000);
+        return;
+    }
+
     // Check if member already has any of the interactive roles
     const hasInteractiveRole = targetMember.roles.cache.some(r => settings.settings.interactiveRoles.includes(r.id));
-    if (hasInteractiveRole) {
+    const exceptionApplies = exceptionConfigured && hasExceptionKeyword && !hasExceptionRole;
+    if (hasInteractiveRole && !exceptionApplies) {
         const reply = await message.channel.send(`⚠️ <@${targetId}> لديه بالفعل رولات تفاعلية.`);
         setTimeout(() => reply.delete().catch(() => {}), 5000);
         return;
@@ -130,7 +144,8 @@ async function handleMessage(message) {
         targetId: targetId,
         timestamp: Date.now(),
         originalContent: message.content,
-        userStats: userStats
+        userStats: userStats,
+        exceptionRoleId: exceptionApplies ? exceptionRoleId : null
     };
     saveSettings(settings);
 }
@@ -208,6 +223,34 @@ async function handleInteraction(interaction) {
         const targetId = applicationId.split('_')[1];
         const request = settings.pendingRequests[targetId];
         if (!request) return interaction.reply({ content: '❌ لم يتم العثور على هذا الطلب.', ephemeral: true });
+
+        if (request.exceptionRoleId) {
+            const targetMember = await interaction.guild.members.fetch(targetId).catch(() => null);
+            const role = interaction.guild.roles.cache.get(request.exceptionRoleId);
+            if (!targetMember || !role) {
+                return interaction.reply({ content: '❌ تعذر منح رول الاستثناء حالياً.', ephemeral: true });
+            }
+
+            await targetMember.roles.add(role);
+            try {
+                await targetMember.send(`✅ **تهانينا!** تم قبول طلبك للرول التفاعلي وحصلت على رول: **${role.name}** في سيرفر **${interaction.guild.name}**.`);
+            } catch (e) {}
+
+            const channel = interaction.guild.channels.cache.get(settings.settings.requestChannel);
+            if (channel) {
+                const msg = await channel.messages.fetch(request.messageId).catch(() => null);
+                if (msg) {
+                    const embed = EmbedBuilder.from(msg.embeds[0])
+                        .setColor(colorManager.getColor ? colorManager.getColor() : '#00ff00')
+                        .addFields({ name: 'الحالة', value: `✅ تم القبول بواسطة <@${interaction.user.id}>\nالرول الممنوح: <@&${role.id}>` });
+                    await msg.edit({ embeds: [embed], components: [] });
+                }
+            }
+
+            delete settings.pendingRequests[targetId];
+            saveSettings(settings);
+            return interaction.reply({ content: `✅ تم منح رول الاستثناء <@&${role.id}> لـ <@${targetId}> بنجاح.`, ephemeral: true });
+        }
 
         const roles = settings.settings.interactiveRoles;
         if (roles.length === 0) return interaction.reply({ content: '❌ لم يتم تحديد رولات تفاعلية في الإعدادات.', ephemeral: true });

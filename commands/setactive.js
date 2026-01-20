@@ -1,4 +1,4 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, ChannelType, RoleSelectMenuBuilder, ChannelSelectMenuBuilder } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, ChannelType, RoleSelectMenuBuilder, ChannelSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const colorManager = require('../utils/colorManager');
@@ -14,7 +14,7 @@ function loadSettings() {
         console.error('Error loading interactive roles settings:', error);
     }
     return {
-        settings: { approvers: [], interactiveRoles: [], requestChannel: null },
+        settings: { approvers: [], interactiveRoles: [], requestChannel: null, interactiveRoleException: { roleId: null, keyword: null } },
         pendingRequests: {},
         cooldowns: {}
     };
@@ -66,6 +66,7 @@ module.exports = {
             .addOptions([
                 { label: 'تحديد المسؤولين', description: 'تحديد الرولات التي يمكنها قبول/رفض الطلبات', value: 'set_approvers', emoji: '👮' },
                 { label: 'الرولات التفاعلية', description: 'إضافة أو إزالة الرولات التي يمكن طلبها', value: 'set_roles', emoji: '🎭' },
+                { label: 'استثناء', description: 'تحديد رول مرتبط بكلمة استثناء', value: 'set_exception', emoji: '🧩' },
                 { label: 'روم الطلبات', description: 'تحديد الروم التي يتم فيها معالجة الطلبات', value: 'set_channel', emoji: '📍' },
                 { label: 'عرض الإعدادات', description: 'عرض الإعدادات الحالية للنظام', value: 'show_settings', emoji: '📊' }
             ]);
@@ -77,7 +78,7 @@ module.exports = {
 
 // Interaction Handler for setactive
 async function handleSetActiveInteraction(interaction) {
-    if (!interaction.isStringSelectMenu() && !interaction.isRoleSelectMenu() && !interaction.isChannelSelectMenu() && !interaction.isButton()) return;
+    if (!interaction.isStringSelectMenu() && !interaction.isRoleSelectMenu() && !interaction.isChannelSelectMenu() && !interaction.isButton() && !interaction.isModalSubmit()) return;
     if (!interaction.customId.startsWith('setactive_')) return;
     if (!hasPermission(interaction.member)) return interaction.reply({ content: '❌ لا تملك صلاحية.', ephemeral: true });
 
@@ -102,6 +103,30 @@ async function handleSetActiveInteraction(interaction) {
                 .setMaxValues(10);
             const row = new ActionRowBuilder().addComponents(roleMenu);
             await interaction.update({ content: '**الرجاء اختيار الرولات التي ستكون متاحة كـ "رولات تفاعلية":**', embeds: [], components: [row] });
+        } else if (value === 'set_exception') {
+            const roles = settings.settings.interactiveRoles || [];
+            if (roles.length === 0) {
+                const backButton = new ButtonBuilder().setCustomId('setactive_back').setLabel('رجوع').setStyle(ButtonStyle.Secondary);
+                const row = new ActionRowBuilder().addComponents(backButton);
+                return interaction.update({ content: '❌ لا توجد رولات تفاعلية محددة حتى الآن.', embeds: [], components: [row] });
+            }
+
+            const roleOptions = roles.map(roleId => {
+                const role = interaction.guild.roles.cache.get(roleId);
+                return {
+                    label: role ? role.name : roleId,
+                    value: roleId
+                };
+            });
+
+            const exceptionMenu = new StringSelectMenuBuilder()
+                .setCustomId('setactive_exception_role')
+                .setPlaceholder('اختر رول الاستثناء...')
+                .addOptions(roleOptions)
+                .setMaxValues(1)
+                .setMinValues(1);
+            const row = new ActionRowBuilder().addComponents(exceptionMenu);
+            await interaction.update({ content: '**اختر الرول الذي سيتم ربطه بكلمة الاستثناء:**', embeds: [], components: [row] });
         } else if (value === 'set_channel') {
             const channelMenu = new ChannelSelectMenuBuilder()
                 .setCustomId('setactive_select_channel')
@@ -113,12 +138,17 @@ async function handleSetActiveInteraction(interaction) {
             const approvers = settings.settings.approvers.map(id => `<@&${id}>`).join(', ') || 'لا يوجد';
             const roles = settings.settings.interactiveRoles.map(id => `<@&${id}>`).join(', ') || 'لا يوجد';
             const channel = settings.settings.requestChannel ? `<#${settings.settings.requestChannel}>` : 'لا يوجد';
+            const exceptionRoleId = settings.settings.interactiveRoleException?.roleId;
+            const exceptionKeyword = settings.settings.interactiveRoleException?.keyword;
+            const exceptionRole = exceptionRoleId ? `<@&${exceptionRoleId}>` : 'لا يوجد';
+            const exceptionKeywordText = exceptionKeyword || 'لا يوجد';
 
             const embed = new EmbedBuilder()
                 .setTitle('📊 الإعدادات الحالية')
                 .addFields(
                     { name: '👮 المسؤولين', value: approvers, inline: false },
                     { name: '🎭 الرولات التفاعلية', value: roles, inline: false },
+                    { name: '🧩 استثناء الرولات', value: `${exceptionRole}\nالكلمة: ${exceptionKeywordText}`, inline: false },
                     { name: '📍 روم الطلبات', value: channel, inline: false }
                 )
                 .setColor(colorManager.getColor ? colorManager.getColor() : '#00ff00');
@@ -139,6 +169,27 @@ async function handleSetActiveInteraction(interaction) {
         settings.settings.requestChannel = interaction.values[0];
         saveSettings(settings);
         await interaction.update({ content: `✅ تم تحديد <#${interaction.values[0]}> كروم للطلبات بنجاح!`, components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('setactive_back').setLabel('رجوع').setStyle(ButtonStyle.Primary))] });
+    } else if (customId === 'setactive_exception_role') {
+        const selectedRoleId = interaction.values[0];
+        const modal = new ModalBuilder()
+            .setCustomId(`setactive_exception_keyword_${selectedRoleId}`)
+            .setTitle('تحديد كلمة الاستثناء');
+        const keywordInput = new TextInputBuilder()
+            .setCustomId('exception_keyword')
+            .setLabel('الكلمة المطلوبة مع الطلب')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setPlaceholder('اكتب كلمة الاستثناء هنا...');
+        modal.addComponents(new ActionRowBuilder().addComponents(keywordInput));
+        await interaction.showModal(modal);
+    } else if (customId.startsWith('setactive_exception_keyword_')) {
+        const selectedRoleId = customId.replace('setactive_exception_keyword_', '');
+        const keyword = interaction.fields.getTextInputValue('exception_keyword').trim();
+        settings.settings.interactiveRoleException = { roleId: selectedRoleId, keyword };
+        saveSettings(settings);
+        const backButton = new ButtonBuilder().setCustomId('setactive_back').setLabel('رجوع').setStyle(ButtonStyle.Primary);
+        const row = new ActionRowBuilder().addComponents(backButton);
+        await interaction.reply({ content: `✅ تم تعيين الاستثناء بنجاح للرول <@&${selectedRoleId}> والكلمة: **${keyword}**`, components: [row], ephemeral: true });
     } else if (customId === 'setactive_back') {
         // Re-execute the main menu logic
         const embed = new EmbedBuilder()
@@ -151,6 +202,7 @@ async function handleSetActiveInteraction(interaction) {
             .addOptions([
                 { label: 'تحديد المسؤولين', value: 'set_approvers', emoji: '👮' },
                 { label: 'الرولات التفاعلية', value: 'set_roles', emoji: '🎭' },
+                { label: 'استثناء', value: 'set_exception', emoji: '🧩' },
                 { label: 'روم الطلبات', value: 'set_channel', emoji: '📍' },
                 { label: 'عرض الإعدادات', value: 'show_settings', emoji: '📊' }
             ]);
