@@ -219,9 +219,9 @@ async function handleInteraction(interaction, context) {
 
             // التحقق من وجود طلب إنهاء معلق مسبقاً (حماية إضافية)
             if (vacations.pendingTermination?.[userId]) {
-                return interaction.reply({
+                return interaction.update({
                     content: '❌ **لديك طلب إنهاء إجازة معلق بالفعل!**',
-                    ephemeral: true
+                    components: []
                 });
             }
             const activeVacation = vacations.active?.[userId];
@@ -476,8 +476,9 @@ async function handleInteraction(interaction, context) {
 
     // معالجة تفاعلات الموافقة والرفض على طلب إنهاء الإجازة
     if (interaction.customId.startsWith('vac_approve_termination_') || interaction.customId.startsWith('vac_reject_termination_')) {
-        const userId = interaction.customId.split('_').pop();
-        const action = interaction.customId.includes('approve') ? 'approve' : 'reject';
+        const parts = interaction.customId.split('_');
+        const action = parts[1]; // approve or reject
+        const userId = parts[3];
 
         // فحص الصلاحيات قبل السماح بالموافقة/الرفض على الإنهاء
         const vacationSettings = vacationManager.getSettings();
@@ -489,7 +490,7 @@ async function handleInteraction(interaction, context) {
         );
 
         if (!isAuthorizedApprover) {
-            return interaction.reply({
+            return interaction.reply({ 
                 content: '❌ **يعني محد شاف لا تسوي خوي بس**', 
                 ephemeral: true 
             });
@@ -510,6 +511,9 @@ async function handleInteraction(interaction, context) {
             return interaction.showModal(modal);
         }
 
+        // تأجيل الرد للموافقة على الإنهاء
+        await interaction.deferUpdate().catch(() => {});
+
         const vacations = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
         const terminationRequest = vacations.pendingTermination?.[userId];
 
@@ -517,7 +521,7 @@ async function handleInteraction(interaction, context) {
             const errorEmbed = new EmbedBuilder()
                 .setColor('#FF0000')
                 .setDescription('❌ **لم يتم العثور على طلب إنهاء إجازة معلق لهذا المستخدم.**');
-            return interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+            return interaction.editReply({ embeds: [errorEmbed], components: [] });
         }
 
         const requestedUser = await client.users.fetch(userId).catch(() => null);
@@ -550,16 +554,17 @@ async function handleInteraction(interaction, context) {
 
                     await interaction.editReply({ embeds: [successEmbed], components: [] });
                 } else {
-                    await interaction.followUp({ content: `❌ فشل في إنهاء الإجازة: ${result.message}`, ephemeral: true });
+                    await interaction.editReply({ content: `❌ فشل في إنهاء الإجازة: ${result.message}`, components: [] });
                 }
             } catch (error) {
                 console.error('خطأ في الموافقة على إنهاء الإجازة:', error);
-                await interaction.followUp({ content: `❌ حدث خطأ: ${error.message}`, ephemeral: true });
+                await interaction.editReply({ content: `❌ حدث خطأ: ${error.message}`, components: [] });
             }
         }
     }
 
     if (interaction.isModalSubmit() && interaction.customId.startsWith('vac_reject_term_modal_')) {
+        await interaction.deferUpdate().catch(() => {});
         const userId = interaction.customId.split('_').pop();
         const reason = interaction.fields.getTextInputValue('reject_reason');
 
@@ -587,7 +592,8 @@ async function handleInteraction(interaction, context) {
             .setFooter({ text: 'Space' })
             .setTimestamp();
 
-        await interaction.reply({ embeds: [rejectEmbed], ephemeral: true });
+        // تحديث الرسالة الأصلية التي تحتوي على الأزرار
+        await interaction.editReply({ embeds: [rejectEmbed], components: [] });
 
         // تنبيه المستخدم في الخاص
         const user = await client.users.fetch(userId).catch(() => null);
