@@ -1,4 +1,12 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
+const { 
+    EmbedBuilder, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle, 
+    ModalBuilder, 
+    TextInputBuilder, 
+    TextInputStyle 
+} = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const ms = require('ms');
@@ -153,7 +161,7 @@ async function execute(message, args, { client, BOT_OWNERS }) {
 }
 
 async function handleInteraction(interaction, context) {
-    if (!interaction.isButton()) return;
+    if (!interaction.isButton() && !interaction.isModalSubmit()) return;
 
     const { client, BOT_OWNERS } = context || {};
 
@@ -188,13 +196,14 @@ async function handleInteraction(interaction, context) {
             });
         }
 
+        const sourceMessageId = interaction.message?.id || 'unknown';
         const confirmButton = new ButtonBuilder()
-            .setCustomId(`vac_end_confirm_${userId}`)
+            .setCustomId(`vac_end_confirm_${userId}_${sourceMessageId}`)
             .setLabel("نعم، أرسل الطلب")
             .setStyle(ButtonStyle.Danger);
 
         const cancelButton = new ButtonBuilder()
-            .setCustomId('vac_end_cancel')
+            .setCustomId(`vac_end_cancel_${userId}_${sourceMessageId}`)
             .setLabel("لا، إلغاء")
             .setStyle(ButtonStyle.Secondary);
 
@@ -209,7 +218,9 @@ async function handleInteraction(interaction, context) {
     }
 
     if (interaction.customId.startsWith('vac_end_confirm_')) {
-        const userId = interaction.customId.split('_').pop();
+        const parts = interaction.customId.split('_');
+        const userId = parts[3];
+        const sourceMessageId = parts[4];
         if (interaction.user.id !== userId) {
             return interaction.reply({ content: "يمكنك فقط التفاعل مع طلب إجازتك الخاصة.", ephemeral: true });
         }
@@ -377,42 +388,16 @@ async function handleInteraction(interaction, context) {
                     .setDisabled(true);
 
                 const disabledRowOriginal = new ActionRowBuilder().addComponents(disabledButton);
-                const originalEmbed = interaction.message.embeds[0];
-                if (interaction.message && interaction.message.editable) {
-                    await interaction.message.edit({ embeds: [originalEmbed], components: [disabledRowOriginal] }).catch(err => console.error('Failed to edit original message:', err));
+                if (sourceMessageId && sourceMessageId !== 'unknown' && interaction.channel) {
+                    const originalMessage = await interaction.channel.messages.fetch(sourceMessageId).catch(() => null);
+                    if (originalMessage) {
+                        const originalEmbed = originalMessage.embeds[0];
+                        await originalMessage.edit({ embeds: [originalEmbed], components: [disabledRowOriginal] }).catch(err => console.error('Failed to edit original message:', err));
+                    }
                 }
             } catch (error) {
                 console.error('خطأ في تعطيل الزر الأصلي:', error);
             }
-
-            // تعطيل الزر الأصلي في رسالة اجازتي
-            setTimeout(async () => {
-                try {
-                    const channel = interaction.message?.channel;
-                    if (channel) {
-                        const messages = await channel.messages.fetch({ limit: 10 });
-                        const originalMessage = messages.find(msg =>
-                            msg.author.id === interaction.client.user.id &&
-                            msg.components.length > 0 &&
-                            msg.components[0].components.some(btn => btn.customId === `vac_end_request_${userId}`)
-                        );
-
-                        if (originalMessage) {
-                            const disabledButton = new ButtonBuilder()
-                                .setCustomId(`vac_end_sent_${userId}`)
-                                .setLabel("✅ تم إرسال طلب الإنهاء")
-                                .setStyle(ButtonStyle.Success)
-                                .setDisabled(true);
-
-                            const disabledRow = new ActionRowBuilder().addComponents(disabledButton);
-                            const originalEmbed = originalMessage.embeds[0];
-                            await originalMessage.edit({ embeds: [originalEmbed], components: [disabledRow] });
-                        }
-                    }
-                } catch (error) {
-                    console.error('خطأ في تحديث الزر الأصلي:', error);
-                }
-            }, 1000);
 
         } catch (error) {
             console.error("خطأ في طلب إنهاء الإجازة:", error);
@@ -423,7 +408,10 @@ async function handleInteraction(interaction, context) {
         }
     }
 
-    if (interaction.customId === 'vac_end_cancel') {
+    if (interaction.customId === 'vac_end_cancel' || interaction.customId.startsWith('vac_end_cancel_')) {
+        const parts = interaction.customId.split('_');
+        const userId = parts[3] || interaction.user.id;
+        const sourceMessageId = parts[4];
         // تعطيل جميع الأزرار بعد الإلغاء
         const disabledConfirmButton = new ButtonBuilder()
             .setCustomId(`vac_end_cancelled`)
@@ -445,33 +433,23 @@ async function handleInteraction(interaction, context) {
         });
 
         // إعادة تفعيل الزر الأصلي في رسالة اجازتي
-        setTimeout(async () => {
-            try {
-                const userId = interaction.user.id;
-                const channel = interaction.message?.channel;
-                if (channel) {
-                    const messages = await channel.messages.fetch({ limit: 10 });
-                    const originalMessage = messages.find(msg =>
-                        msg.author.id === interaction.client.user.id &&
-                        msg.components.length > 0 &&
-                        msg.components[0].components.some(btn => btn.customId === `vac_end_processing_${userId}`)
-                    );
+        try {
+            if (sourceMessageId && sourceMessageId !== 'unknown' && interaction.channel) {
+                const originalMessage = await interaction.channel.messages.fetch(sourceMessageId).catch(() => null);
+                if (originalMessage) {
+                    const reactivatedButton = new ButtonBuilder()
+                        .setCustomId(`vac_end_request_${userId}`)
+                        .setLabel("طلب إنهاء الإجازة مبكراً")
+                        .setStyle(ButtonStyle.Danger);
 
-                    if (originalMessage) {
-                        const reactivatedButton = new ButtonBuilder()
-                            .setCustomId(`vac_end_request_${userId}`)
-                            .setLabel("طلب إنهاء الإجازة مبكراً")
-                            .setStyle(ButtonStyle.Danger);
-
-                        const reactivatedRow = new ActionRowBuilder().addComponents(reactivatedButton);
-                        const originalEmbed = originalMessage.embeds[0];
-                        await originalMessage.edit({ embeds: [originalEmbed], components: [reactivatedRow] });
-                    }
+                    const reactivatedRow = new ActionRowBuilder().addComponents(reactivatedButton);
+                    const originalEmbed = originalMessage.embeds[0];
+                    await originalMessage.edit({ embeds: [originalEmbed], components: [reactivatedRow] });
                 }
-            } catch (error) {
-                console.error('خطأ في إعادة تفعيل الزر:', error);
             }
-        }, 1000);
+        } catch (error) {
+            console.error('خطأ في إعادة تفعيل الزر:', error);
+        }
     }
 
     // معالجة تفاعلات الموافقة والرفض على طلب إنهاء الإجازة
@@ -498,7 +476,7 @@ async function handleInteraction(interaction, context) {
 
         if (action === 'reject') {
             const modal = new ModalBuilder()
-                .setCustomId(`vac_reject_term_modal_${userId}`)
+                .setCustomId(`vac_reject_term_modal_${userId}_${interaction.message?.id || 'unknown'}`)
                 .setTitle('رفض إنهاء الإجازة');
 
             const reasonInput = new TextInputBuilder()
@@ -511,23 +489,21 @@ async function handleInteraction(interaction, context) {
             return interaction.showModal(modal);
         }
 
-        // تأجيل الرد للموافقة على الإنهاء
-        await interaction.deferUpdate().catch(() => {});
+        // تأجيل الرد للموافقة على الإنهاء (رد مخفي)
+        await interaction.deferReply({ ephemeral: true }).catch(() => {});
 
         const vacations = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
         const terminationRequest = vacations.pendingTermination?.[userId];
 
         if (!terminationRequest) {
-            const errorEmbed = new EmbedBuilder()
-                .setColor('#FF0000')
-                .setDescription('❌ **لم يتم العثور على طلب إنهاء إجازة معلق لهذا المستخدم.**');
-            return interaction.editReply({ embeds: [errorEmbed], components: [] });
+            return interaction.editReply({ 
+                content: '❌ **لم يتم العثور على طلب إنهاء إجازة معلق لهذا المستخدم.**' 
+            });
         }
 
         const requestedUser = await client.users.fetch(userId).catch(() => null);
         
         if (action === 'approve') {
-            await interaction.deferUpdate().catch(() => {});
             try {
                 // إنهاء الإجازة واستعادة الرولات فعلياً
                 const result = await vacationManager.endVacation(interaction.guild, client, userId, 'تمت الموافقة على الإنهاء المبكر من الإدارة.');
@@ -552,20 +528,36 @@ async function handleInteraction(interaction, context) {
                         .setFooter({ text: 'Space' })
                         .setTimestamp();
 
-                    await interaction.editReply({ embeds: [successEmbed], components: [] });
+                    await interaction.editReply({ embeds: [successEmbed] });
+                    if (interaction.message) {
+                        const disabledRow = new ActionRowBuilder().addComponents(
+                            new ButtonBuilder()
+                                .setCustomId(`vac_approve_termination_${userId}`)
+                                .setLabel("موافقة على الإنهاء")
+                                .setStyle(ButtonStyle.Success)
+                                .setDisabled(true),
+                            new ButtonBuilder()
+                                .setCustomId(`vac_reject_termination_${userId}`)
+                                .setLabel("رفض الإنهاء")
+                                .setStyle(ButtonStyle.Danger)
+                                .setDisabled(true)
+                        );
+                        await interaction.message.edit({ components: [disabledRow] }).catch(() => {});
+                    }
                 } else {
-                    await interaction.editReply({ content: `❌ فشل في إنهاء الإجازة: ${result.message}`, components: [] });
+                    await interaction.editReply({ content: `❌ فشل في إنهاء الإجازة: ${result.message}` });
                 }
             } catch (error) {
                 console.error('خطأ في الموافقة على إنهاء الإجازة:', error);
-                await interaction.editReply({ content: `❌ حدث خطأ: ${error.message}`, components: [] });
+                await interaction.editReply({ content: `❌ حدث خطأ: ${error.message}` });
             }
         }
     }
 
     if (interaction.isModalSubmit() && interaction.customId.startsWith('vac_reject_term_modal_')) {
-        await interaction.deferUpdate().catch(() => {});
-        const userId = interaction.customId.split('_').pop();
+        const parts = interaction.customId.split('_');
+        const userId = parts[4];
+        const sourceMessageId = parts[5];
         const reason = interaction.fields.getTextInputValue('reject_reason');
 
         const vacations = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
@@ -592,8 +584,8 @@ async function handleInteraction(interaction, context) {
             .setFooter({ text: 'Space' })
             .setTimestamp();
 
-        // تحديث الرسالة الأصلية التي تحتوي على الأزرار
-        await interaction.editReply({ embeds: [rejectEmbed], components: [] });
+        // رد مخفي للمعتمد
+        await interaction.reply({ embeds: [rejectEmbed], ephemeral: true });
 
         // تنبيه المستخدم في الخاص
         const user = await client.users.fetch(userId).catch(() => null);
@@ -609,6 +601,25 @@ async function handleInteraction(interaction, context) {
                 )
                 .setTimestamp();
             await user.send({ embeds: [dmEmbed] }).catch(() => {});
+        }
+
+        if (sourceMessageId && sourceMessageId !== 'unknown' && interaction.channel) {
+            const originalMessage = await interaction.channel.messages.fetch(sourceMessageId).catch(() => null);
+            if (originalMessage) {
+                const disabledRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`vac_approve_termination_${userId}`)
+                        .setLabel("موافقة على الإنهاء")
+                        .setStyle(ButtonStyle.Success)
+                        .setDisabled(true),
+                    new ButtonBuilder()
+                        .setCustomId(`vac_reject_termination_${userId}`)
+                        .setLabel("رفض الإنهاء")
+                        .setStyle(ButtonStyle.Danger)
+                        .setDisabled(true)
+                );
+                await originalMessage.edit({ components: [disabledRow] }).catch(() => {});
+            }
         }
     }
 }
