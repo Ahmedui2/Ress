@@ -232,6 +232,21 @@ async function handleInteraction(interaction, context) {
     const { client, BOT_OWNERS } = context;
     if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
 
+    const respondUpdate = async (payload) => {
+        if (interaction.deferred || interaction.replied) {
+            return interaction.editReply(payload);
+        }
+        return interaction.update(payload);
+    };
+
+    const respondEphemeral = async (payload) => {
+        const responsePayload = { ...payload, ephemeral: true };
+        if (interaction.deferred || interaction.replied) {
+            return interaction.followUp(responsePayload);
+        }
+        return interaction.reply(responsePayload);
+    };
+
     const isOwner = isBotOwner(interaction.user.id, BOT_OWNERS);
     const settings = vacationManager.getSettings();
     const isAuthorized = isOwner || await vacationManager.isUserAuthorizedApprover(
@@ -242,24 +257,26 @@ async function handleInteraction(interaction, context) {
     );
 
     if (!isAuthorized) {
-        return interaction.reply({ content: '❌ **خوي.**', ephemeral: true });
+        return respondEphemeral({ content: '❌ **خوي.**' });
     }
 
     try {
+        await interaction.deferUpdate().catch(() => {});
+
         // --- التنقل بين القوائم ---
         if (interaction.customId === 'vac_list_pending') {
             const { embed, row } = await getPendingListEmbed(interaction.guild);
-            return await interaction.update({ embeds: [embed], components: [row] });
+            return await respondUpdate({ embeds: [embed], components: [row] });
         }
 
         if (interaction.customId === 'vac_list_pending_term') {
             const { embed, row } = await getPendingTerminationListEmbed(interaction.guild);
-            return await interaction.update({ embeds: [embed], components: [row] });
+            return await respondUpdate({ embeds: [embed], components: [row] });
         }
 
         if (interaction.customId === 'vac_list_back') {
             const { embed, row } = await getVacationsListEmbed(interaction.guild);
-            return await interaction.update({ content: null, embeds: [embed], components: [row] });
+            return await respondUpdate({ content: null, embeds: [embed], components: [row] });
         }
 
         // --- إنهاء الإجازة ---
@@ -269,7 +286,7 @@ async function handleInteraction(interaction, context) {
             const entries = Object.entries(active);
 
             if (entries.length === 0) {
-                return interaction.reply({ content: '❌ لا توجد إجازات نشطة لإنهائها.', ephemeral: true });
+                return respondEphemeral({ content: '❌ لا توجد إجازات نشطة لإنهائها.' });
             }
 
             const options = entries.map(([userId, data]) => ({
@@ -290,11 +307,10 @@ async function handleInteraction(interaction, context) {
                 new ButtonBuilder().setCustomId('vac_list_back').setLabel('رجوع').setStyle(ButtonStyle.Secondary)
             );
 
-            return await interaction.update({ content: '⚠️ **اختر من القائمة لإنهاء الإجازة فوراً:**', embeds: [], components: [row, backRow] });
+            return await respondUpdate({ content: '⚠️ **اختر من القائمة لإنهاء الإجازة فوراً:**', embeds: [], components: [row, backRow] });
         }
 
         if (interaction.customId === 'vac_terminate_select') {
-            await interaction.deferUpdate();
             const userIds = interaction.values;
             let results = [];
             
@@ -308,7 +324,7 @@ async function handleInteraction(interaction, context) {
             }
 
             const { embed, row } = await getVacationsListEmbed(interaction.guild);
-            return await interaction.editReply({ 
+            return await respondUpdate({ 
                 content: `**📊 نتائج معالجة الإنهاء:**\n${results.join('\n')}`, 
                 embeds: [embed], 
                 components: [row] 
@@ -321,7 +337,7 @@ async function handleInteraction(interaction, context) {
             const pending = vacations.pending || {};
             const entries = Object.entries(pending);
 
-            if (entries.length === 0) return interaction.reply({ content: '❌ لا توجد طلبات معلقة.', ephemeral: true });
+            if (entries.length === 0) return respondEphemeral({ content: '❌ لا توجد طلبات معلقة.' });
 
             const options = entries.map(([userId, data]) => ({
                 label: `طلب: ${userId}`,
@@ -341,11 +357,10 @@ async function handleInteraction(interaction, context) {
                 new ButtonBuilder().setCustomId('vac_list_pending').setLabel('رجوع').setStyle(ButtonStyle.Secondary)
             );
 
-            return await interaction.update({ content: '✅ **اختر الطلبات للموافقة الجماعية:**', embeds: [], components: [row, backRow] });
+            return await respondUpdate({ content: '✅ **اختر الطلبات للموافقة الجماعية:**', embeds: [], components: [row, backRow] });
         }
 
         if (interaction.customId === 'vac_pending_approve_select') {
-            await interaction.deferUpdate();
             const userIds = interaction.values;
             let results = [];
             
@@ -374,7 +389,7 @@ async function handleInteraction(interaction, context) {
             }
 
             const { embed, row } = await getPendingListEmbed(interaction.guild);
-            return await interaction.editReply({ 
+            return await respondUpdate({ 
                 content: `**📊 نتائج القبول الجماعي:**\n${results.join('\n')}`, 
                 embeds: [embed], 
                 components: [row] 
@@ -387,7 +402,7 @@ async function handleInteraction(interaction, context) {
             const pending = vacations.pending || {};
             const entries = Object.entries(pending);
 
-            if (entries.length === 0) return interaction.reply({ content: '❌ لا توجد طلبات معلقة.', ephemeral: true });
+            if (entries.length === 0) return respondEphemeral({ content: '❌ لا توجد طلبات معلقة.' });
 
             const options = entries.map(([userId, data]) => ({
                 label: `طلب: ${userId}`,
@@ -407,11 +422,10 @@ async function handleInteraction(interaction, context) {
                 new ButtonBuilder().setCustomId('vac_list_pending').setLabel('رجوع').setStyle(ButtonStyle.Secondary)
             );
 
-            return await interaction.update({ content: '❌ **اختر الطلبات للرفض الجماعي:**', embeds: [], components: [row, backRow] });
+            return await respondUpdate({ content: '❌ **اختر الطلبات للرفض الجماعي:**', embeds: [], components: [row, backRow] });
         }
 
         if (interaction.customId === 'vac_pending_reject_select') {
-            await interaction.deferUpdate();
             const userIds = interaction.values;
             let results = [];
             
@@ -426,7 +440,7 @@ async function handleInteraction(interaction, context) {
             }
 
             const { embed, row } = await getPendingListEmbed(interaction.guild);
-            return await interaction.editReply({ 
+            return await respondUpdate({ 
                 content: `**📊 نتائج الرفض الجماعي:**\n${results.join('\n')}`, 
                 embeds: [embed], 
                 components: [row] 
@@ -439,7 +453,7 @@ async function handleInteraction(interaction, context) {
             const pending = vacations.pendingTermination || {};
             const entries = Object.entries(pending);
 
-            if (entries.length === 0) return interaction.reply({ content: '❌ لا توجد طلبات إنهاء معلقة.', ephemeral: true });
+            if (entries.length === 0) return respondEphemeral({ content: '❌ لا توجد طلبات إنهاء معلقة.' });
 
             const options = entries.map(([userId, data]) => ({
                 label: `إنهاء: ${userId}`,
@@ -459,11 +473,10 @@ async function handleInteraction(interaction, context) {
                 new ButtonBuilder().setCustomId('vac_list_pending_term').setLabel('رجوع').setStyle(ButtonStyle.Secondary)
             );
 
-            return await interaction.update({ content: '✅ **اختر طلبات الإنهاء للموافقة الجماعية:**', embeds: [], components: [row, backRow] });
+            return await respondUpdate({ content: '✅ **اختر طلبات الإنهاء للموافقة الجماعية:**', embeds: [], components: [row, backRow] });
         }
 
         if (interaction.customId === 'vac_term_approve_select') {
-            await interaction.deferUpdate();
             const userIds = interaction.values;
             let results = [];
             
@@ -496,7 +509,7 @@ async function handleInteraction(interaction, context) {
             }
 
             const { embed, row } = await getPendingTerminationListEmbed(interaction.guild);
-            return await interaction.editReply({ 
+            return await respondUpdate({ 
                 content: `**📊 نتائج قبول الإنهاء الجماعي:**\n${results.join('\n')}`, 
                 embeds: [embed], 
                 components: [row] 
@@ -509,7 +522,7 @@ async function handleInteraction(interaction, context) {
             const pending = vacations.pendingTermination || {};
             const entries = Object.entries(pending);
 
-            if (entries.length === 0) return interaction.reply({ content: '❌ لا توجد طلبات إنهاء معلقة.', ephemeral: true });
+            if (entries.length === 0) return respondEphemeral({ content: '❌ لا توجد طلبات إنهاء معلقة.' });
 
             const options = entries.map(([userId, data]) => ({
                 label: `رفض إنهاء: ${userId}`,
@@ -529,11 +542,10 @@ async function handleInteraction(interaction, context) {
                 new ButtonBuilder().setCustomId('vac_list_pending_term').setLabel('رجوع').setStyle(ButtonStyle.Secondary)
             );
 
-            return await interaction.update({ content: '❌ **اختر طلبات الإنهاء للرفض الجماعي:**', embeds: [], components: [row, backRow] });
+            return await respondUpdate({ content: '❌ **اختر طلبات الإنهاء للرفض الجماعي:**', embeds: [], components: [row, backRow] });
         }
 
         if (interaction.customId === 'vac_term_reject_select') {
-            await interaction.deferUpdate();
             const userIds = interaction.values;
             let results = [];
             
@@ -548,7 +560,7 @@ async function handleInteraction(interaction, context) {
             }
 
             const { embed, row } = await getPendingTerminationListEmbed(interaction.guild);
-            return await interaction.editReply({ 
+            return await respondUpdate({ 
                 content: `**📊 نتائج رفض الإنهاء الجماعي:**\n${results.join('\n')}`, 
                 embeds: [embed], 
                 components: [row] 
