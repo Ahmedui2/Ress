@@ -3212,8 +3212,7 @@ client.on('interactionCreate', async (interaction) => {
 
         if (interaction.customId.startsWith('vac_list_') || 
             interaction.customId.startsWith('vac_pending_') || 
-            interaction.customId.startsWith('vac_terminate_') ||
-            interaction.customId.startsWith('vac_term_')) {
+            interaction.customId.startsWith('vac_terminate_')) {
 
             const vacationsCommand = client.commands.get('اجازات');
 
@@ -3259,7 +3258,6 @@ client.on('interactionCreate', async (interaction) => {
         if (interaction.customId.startsWith('vac_end_request_') ||
             interaction.customId.startsWith('vac_end_confirm_') ||
             interaction.customId === 'vac_end_cancel' ||
-            interaction.customId.startsWith('vac_end_cancel_') ||
             interaction.customId.startsWith('vac_approve_termination_')) {
             const myVacationCommand = client.commands.get('اجازتي');
             if (myVacationCommand && typeof myVacationCommand.handleInteraction === 'function') {
@@ -3269,8 +3267,8 @@ client.on('interactionCreate', async (interaction) => {
         }
 
         // Handle modal submissions and leftover vacation interactions
-        if (interaction.customId && (interaction.customId.startsWith('vac_reject_modal_') || interaction.customId.startsWith('vac_reject_termination_modal_') || interaction.customId.startsWith('vac_reject_term_modal_'))) {
-            if (interaction.customId.startsWith('vac_reject_termination_modal_') || interaction.customId.startsWith('vac_reject_term_modal_')) {
+        if (interaction.customId && (interaction.customId.startsWith('vac_reject_modal_') || interaction.customId.startsWith('vac_reject_termination_modal_'))) {
+            if (interaction.customId.startsWith('vac_reject_termination_modal_')) {
                 const myVacationCommand = client.commands.get('اجازتي');
                 if (myVacationCommand && typeof myVacationCommand.handleInteraction === 'function') {
                     await myVacationCommand.handleInteraction(interaction, vacationContext);
