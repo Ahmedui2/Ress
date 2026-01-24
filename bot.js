@@ -23,6 +23,7 @@ const dotenv = require('dotenv');
 const fs = require('fs');
 const path = require('path');
 const { logEvent } = require('./utils/logs_system.js');
+const { getRoleEntry, getGuildConfig, getGuildRoles, initializeCustomRolesStorage } = require('./utils/customRolesSystem.js');
 const { startReminderSystem } = require('./commands/notifications.js');
 // تعريف downManager في المستوى العلوي للوصول عبر جميع معالجات الأحداث
 const downManager = require('./utils/downManager');
@@ -115,6 +116,7 @@ async function initializeResponsibilities() {
         if (!dbManager.isInitialized) {
             await dbManager.initialize();
         }
+        await initializeCustomRolesStorage();
         const data = await dbManager.getResponsibilities();
         if (data && Object.keys(data).length > 0) {
             global.responsibilities = data;
@@ -1361,6 +1363,42 @@ client.on('roleUpdate', async (oldRole, newRole) => {
     }
 });
 
+async function logRoleLimitViolation(guild, role, member, roleEntry) {
+    const guildConfig = getGuildConfig(guild.id);
+    if (!guildConfig?.logChannelId) return;
+    const logChannel = await guild.channels.fetch(guildConfig.logChannelId).catch(() => null);
+    if (!logChannel) return;
+    const embed = new EmbedBuilder()
+        .setTitle('⚠️ تجاوز حد أعضاء الرول')
+        .setDescription(`تم منع إضافة عضو بسبب تجاوز الحد.`)
+        .addFields(
+            { name: 'الرول', value: `<@&${role.id}>`, inline: true },
+            { name: 'العضو', value: `<@${member.id}>`, inline: true },
+            { name: 'الحد الأقصى', value: `${roleEntry.maxMembers}`, inline: true }
+        )
+        .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+        .setTimestamp();
+    await logChannel.send({ embeds: [embed] }).catch(() => {});
+}
+
+client.on('guildMemberUpdate', async (oldMember, newMember) => {
+    try {
+        const addedRoles = newMember.roles.cache.filter(role => !oldMember.roles.cache.has(role.id));
+        if (addedRoles.size === 0) return;
+
+        for (const role of addedRoles.values()) {
+            const roleEntry = getRoleEntry(role.id);
+            if (!roleEntry?.maxMembers) continue;
+            if (role.members.size <= roleEntry.maxMembers) continue;
+
+            await newMember.roles.remove(role, 'تجاوز حد أعضاء الرول الخاص').catch(() => {});
+            await logRoleLimitViolation(newMember.guild, role, newMember, roleEntry);
+        }
+    } catch (error) {
+        console.error('❌ خطأ في التحقق من حد الرول:', error);
+    }
+});
+
 // تتبع التفاعلات - معالج محسن ومحدث
 client.on('messageReactionAdd', async (reaction, user) => {
   try {
@@ -2401,6 +2439,36 @@ client.on('guildMemberRemove', async (member) => {
 
         // Handle vacation system member leave
         await vacationManager.handleMemberLeave(member);
+
+        const guildConfig = getGuildConfig(member.guild.id);
+        const ownerRoles = getGuildRoles(member.guild.id).filter(roleEntry => roleEntry.ownerId === member.id);
+        if (ownerRoles.length > 0) {
+            const targetChannelId = guildConfig.requestInboxChannelId || guildConfig.requestsChannelId;
+            if (targetChannelId) {
+                const targetChannel = await member.guild.channels.fetch(targetChannelId).catch(() => null);
+                if (targetChannel) {
+                    for (const roleEntry of ownerRoles) {
+                        const embed = new EmbedBuilder()
+                            .setTitle('📤 مغادرة مالك رول خاص')
+                            .setDescription(`العضو: <@${member.id}>\nالرول: <@&${roleEntry.roleId}>`)
+                            .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+                            .setThumbnail(member.guild.client.user.displayAvatarURL({ size: 128 }))
+                            .setTimestamp();
+                        const row = new ActionRowBuilder().addComponents(
+                            new ButtonBuilder()
+                                .setCustomId(`customroles_owner_left_delete_${roleEntry.roleId}_${member.id}`)
+                                .setLabel('حذف الرول')
+                                .setStyle(ButtonStyle.Danger),
+                            new ButtonBuilder()
+                                .setCustomId(`customroles_owner_left_keep_${roleEntry.roleId}_${member.id}`)
+                                .setLabel('إلغاء')
+                                .setStyle(ButtonStyle.Secondary)
+                        );
+                        await targetChannel.send({ embeds: [embed], components: [row] });
+                    }
+                }
+            }
+        }
 
     } catch (error) {
         console.error('خطأ في معالج الانسحاب:', error);
