@@ -43,6 +43,15 @@ function loadJson(filePath, defaultData) {
     return JSON.parse(data);
   } catch (error) {
     console.error(`❌ خطأ في قراءة ${filePath}:`, error);
+    try {
+      if (fs.existsSync(filePath)) {
+        const backupPath = `${filePath}.bak.${Date.now()}`;
+        fs.copyFileSync(filePath, backupPath);
+        console.warn(`⚠️ تم إنشاء نسخة احتياطية للملف التالف: ${backupPath}`);
+      }
+    } catch (backupError) {
+      console.error(`❌ فشل إنشاء نسخة احتياطية لـ ${filePath}:`, backupError);
+    }
     return JSON.parse(JSON.stringify(defaultData));
   }
 }
@@ -97,6 +106,7 @@ function getGuildConfig(guildId) {
       managerUserIds: [],
       logChannelId: null,
       requestsChannelId: null,
+      requestInboxChannelId: null,
       adminControlChannelId: null,
       memberControlChannelId: null,
       requestImage: null,
@@ -177,6 +187,20 @@ function getDeletedRoles(guildId) {
   return Object.values(data.deleted).filter(role => role.guildId === guildId);
 }
 
+function getDeletedRoleEntry(roleId) {
+  const data = getRolesData();
+  return data.deleted[roleId] || null;
+}
+
+function removeDeletedRoleEntry(roleId) {
+  const data = getRolesData();
+  const entry = data.deleted[roleId];
+  if (!entry) return null;
+  delete data.deleted[roleId];
+  scheduleRolesSave();
+  return entry;
+}
+
 function isManager(member, config, botOwners = []) {
   if (!member) return false;
   if (botOwners.includes(member.id)) return true;
@@ -216,6 +240,8 @@ module.exports = {
   getGuildRoles,
   getRoleEntry,
   getDeletedRoles,
+  getDeletedRoleEntry,
+  removeDeletedRoleEntry,
   isManager,
   formatDuration,
   getResetDate,
