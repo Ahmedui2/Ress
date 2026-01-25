@@ -15,8 +15,8 @@ if (global.v8debug === undefined) {
 }
 
 // زيادة حدود الذاكرة والمستمعين وتخزين الكاش
-require('events').EventEmitter.defaultMaxListeners = Infinity; // معالجة غير محدودة تماماً
-process.setMaxListeners(0);
+require('events').EventEmitter.defaultMaxListeners = 50;
+process.setMaxListeners(50);
 
 const { Client, GatewayIntentBits, Partials, Collection, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, EmbedBuilder, Events, MessageFlags } = require('discord.js');
 const dotenv = require('dotenv');
@@ -31,6 +31,8 @@ const { checkCooldown, startCooldown } = require('./commands/cooldown.js');
 const colorManager = require('./utils/colorManager.js');
 const vacationManager = require('./utils/vacationManager');
 const promoteManager = require('./utils/promoteManager');
+const { getRoleEntry, addRoleEntry } = require('./utils/customRolesSystem.js');
+const interactionRouter = require('./utils/interactionRouter');
 const { handleAdminApplicationInteraction } = require('./commands/admin-apply.js');
 const interactiveRolesManager = require('./utils/interactiveRolesManager.js');
 
@@ -1977,6 +1979,29 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
         const oldRoles = oldMember.roles.cache;
         const newRoles = newMember.roles.cache;
         const addedRoles = newRoles.filter(role => !oldRoles.has(role.id));
+        const removedRoles = oldRoles.filter(role => !newRoles.has(role.id));
+
+        // تحديث memberMeta للرولات الخاصة عند الإضافة/الإزالة اليدوية
+        for (const [roleId] of addedRoles) {
+            const roleEntry = getRoleEntry(roleId);
+            if (!roleEntry || roleEntry.guildId !== newMember.guild.id) continue;
+            if (!roleEntry.memberMeta) roleEntry.memberMeta = {};
+            roleEntry.memberMeta[userId] = {
+                assignedAt: Date.now(),
+                assignedBy: null,
+                assignedByIsBot: false
+            };
+            roleEntry.updatedAt = Date.now();
+            addRoleEntry(roleId, roleEntry);
+        }
+
+        for (const [roleId] of removedRoles) {
+            const roleEntry = getRoleEntry(roleId);
+            if (!roleEntry || roleEntry.guildId !== newMember.guild.id || !roleEntry.memberMeta) continue;
+            delete roleEntry.memberMeta[userId];
+            roleEntry.updatedAt = Date.now();
+            addRoleEntry(roleId, roleEntry);
+        }
 
         // 1. حماية نظام الداون
         const activeDowns = downManager.getActiveDowns();
@@ -2340,7 +2365,6 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
         }
         
         // فحص الرولات المحذوفة (حماية ضد الإزالة اليدوية)
-        const removedRoles = oldRoles.filter(role => !newRoles.has(role.id));
         for (const [roleId, role] of removedRoles) {
             // البحث عن المسؤولية التي تحتوي هذا الرول
             let foundResp = null;
@@ -2692,6 +2716,10 @@ client.on('interactionCreate', async (interaction) => {
   try {
     // تعريف customId في البداية
     const customId = interaction?.customId || '';
+
+    if (await interactionRouter.route(interaction, client)) {
+        return;
+    }
 
     // --- Start of Consolidated Handlers ---
 

@@ -27,16 +27,18 @@ class InteractionRouter {
         for (const [prefix, handler] of this.handlers) {
             if (interaction.customId.startsWith(prefix)) {
                 try {
-                    return await handler(interaction, client);
+                    await handler(interaction, client);
+                    return true;
                 } catch (error) {
                     console.error(`[InteractionRouter] خطأ في ${prefix}:`, error);
                     if (!interaction.replied && !interaction.deferred) {
                         await interaction.reply({ content: '❌ حدث خطأ أثناء معالجة التفاعل.', ephemeral: true }).catch(() => {});
                     }
-                    return;
+                    return true;
                 }
             }
         }
+        return false;
     }
 }
 
