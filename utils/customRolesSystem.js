@@ -116,7 +116,8 @@ function getGuildConfig(guildId) {
       topImage: null,
       topMessageId: null,
       topEnabled: false,
-      activityResetAt: null
+      activityResetAt: null,
+      roleCategoryId: null
     };
     scheduleConfigSave();
   }
