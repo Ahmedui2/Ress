@@ -18,6 +18,40 @@ const PRESET_COLORS = [
   { label: 'أسود', value: '#2c3e50' },
   { label: 'رمادي', value: '#95a5a6' }
 ];
+const activeRolePanels = new Map();
+
+function formatDurationShort(ms) {
+  if (!ms || ms <= 0) return '0 د';
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const days = Math.floor(hours / 24);
+  if (days > 0) {
+    const remainingHours = hours % 24;
+    return `${days} ي ${remainingHours} س`;
+  }
+  if (hours > 0) return `${hours} س ${minutes} د`;
+  return `${minutes} د`;
+}
+
+function ensureMemberMeta(roleEntry) {
+  if (!roleEntry.memberMeta) roleEntry.memberMeta = {};
+  return roleEntry.memberMeta;
+}
+
+function setMemberAssignment(roleEntry, memberId, assignedById, assignedByIsBot) {
+  const meta = ensureMemberMeta(roleEntry);
+  meta[memberId] = {
+    assignedAt: Date.now(),
+    assignedBy: assignedById,
+    assignedByIsBot: Boolean(assignedByIsBot)
+  };
+}
+
+function removeMemberAssignment(roleEntry, memberId) {
+  const meta = ensureMemberMeta(roleEntry);
+  delete meta[memberId];
+}
 
 async function promptForMessage(channel, userId, promptText, interaction) {
   const prompt = interaction
@@ -123,99 +157,155 @@ function buildControlComponents(sessionId) {
 }
 
 async function handleManageMembers({ channel, userId, role, roleEntry, interaction, panelMessage }) {
-  const members = [...role.members.values()];
-  const list = members.slice(0, 25).map((member, index) => `${index + 1}. ${member.displayName} (<@${member.id}>)`).join('\n') || 'لا يوجد أعضاء حالياً.';
+  const sessionId = Date.now();
+  const perPage = 25;
+  let currentPage = 0;
+  let statusText = null;
 
-  const addMenu = new UserSelectMenuBuilder()
-    .setCustomId(`myrole_manage_add_${Date.now()}`)
-    .setPlaceholder('إضافة أعضاء...')
-    .setMinValues(1)
-    .setMaxValues(10);
+  const getMembers = () => [...role.members.values()];
 
-  const removeOptions = members.slice(0, 25).map(member => ({
-    label: member.displayName,
-    value: member.id
-  }));
-  const removeOptionsWithFallback = removeOptions.length ? removeOptions : [{ label: 'لا يوجد أعضاء', value: 'none' }];
-  const removeMenu = new StringSelectMenuBuilder()
-    .setCustomId(`myrole_manage_remove_${Date.now()}`)
-    .setPlaceholder('إزالة أعضاء...')
-    .setMinValues(1)
-    .setMaxValues(Math.min(10, removeOptionsWithFallback.length))
-    .addOptions(removeOptionsWithFallback);
+  const buildPayload = () => {
+    const members = getMembers();
+    const totalPages = Math.max(1, Math.ceil(members.length / perPage));
+    if (currentPage >= totalPages) currentPage = totalPages - 1;
+    const pageMembers = members.slice(currentPage * perPage, (currentPage + 1) * perPage);
+    const list = pageMembers.map((member, index) => `${index + 1 + currentPage * perPage}. ${member.displayName} (<@${member.id}>)`).join('\n') || 'لا يوجد أعضاء حالياً.';
 
-  const payload = {
-    embeds: [
-      new EmbedBuilder()
-        .setTitle('👥 إدارة الأعضاء')
-        .setDescription(`**الأعضاء الحاليون (أول 25):**\n${list}\n\n**اختر من القوائم لإضافة أو إزالة الأعضاء.**`)
-        .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
-        .setThumbnail(channel.client.user.displayAvatarURL({ size: 128 }))
-    ],
-    components: [
+    const addMenu = new UserSelectMenuBuilder()
+      .setCustomId(`myrole_manage_add_${sessionId}`)
+      .setPlaceholder('إضافة أعضاء...')
+      .setMinValues(1)
+      .setMaxValues(25);
+
+    const removeOptions = pageMembers.map(member => ({
+      label: member.displayName.slice(0, 100),
+      value: member.id
+    }));
+
+    const removeMenu = new StringSelectMenuBuilder()
+      .setCustomId(`myrole_manage_remove_${sessionId}`)
+      .setPlaceholder('إزالة أعضاء...')
+      .setMinValues(1)
+      .setMaxValues(Math.min(25, removeOptions.length || 1));
+
+    if (removeOptions.length) {
+      removeMenu.addOptions(removeOptions);
+    } else {
+      removeMenu.addOptions([{ label: 'لا يوجد أعضاء', value: 'none' }]).setDisabled(true);
+    }
+
+    const components = [
       new ActionRowBuilder().addComponents(addMenu),
       new ActionRowBuilder().addComponents(removeMenu)
-    ]
+    ];
+
+    if (members.length > perPage) {
+      components.push(new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`myrole_manage_prev_${sessionId}`)
+          .setLabel('السابق')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(currentPage === 0),
+        new ButtonBuilder()
+          .setCustomId(`myrole_manage_next_${sessionId}`)
+          .setLabel('التالي')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(currentPage >= totalPages - 1)
+      ));
+    }
+
+    const description = [
+      statusText ? `**آخر عملية:** ${statusText}` : null,
+      `**الأعضاء الحاليون (صفحة ${currentPage + 1}/${totalPages}):**`,
+      list,
+      '',
+      '**اختر من القوائم لإضافة أو إزالة الأعضاء.**'
+    ].filter(Boolean).join('\n');
+
+    return {
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('👥 إدارة الأعضاء')
+          .setDescription(description)
+          .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+          .setThumbnail(channel.client.user.displayAvatarURL({ size: 128 }))
+      ],
+      components
+    };
   };
+
   const infoMessage = interaction
-    ? await respondEphemeralWithMessage(interaction, payload)
-    : await channel.send(payload);
+    ? await respondEphemeralWithMessage(interaction, buildPayload())
+    : await channel.send(buildPayload());
+  if (!infoMessage) return;
   if (!interaction) {
     scheduleDelete(infoMessage);
   }
 
-  const selection = await infoMessage.awaitMessageComponent({
+  const collector = infoMessage.createMessageComponentCollector({
     filter: i => i.user.id === userId,
     time: 60000
-  }).catch(() => null);
+  });
 
-  if (!selection) return;
+  collector.on('collect', async selection => {
+    const maxMembers = roleEntry.maxMembers || null;
+    const added = [];
+    const removed = [];
 
-  const maxMembers = roleEntry.maxMembers || null;
-  const added = [];
-  const removed = [];
-
-  if (selection.customId.startsWith('myrole_manage_add_')) {
-    for (const id of selection.values) {
-      const member = await role.guild.members.fetch(id).catch(() => null);
-      if (!member) continue;
-      if (maxMembers && role.members.size >= maxMembers) break;
-      await member.roles.add(role, 'إضافة إلى رول خاص').catch(() => {});
-      added.push(member.id);
+    if (selection.isButton()) {
+      if (selection.customId === `myrole_manage_prev_${sessionId}`) currentPage = Math.max(0, currentPage - 1);
+      if (selection.customId === `myrole_manage_next_${sessionId}`) currentPage += 1;
+      await selection.update(buildPayload()).catch(() => {});
+      return;
     }
-  }
 
-  if (selection.customId.startsWith('myrole_manage_remove_')) {
-    if (!selection.values.includes('none')) {
+    if (selection.isUserSelectMenu() && selection.customId === `myrole_manage_add_${sessionId}`) {
       for (const id of selection.values) {
         const member = await role.guild.members.fetch(id).catch(() => null);
         if (!member) continue;
-        await member.roles.remove(role, 'إزالة من رول خاص').catch(() => {});
-        removed.push(member.id);
+        if (maxMembers && role.members.size >= maxMembers) break;
+        await member.roles.add(role, 'إضافة إلى رول خاص').catch(() => {});
+        setMemberAssignment(roleEntry, member.id, userId, selection.user.bot);
+        added.push(member.id);
       }
     }
-  }
 
-  await selection.update({ components: [] }).catch(() => {});
+    if (selection.isStringSelectMenu() && selection.customId === `myrole_manage_remove_${sessionId}`) {
+      if (!selection.values.includes('none')) {
+        for (const id of selection.values) {
+          const member = await role.guild.members.fetch(id).catch(() => null);
+          if (!member) continue;
+          await member.roles.remove(role, 'إزالة من رول خاص').catch(() => {});
+          removeMemberAssignment(roleEntry, member.id);
+          removed.push(member.id);
+        }
+      }
+    }
 
-  const summary = `**تم التحديث:**\n✅ تمت إضافة ${added.length} عضو\n🗑️ تمت إزالة ${removed.length} عضو`;
-  if (interaction) {
-    await interaction.followUp({ content: summary, ephemeral: true }).catch(() => {});
-  } else {
-    await sendTemp(channel, summary);
-  }
+    if (added.length || removed.length) {
+      roleEntry.updatedAt = Date.now();
+      addRoleEntry(role.id, roleEntry);
+      statusText = `✅ إضافة ${added.length} | 🗑️ إزالة ${removed.length}`;
+      await logRoleAction(role.guild, 'تم تحديث أعضاء رول خاص.', [
+        { name: 'الرول', value: `<@&${role.id}>`, inline: true },
+        { name: 'المالك', value: `<@${roleEntry.ownerId}>`, inline: true },
+        { name: 'إضافة', value: `${added.length}`, inline: true },
+        { name: 'إزالة', value: `${removed.length}`, inline: true }
+      ]);
+    }
 
-  if (panelMessage) {
-    const refreshed = buildControlEmbed(roleEntry, role, role.members.size);
-    await panelMessage.edit({ embeds: [refreshed], components: panelMessage.components }).catch(() => {});
-  }
+    await selection.update(buildPayload()).catch(() => {});
 
-  await logRoleAction(role.guild, 'تم تحديث أعضاء رول خاص.', [
-    { name: 'الرول', value: `<@&${role.id}>`, inline: true },
-    { name: 'المالك', value: `<@${roleEntry.ownerId}>`, inline: true },
-    { name: 'إضافة', value: `${added.length}`, inline: true },
-    { name: 'إزالة', value: `${removed.length}`, inline: true }
-  ]);
+    if (panelMessage) {
+      const refreshed = buildControlEmbed(roleEntry, role, role.members.size);
+      await panelMessage.edit({ embeds: [refreshed], components: panelMessage.components }).catch(() => {});
+    }
+  });
+
+  collector.on('end', async () => {
+    statusText = statusText || 'انتهت المهلة.';
+    await infoMessage.edit({ components: [], embeds: buildPayload().embeds }).catch(() => {});
+  });
 }
 
 async function handleColorChange({ interaction, role, roleEntry, panelMessage }) {
@@ -249,12 +339,14 @@ async function handleColorChange({ interaction, role, roleEntry, panelMessage })
       const value = response.content.trim().startsWith('#') ? response.content.trim() : `#${response.content.trim()}`;
       await role.setColor(value).catch(() => {});
       roleEntry.color = value;
+      roleEntry.updatedAt = Date.now();
       addRoleEntry(role.id, roleEntry);
     }
   } else {
     await selection.deferUpdate();
     await role.setColor(selection.values[0]).catch(() => {});
     roleEntry.color = selection.values[0];
+    roleEntry.updatedAt = Date.now();
     addRoleEntry(role.id, roleEntry);
   }
 
@@ -287,6 +379,7 @@ async function handleNameChange({ channel, userId, role, roleEntry, interaction,
   try {
     await role.setName(newName).catch(() => {});
     roleEntry.name = newName;
+    roleEntry.updatedAt = Date.now();
     addRoleEntry(role.id, roleEntry);
     if (panelMessage) {
       const refreshed = buildControlEmbed(roleEntry, role, role.members.size);
@@ -327,6 +420,7 @@ async function handleIconChange({ channel, userId, role, roleEntry, interaction,
     }
     const refreshedRole = await applyRoleIcon(role, buffer);
     roleEntry.icon = refreshedRole.iconURL();
+    roleEntry.updatedAt = Date.now();
     addRoleEntry(role.id, roleEntry);
     if (panelMessage) {
       const refreshed = buildControlEmbed(roleEntry, role, role.members.size);
@@ -350,21 +444,115 @@ async function handleIconChange({ channel, userId, role, roleEntry, interaction,
   }
 }
 
-async function handleMembersList({ channel, role, interaction }) {
-  const members = [...role.members.values()];
-  const list = members.slice(0, 50).map((member, index) => `**${index + 1}.** ${member.displayName} (<@${member.id}>)`).join('\n') || 'لا يوجد أعضاء حالياً.';
-  const embed = new EmbedBuilder()
-    .setTitle('📋 أعضاء الرول')
-    .setDescription(list)
-    .setFooter({ text: `إجمالي الأعضاء: ${members.length}` })
-    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
-    .setThumbnail(channel.client.user.displayAvatarURL({ size: 128 }));
+async function handleMembersList({ channel, role, interaction, roleEntry }) {
+  const sessionId = Date.now();
+  const perPage = 25;
+  let currentPage = 0;
+  let detailsText = null;
 
-  if (interaction) {
-    await respondEphemeral(interaction, { embeds: [embed] });
-  } else {
-    await sendTemp(channel, { embeds: [embed] });
+  const buildPayload = () => {
+    const members = [...role.members.values()];
+    const totalPages = Math.max(1, Math.ceil(members.length / perPage));
+    if (currentPage >= totalPages) currentPage = totalPages - 1;
+    const pageMembers = members.slice(currentPage * perPage, (currentPage + 1) * perPage);
+    const list = pageMembers.map((member, index) => `**${index + 1 + currentPage * perPage}.** ${member.displayName} (<@${member.id}>)`).join('\n') || 'لا يوجد أعضاء حالياً.';
+
+    const options = pageMembers.map(member => ({
+      label: member.displayName.slice(0, 100),
+      value: member.id
+    }));
+
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId(`myrole_members_select_${sessionId}`)
+      .setPlaceholder('اختر الأعضاء لعرض التفاصيل...')
+      .setMinValues(1)
+      .setMaxValues(Math.min(25, options.length || 1));
+
+    if (options.length) {
+      selectMenu.addOptions(options);
+    } else {
+      selectMenu.addOptions([{ label: 'لا يوجد أعضاء', value: 'none' }]).setDisabled(true);
+    }
+
+    const components = [new ActionRowBuilder().addComponents(selectMenu)];
+    if (members.length > perPage) {
+      components.push(new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`myrole_members_prev_${sessionId}`)
+          .setLabel('السابق')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(currentPage === 0),
+        new ButtonBuilder()
+          .setCustomId(`myrole_members_next_${sessionId}`)
+          .setLabel('التالي')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(currentPage >= totalPages - 1)
+      ));
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle('📋 أعضاء الرول')
+      .setDescription(list)
+      .setFooter({ text: `صفحة ${currentPage + 1}/${totalPages} | إجمالي الأعضاء: ${members.length}` })
+      .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
+      .setThumbnail(channel.client.user.displayAvatarURL({ size: 128 }));
+
+    if (detailsText) {
+      embed.addFields({ name: 'تفاصيل المحددين', value: detailsText.slice(0, 1024), inline: false });
+    }
+
+    return { embeds: [embed], components };
+  };
+
+  const infoMessage = interaction
+    ? await respondEphemeralWithMessage(interaction, buildPayload())
+    : await channel.send(buildPayload());
+  if (!infoMessage) return;
+  if (!interaction) {
+    scheduleDelete(infoMessage);
   }
+
+  const collector = infoMessage.createMessageComponentCollector({
+    filter: i => i.user.id === (interaction?.user?.id || roleEntry?.ownerId),
+    time: 60000
+  });
+
+  collector.on('collect', async selection => {
+    if (selection.isButton()) {
+      if (selection.customId === `myrole_members_prev_${sessionId}`) currentPage = Math.max(0, currentPage - 1);
+      if (selection.customId === `myrole_members_next_${sessionId}`) currentPage += 1;
+      await selection.update(buildPayload()).catch(() => {});
+      return;
+    }
+
+    if (selection.isStringSelectMenu() && selection.customId === `myrole_members_select_${sessionId}`) {
+      if (selection.values.includes('none')) {
+        await selection.update(buildPayload()).catch(() => {});
+        return;
+      }
+      const now = Date.now();
+      const details = [];
+      for (const id of selection.values) {
+        const member = await role.guild.members.fetch(id).catch(() => null);
+        if (!member) continue;
+        const meta = roleEntry?.memberMeta?.[member.id];
+        const assignedAt = meta?.assignedAt
+          ? moment(meta.assignedAt).tz('Asia/Riyadh').format('YYYY-MM-DD HH:mm')
+          : 'غير معروف';
+        const since = meta?.assignedAt ? formatDurationShort(now - meta.assignedAt) : 'غير معروف';
+        const assignedBy = meta?.assignedBy
+          ? (meta.assignedByIsBot ? 'بوت' : `<@${meta.assignedBy}>`)
+          : 'غير معروف';
+        details.push(`**${member.displayName}** (<@${member.id}>)\n• حصل على الرول: ${assignedAt}\n• منذ: ${since}\n• بواسطة: ${assignedBy}`);
+      }
+      detailsText = details.join('\n\n') || null;
+      await selection.update(buildPayload()).catch(() => {});
+    }
+  });
+
+  collector.on('end', async () => {
+    await infoMessage.edit({ components: [], embeds: buildPayload().embeds }).catch(() => {});
+  });
 }
 
 async function handleTransfer({ channel, userId, role, roleEntry, interaction, panelMessage }) {
@@ -440,6 +628,8 @@ async function handleTransfer({ channel, userId, role, roleEntry, interaction, p
 
   const previousOwnerId = roleEntry.ownerId;
   roleEntry.ownerId = mentionId;
+  roleEntry.updatedAt = Date.now();
+  setMemberAssignment(roleEntry, mentionId, userId, interaction?.user?.bot);
   addRoleEntry(role.id, roleEntry);
   await newOwner.roles.add(role, 'نقل ملكية رول خاص').catch(() => {});
   if (panelMessage) {
@@ -459,6 +649,10 @@ async function handleTransfer({ channel, userId, role, roleEntry, interaction, p
 }
 
 async function startMyRoleFlow({ member, channel, client }) {
+  if (activeRolePanels.has(member.id)) {
+    await sendTemp(channel, '**⚠️ لديك لوحة مفتوحة بالفعل.**');
+    return;
+  }
   const roleEntry = findRoleByOwner(member.guild.id, member.id);
   if (!roleEntry) {
     await sendTemp(channel, '**❌ ليس لديك رول خاص.**');
@@ -483,6 +677,12 @@ async function startMyRoleFlow({ member, channel, client }) {
   const sessionId = `${member.id}_${Date.now()}`;
   const sentMessage = await channel.send({ embeds: [embed], components: buildControlComponents(sessionId) });
   scheduleDelete(sentMessage);
+  activeRolePanels.set(member.id, sentMessage.id);
+  setTimeout(() => {
+    if (activeRolePanels.get(member.id) === sentMessage.id) {
+      activeRolePanels.delete(member.id);
+    }
+  }, 240000);
 
   const collector = sentMessage.createMessageComponentCollector({
     filter: interaction => interaction.user.id === member.id,
@@ -524,7 +724,7 @@ async function startMyRoleFlow({ member, channel, client }) {
 
       if (action === 'members') {
         await interaction.deferUpdate();
-        await handleMembersList({ channel, role, interaction });
+        await handleMembersList({ channel, role, interaction, roleEntry });
         return;
       }
 
@@ -582,6 +782,7 @@ async function startMyRoleFlow({ member, channel, client }) {
   });
 
   collector.on('end', async (_collected, reason) => {
+    activeRolePanels.delete(member.id);
     if (reason === 'closed') return;
     if (!sentMessage.editable) return;
     await sentMessage.edit({ components: [], content: '**⏱️ انتهت مهلة لوحة الرول.**' }).catch(() => {});
@@ -613,7 +814,7 @@ async function handleMemberAction(interaction, action, client) {
   }
 
   if (action === 'members') {
-    await handleMembersList({ channel: interaction.channel, role, interaction });
+    await handleMembersList({ channel: interaction.channel, role, interaction, roleEntry });
     return;
   }
   if (action === 'name') {
@@ -646,7 +847,7 @@ async function handleMemberAction(interaction, action, client) {
 
 async function runRoleAction({ interaction, action, roleEntry, role, panelMessage }) {
   if (action === 'members') {
-    await handleMembersList({ channel: interaction.channel, role, interaction });
+    await handleMembersList({ channel: interaction.channel, role, interaction, roleEntry });
     return;
   }
   if (action === 'name') {

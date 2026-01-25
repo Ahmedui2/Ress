@@ -298,11 +298,19 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
           guildId: message.guild.id,
           ownerId: state.ownerId,
           createdAt: Date.now(),
+          updatedAt: Date.now(),
           createdBy: state.createdBy,
           name: finalRole.name,
           color: finalRole.hexColor,
           icon: finalRole.iconURL(),
-          maxMembers: state.maxMembers
+          maxMembers: state.maxMembers,
+          memberMeta: {
+            [state.ownerId]: {
+              assignedAt: Date.now(),
+              assignedBy: state.createdBy,
+              assignedByIsBot: message.author.bot
+            }
+          }
         });
 
         await logRoleAction(message.guild, guildConfig, 'تم إنشاء رول خاص جديد.', [
