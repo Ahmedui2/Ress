@@ -18,7 +18,6 @@ const pendingPanelTimeouts = new Map();
 const pendingBulkDeletes = new Map();
 const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
 const REQUEST_REAPPLY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
-const botConfigPath = path.join(__dirname, '..', 'data', 'botConfig.json');
 
 function scheduleDelete(message, delay = 180000) {
   if (!message) return;
@@ -223,21 +222,6 @@ function loadAdminRoles() {
     console.error('خطأ في قراءة adminRoles:', error);
     return [];
   }
-}
-
-function loadBotOwners() {
-  if (global.BOT_OWNERS && Array.isArray(global.BOT_OWNERS)) {
-    return global.BOT_OWNERS;
-  }
-  try {
-    if (fs.existsSync(botConfigPath)) {
-      const botConfig = JSON.parse(fs.readFileSync(botConfigPath, 'utf8'));
-      return Array.isArray(botConfig.owners) ? botConfig.owners : [];
-    }
-  } catch (error) {
-    console.error('خطأ في قراءة botConfig owners:', error);
-  }
-  return [];
 }
 
 async function buildPanelPayload(type, guild, guildConfig) {
@@ -1542,10 +1526,17 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     }
 
     const memberIds = deletedEntry.memberMeta ? Object.keys(deletedEntry.memberMeta) : [];
+    const restoredMemberMeta = { ...(deletedEntry.memberMeta || {}) };
     for (const memberId of memberIds) {
       const member = await interaction.guild.members.fetch(memberId).catch(() => null);
       if (!member) continue;
       await member.roles.add(finalRole, 'استرجاع رول خاص محذوف').catch(() => {});
+      restoredMemberMeta[memberId] = {
+        ...(restoredMemberMeta[memberId] || {}),
+        assignedAt: Date.now(),
+        assignedBy: interaction.user.id,
+        assignedByIsBot: interaction.user.bot
+      };
     }
 
     addRoleEntry(finalRole.id, {
@@ -1555,7 +1546,8 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       name: finalRole.name,
       color: finalRole.hexColor,
       icon: finalRole.iconURL(),
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      memberMeta: restoredMemberMeta
     });
     removeDeletedRoleEntry(roleId);
 
@@ -2075,7 +2067,7 @@ module.exports = {
   restoreTopSchedules
 };
 
-interactionRouter.register('customroles_', async (interaction, client) => {
-  const BOT_OWNERS = loadBotOwners();
-  await handleCustomRolesInteraction(interaction, client, BOT_OWNERS);
+interactionRouter.register('customroles_', async (interaction, context = {}) => {
+  const { client, BOT_OWNERS } = context;
+  await handleCustomRolesInteraction(interaction, client, BOT_OWNERS || []);
 });

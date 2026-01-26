@@ -21,13 +21,13 @@ class InteractionRouter {
     /**
      * توجيه التفاعل للمعالج المناسب
      */
-    async route(interaction, client) {
+    async route(interaction, context = {}) {
         if (!interaction.customId) return;
 
         for (const [prefix, handler] of this.handlers) {
             if (interaction.customId.startsWith(prefix)) {
                 try {
-                    await handler(interaction, client);
+                    await handler(interaction, context);
                     return true;
                 } catch (error) {
                     console.error(`[InteractionRouter] خطأ في ${prefix}:`, error);
