@@ -69,20 +69,22 @@ function buildSettingsMenu(userId, client) {
     .setCustomId(`customroles_settings_menu_${userId}`)
     .setPlaceholder('اختر إعداداً...')
     .addOptions([
-      { label: 'إدارة المسؤولين (رولات + أعضاء)', value: 'managers', emoji: '🛡️' },
-      { label: 'إدارة الشاتات (مسموح + محظور)', value: 'channels', emoji: '🧹' },
-      { label: 'ملخص حالة النظام', value: 'system_summary', emoji: '🧾' },
-      { label: 'إرسال اللوحات', value: 'send_panels', emoji: '📦' },
-      { label: 'تصفير التفاعل', value: 'reset_activity', emoji: '♻️' },
-      { label: 'ترتيب الرولات الجديدة', value: 'role_category', emoji: '📌' },
-      { label: 'تفعيل توب الرولات', value: 'top_roles', emoji: '🏆' }
+      { label: 'Mangers', value: 'managers', emoji: '<:emoji_29:1465373807471759523>', description: 'تعيين مسؤوليين للنظام'}, 
+      { label: 'Channels', value: 'channels', emoji: '<:emoji_28:1465373772109447380>', description: 'تعيين الرومات المحظوره والمسموحه'},
+      { label: 'Panels', value: 'send_panels', emoji: '<:emoji_27:1465373748227215451>', description: 'ارسال بانل التوب ، وازرار الادارة والاعضاء والطلبات'}, 
+      { label: 'Category', value: 'role_category', emoji: '<:emoji_24:1465373678064898070>', description: 'الرول اللي تحته ينشأ الرولات الخاصة'}, 
+      { label: 'Status', value: 'system_summary', emoji: '<:emoji_23:1465373644241895681>', description: 'حالة النظام وملخصها'}, 
+      { label: 'Reset active', value: 'reset_activity', emoji: '<:emoji_26:1465373714060415180>', description: 'تصفير تفاعل الرولات الخاصة'}, 
+      { label: 'Active top', value: 'top_roles', emoji: '<:emoji_23:1465373597844373797>', description: 'تفعيل تحديث بانل التوب' }
     ]);
 
   const embed = new EmbedBuilder()
-    .setTitle('⚙️ إعدادات الرولات الخاصة')
-    .setDescription('اختر العملية المطلوبة من القائمة.')
+    .setTitle('Roles SYS;')
+    .setDescription('**إعدادات الرولات الخاصة.**')
     .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
-    .setThumbnail(client.user.displayAvatarURL({ size: 128 }));
+    .setThumbnail('https://cdn.discordapp.com/attachments/1465209977378439266/1465374810186973447/status-update.png?ex=6978e024&is=69778ea4&hm=ec7f201d4977f1bb05cd2e0cbf58fdfb2fa2cc0352cb8d03a349d6f0025079b1&' )
+.setFooter({ text: 'By Ahmed;' });
+
 
   return { embed, row: new ActionRowBuilder().addComponents(menu) };
 }
@@ -93,25 +95,25 @@ function buildPanelEmbed(type, guild) {
   switch (type) {
     case 'member':
       return new EmbedBuilder()
-        .setTitle('🎛️ لوحة رولي')
+        .setTitle('Manage Your Role')
         .setDescription('اختر العملية المناسبة لإدارة رولك بسرعة وسهولة.')
         .setColor(color)
         .setThumbnail(thumbnail);
     case 'admin':
       return new EmbedBuilder()
-        .setTitle('🧰 لوحة الإدارة')
+        .setTitle('Manage Roles')
         .setDescription('تحكم سريع بالرولات الخاصة (إدارة، حذف، استرجاع، تصفير).')
         .setColor(color)
         .setThumbnail(thumbnail);
     case 'request':
       return new EmbedBuilder()
-        .setTitle('📝 طلب رول خاص')
+        .setTitle('Request Roles')
         .setDescription('قدّم طلبك وسيتم مراجعته من الإدارة.')
         .setColor(color)
         .setThumbnail(thumbnail);
     default:
       return new EmbedBuilder()
-        .setTitle('🏆 توب الرولات الخاصة')
+        .setTitle('Top roles')
         .setDescription('أعلى الرولات بحسب التفاعل.')
         .setColor(color)
         .setThumbnail(thumbnail);
@@ -189,6 +191,7 @@ async function logRoleAction(guild, guildConfig, description, fields = []) {
   const embed = new EmbedBuilder()
     .setTitle('📝 سجل الرولات الخاصة')
     .setDescription(description)
+.setThumbnail('https://cdn.discordapp.com/attachments/1373463003311243364/1465205359885946900/data.png?ex=69784253&is=6976f0d3&hm=e029b7dda1110a8bbe7b47adc2b238d6e19ae5d2c340abd5ca9b09df0d3efc27&')
     .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
     .setTimestamp();
   if (fields.length) embed.addFields(fields);
@@ -247,40 +250,40 @@ async function buildPanelPayload(type, guild, guildConfig) {
   if (type === 'member') {
     payload.components = [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('customroles_member_action_name').setLabel('تغيير الاسم').setEmoji('✏️').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId('customroles_member_action_manage').setLabel('إضافة/إزالة').setEmoji('➕').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId('customroles_member_action_color').setLabel('تغيير اللون').setEmoji('🎨').setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId('customroles_member_action_icon').setLabel('تغيير الأيقونة').setEmoji('✨').setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId('customroles_member_action_name').setLabel('تغيير الاسم').setEmoji('<:emoji_14:1465332216375808187>').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('customroles_member_action_manage').setLabel('إضافة/إزالة').setEmoji('<:emoji_14:1465332188953186453>').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('customroles_member_action_color').setLabel('تغيير اللون').setEmoji('<:emoji_10:1465332068128002291>').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('customroles_member_action_icon').setLabel('تغيير الايكون').setEmoji('<:emoji_3:1465210427494502400>').setStyle(ButtonStyle.Secondary)
       ),
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('customroles_member_action_members').setLabel('الأعضاء').setEmoji('👥').setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId('customroles_member_action_transfer').setLabel('نقل الملكية').setEmoji('🔁').setStyle(ButtonStyle.Danger),
-        new ButtonBuilder().setCustomId('customroles_member_action_delete').setLabel('حذف الرول').setEmoji('🗑️').setStyle(ButtonStyle.Danger)
+        new ButtonBuilder().setCustomId('customroles_member_action_members').setLabel('الأعضاء').setEmoji('<:emoji_12:1465332124784656446>').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('customroles_member_action_transfer').setLabel('نقل الملكية').setEmoji('<:emoji_10:1465332029473161350>').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId('customroles_member_action_delete').setLabel('حذف الرول').setEmoji('<:emoji_21:1465336647477493894>').setStyle(ButtonStyle.Danger)
       )
     ];
   }
   if (type === 'admin') {
     payload.components = [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('customroles_admin_panel_create').setLabel('إنشاء رول').setEmoji('➕').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId('customroles_admin_panel_add').setLabel('إضافة رول').setEmoji('🧷').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId('customroles_admin_panel_delete').setLabel('حذف رول').setEmoji('🗑️').setStyle(ButtonStyle.Danger)
+        new ButtonBuilder().setCustomId('customroles_admin_panel_create').setLabel('إنشاء رول').setEmoji('<:emoji_33:1465383525644501238>').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('customroles_admin_panel_add').setLabel('إضافة رول').setEmoji('<:emoji_30:1465383419641856233>').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('customroles_admin_panel_delete').setLabel('حذف رول').setEmoji('<:emoji_21:1465336647477493894>').setStyle(ButtonStyle.Secondary)
       ),
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('customroles_admin_panel_info').setLabel('معلومات رول').setEmoji('ℹ️').setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId('customroles_admin_panel_reset_role').setLabel('تصفير رول').setEmoji('♻️').setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId('customroles_admin_panel_reset_all').setLabel('تصفير الكل').setEmoji('🧹').setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId('customroles_admin_panel_info').setLabel('معلومات رول').setEmoji('<:emoji_33:1465383582292771025>').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('customroles_admin_panel_reset_role').setLabel('تصفير رول').setEmoji('<:emoji_34:1465383644339241073>').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('customroles_admin_panel_reset_all').setLabel('تصفير الكل').setEmoji('<:emoji_26:1465373714060415180>').setStyle(ButtonStyle.Secondary)
       ),
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('customroles_admin_manage').setLabel('إدارة رول').setEmoji('🧰').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId('customroles_admin_restore').setLabel('استرجاع رول').setEmoji('↩️').setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId('customroles_admin_manage').setLabel('إدارة رول').setEmoji('<:emoji_35:1465383704993202452>').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('customroles_admin_restore').setLabel('استرجاع رول').setEmoji('<:emoji_35:1465383667412107475>').setStyle(ButtonStyle.Secondary)
       )
     ];
   }
   if (type === 'request') {
     payload.components = [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('customroles_request_button').setLabel('طلب رول خاص').setEmoji('📨').setStyle(ButtonStyle.Success)
+        new ButtonBuilder().setCustomId('customroles_request_button').setLabel('طلب رول خاص').setEmoji('<:emoji_20:1465336566384951387>').setStyle(ButtonStyle.Secondary)
       )
     ];
   }
@@ -347,7 +350,7 @@ function buildManagersPayload(message, guildConfig, embed, row) {
   const currentRoles = guildConfig?.managerRoleIds || [];
   const currentUsers = guildConfig?.managerUserIds || [];
   const managersEmbed = new EmbedBuilder()
-    .setTitle('👥 إدارة المسؤولين')
+    .setTitle('إدارة المسؤولين')
     .setDescription('تحكم بالرولات والأعضاء المسؤولين مع عرض القائمة الحالية.')
     .addFields(
       { name: 'الرولات', value: currentRoles.length ? currentRoles.map(id => `<@&${id}>`).join('\n') : 'لا يوجد', inline: false },
@@ -388,11 +391,11 @@ function buildChannelsPayload(message, guildConfig, embed, row) {
   const allowed = guildConfig?.allowedChannels || [];
   const blocked = guildConfig?.blockedChannels || [];
   const channelsEmbed = new EmbedBuilder()
-    .setTitle('📋 إدارة الشاتات')
+    .setTitle(' إدارة الشاتات')
     .setDescription('حدّث الشاتات المسموحة والمحظورة مع عرض الملخص الحالي.')
     .addFields(
       { name: 'روم السجلات', value: guildConfig.logChannelId ? `<#${guildConfig.logChannelId}>` : 'غير محدد', inline: true },
-      { name: 'لوحة الطلبات', value: guildConfig.requestsChannelId ? `<#${guildConfig.requestsChannelId}>` : 'غير محدد', inline: true },
+      { name: 'بانل الطلبات', value: guildConfig.requestsChannelId ? `<#${guildConfig.requestsChannelId}>` : 'غير محدد', inline: true },
       { name: 'استقبال الطلبات', value: guildConfig.requestInboxChannelId ? `<#${guildConfig.requestInboxChannelId}>` : 'غير محدد', inline: true },
       { name: 'لوحة الإدارة', value: guildConfig.adminControlChannelId ? `<#${guildConfig.adminControlChannelId}>` : 'غير محدد', inline: true },
       { name: 'لوحة الأعضاء', value: guildConfig.memberControlChannelId ? `<#${guildConfig.memberControlChannelId}>` : 'غير محدد', inline: true },
@@ -422,11 +425,15 @@ function buildChannelsPayload(message, guildConfig, embed, row) {
     logMenu.setDefaultChannels([guildConfig.logChannelId]);
   }
   const clearLogsRow = new ActionRowBuilder().addComponents(
+
     new ButtonBuilder()
+
       .setCustomId(`customroles_manage_logs_clear_${message.author.id}`)
+
       .setLabel('إلغاء السجلات')
+
       .setStyle(ButtonStyle.Secondary)
-  );
+      );
   const blockMenu = new ChannelSelectMenuBuilder()
     .setCustomId(`customroles_manage_blocked_${message.author.id}`)
     .setPlaceholder('الشاتات المحظورة')
@@ -438,7 +445,7 @@ function buildChannelsPayload(message, guildConfig, embed, row) {
   }
 
   return {
-    content: 'حدّد الشاتات المسموحة والمحظورة:',
+    content: 'حدّد الشاتات المسموحة والمحظورة :',
     embeds: [channelsEmbed],
     components: [
       new ActionRowBuilder().addComponents(logMenu),
@@ -565,14 +572,14 @@ async function buildTopRolesEmbed(guild, guildConfig) {
   ranked.sort((a, b) => b.total - a.total);
 
   const embed = new EmbedBuilder()
-    .setTitle('🏆 توب الرولات الخاصة')
+    .setTitle('Top roles')
     .setDescription(ranked.slice(0, 10).map((role, index) => (
-      `**${index + 1}. ${role.name}**\n` +
-      `🔹 <@&${role.roleId}> | 👤 <@${role.ownerId}> | 💬 ${role.messages} رسالة | 🔊 ${formatDuration(role.voice)}`
-    )).join('\n\n') || 'لا توجد بيانات بعد.')
+      `**#${index + 1} Role : <@&${role.roleId}>\n` +
+      ` <:emoji_87:1442988617294413864> <@${role.ownerId}> | <:emoji_85:1442986444712054954> ${role.messages} رسالة | <:emoji_85:1442986413510627530> ${formatDuration(role.voice)}**`
+    )).join('\n\n') || '**لا توجد بيانات بعد.**')
     .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
     .setTimestamp()
-    .setThumbnail(thumbnail);
+    .setThumbnail('https://cdn.discordapp.com/attachments/1438625858037350520/1465388834463420550/podium.png?ex=6978ed33&is=69779bb3&hm=b0664dab07584fc960996ee57f2e62285099a951d4c36c4e2f92b0511908b598&');
 
   return embed;
 }
@@ -628,26 +635,26 @@ async function handleAdminRoleControl(message, targetRoleEntry) {
   }
 
   const embed = new EmbedBuilder()
-    .setTitle('🧰 إدارة رول خاص')
-    .setDescription(`الاسم: **${role.name}**\nالرول: <@&${role.id}>\nالمالك: <@${targetRoleEntry.ownerId}>`)
+    .setTitle(' إدارة رول خاص')
+    .setDescription(`الاسم : **${role.name}**\nالرول : <@&${role.id}>\nالمالك : <@${targetRoleEntry.ownerId}>`)
     .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
     .setThumbnail(message.client.user.displayAvatarURL({ size: 128 }));
 
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`customroles_admin_delete_${role.id}_${message.author.id}`).setLabel('حذف الرول').setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId(`customroles_admin_transfer_${role.id}_${message.author.id}`).setLabel('نقل الملكية').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(`customroles_admin_remove_${role.id}_${message.author.id}`).setLabel('إزالة من القاعدة').setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId(`customroles_admin_delete_${role.id}_${message.author.id}`).setLabel('حذف الرول').setEmoji('<:emoji_21:1465336647477493894>').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(`customroles_admin_transfer_${role.id}_${message.author.id}`).setLabel('نقل الملكية').setEmoji('<:emoji_10:1465332029473161350>').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(`customroles_admin_remove_${role.id}_${message.author.id}`).setLabel('إزالة من القاعدة').setEmoji('<:emoji_35:1465383704993202452>').setStyle(ButtonStyle.Secondary)
   );
 
   const controlRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`customroles_admin_action_name_${role.id}_${message.author.id}`).setLabel('تغيير الاسم').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(`customroles_admin_action_manage_${role.id}_${message.author.id}`).setLabel('إضافة/إزالة').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(`customroles_admin_action_color_${role.id}_${message.author.id}`).setLabel('تغيير اللون').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId(`customroles_admin_action_icon_${role.id}_${message.author.id}`).setLabel('تغيير الأيقونة').setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId(`customroles_admin_action_name_${role.id}_${message.author.id}`).setLabel('تغيير الاسم').setEmoji('<:emoji_14:1465332216375808187>').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`customroles_admin_action_manage_${role.id}_${message.author.id}`).setLabel('إضافة/إزالة').setEmoji('<:emoji_14:1465332188953186453>').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`customroles_admin_action_color_${role.id}_${message.author.id}`).setLabel('تغيير اللون').setEmoji('<:emoji_10:1465332068128002291>').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`customroles_admin_action_icon_${role.id}_${message.author.id}`).setLabel('تغيير الايكون').setEmoji('<:emoji_13:1465332152643092733>').setStyle(ButtonStyle.Secondary)
   );
 
   const controlRow2 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`customroles_admin_action_members_${role.id}_${message.author.id}`).setLabel('الأعضاء').setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId(`customroles_admin_action_members_${role.id}_${message.author.id}`).setLabel('الأعضاء').setEmoji('<:emoji_12:1465332124784656446>').setStyle(ButtonStyle.Secondary)
   );
 
   if (interaction) {
@@ -749,10 +756,10 @@ async function executeRolesSettings(message, args, { client, BOT_OWNERS }) {
 
       const modal = new ModalBuilder()
         .setCustomId(`customroles_panel_image_modal_${panelType}_${message.author.id}`)
-        .setTitle('إعدادات صورة اللوحة');
+        .setTitle('إعدادات صورة البانل');
       const imageInput = new TextInputBuilder()
         .setCustomId('panel_image_url')
-        .setLabel('رابط صورة اللوحة (اختياري)')
+        .setLabel('رابط صورة البانل (اختياري)')
         .setStyle(TextInputStyle.Short)
         .setRequired(false);
       modal.addComponents(new ActionRowBuilder().addComponents(imageInput));
@@ -859,7 +866,7 @@ async function executeRolesSettings(message, args, { client, BOT_OWNERS }) {
         new ButtonBuilder().setCustomId(`customroles_settings_back_${message.author.id}`).setLabel('رجوع').setStyle(ButtonStyle.Secondary)
       );
       await interaction.update({
-        content: 'اختر اللوحة التي تريد إرسالها:',
+        content: 'اختر البانل التي تريد إرسالها :',
         embeds: [],
         components: [buttons, backRow]
       });
@@ -1686,7 +1693,7 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
 
     const reasonInput = new TextInputBuilder()
       .setCustomId('role_reason')
-      .setLabel('سبب الطلب (اختياري)')
+      .setLabel('رولك؟ (اختياري)')
       .setStyle(TextInputStyle.Paragraph)
       .setRequired(false);
 
@@ -1732,7 +1739,7 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     }
 
     const embed = new EmbedBuilder()
-      .setTitle('📥 طلب رول خاص')
+      .setTitle(' طلب رول خاص')
       .setDescription(`العضو: <@${interaction.user.id}>`)
       .addFields(
         { name: 'الرول المطلوب', value: roleName },
@@ -2102,7 +2109,7 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
 
   if (interaction.customId.startsWith('customroles_admin_remove_')) {
     if (!isAdminUser) {
-      await interaction.reply({ content: '❌ لا تملك صلاحية.', ephemeral: true });
+      await interaction.reply({ content: '**❌ لا تملك صلاحية.**', ephemeral: true });
       return;
     }
     await interaction.deferUpdate();

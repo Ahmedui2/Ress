@@ -160,10 +160,15 @@ function buildControlComponents(sessionId, hasIconBackup) {
 
 async function refreshPanelMessage(panelMessage, roleEntry, role) {
   if (!panelMessage?.editable) return;
-  const refreshedRole = await role.guild.roles.fetch(role.id).catch(() => role);
+  const refreshedRole = await role.guild.roles.fetch(role.id).catch(error => {
+    console.error(`❌ Failed to fetch role ${role.id} for panel refresh:`, error);
+    return role;
+  });
   const activeRole = refreshedRole || role;
   const refreshed = buildControlEmbed(roleEntry, activeRole, activeRole.members.size);
-  await panelMessage.edit({ embeds: [refreshed], components: panelMessage.components }).catch(() => {});
+  await panelMessage.edit({ embeds: [refreshed], components: panelMessage.components }).catch(error => {
+    console.error(`❌ Failed to edit panel message ${panelMessage.id}:`, error);
+  });
 }
 
 function getIconBackupState(guildConfig, ownerId) {
@@ -384,7 +389,7 @@ async function handleManageMembers({ channel, userId, role, roleEntry, interacti
     if (added.length || removed.length) {
       roleEntry.updatedAt = Date.now();
       addRoleEntry(role.id, roleEntry);
-      statusText = `✅ Add : ${added.length} | ☑️ Removed : ${removed.length}`;
+      statusText = ` Add : ${added.length} | Removed : ${removed.length}`;
       await logRoleAction(role.guild, 'تم تحديث أعضاء رول خاص.', [
         { name: 'الرول', value: `<@&${role.id}>`, inline: true },
         { name: 'الأونر', value: `<@${roleEntry.ownerId}>`, inline: true },
