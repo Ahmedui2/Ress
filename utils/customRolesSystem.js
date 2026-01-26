@@ -216,6 +216,19 @@ function isManager(member, config, botOwners = []) {
   return false;
 }
 
+function isCustomRolesChannelAllowed(guildConfig, channelId) {
+  if (!guildConfig || !channelId) return true;
+  const allowed = guildConfig.allowedChannels || [];
+  const blocked = guildConfig.blockedChannels || [];
+  if (allowed.length > 0) {
+    return allowed.includes(channelId);
+  }
+  if (blocked.length > 0) {
+    return !blocked.includes(channelId);
+  }
+  return true;
+}
+
 function formatDuration(ms) {
   if (!ms || ms <= 0) return '0 د';
   const totalSeconds = Math.floor(ms / 1000);
@@ -251,6 +264,7 @@ module.exports = {
   getDeletedRoleEntry,
   removeDeletedRoleEntry,
   isManager,
+  isCustomRolesChannelAllowed,
   formatDuration,
   getResetDate,
   getRoleResetDate,

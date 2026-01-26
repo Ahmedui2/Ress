@@ -1,7 +1,7 @@
 const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder, RoleSelectMenuBuilder, UserSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ChannelType } = require('discord.js');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
-const { getGuildConfig, updateGuildConfig, isManager, getRoleEntry, addRoleEntry, deleteRoleEntry, restoreRoleEntry, getGuildRoles, getDeletedRoles, getDeletedRoleEntry, removeDeletedRoleEntry, findRoleByOwner, formatDuration, getRoleResetDate } = require('../utils/customRolesSystem.js');
+const { getGuildConfig, updateGuildConfig, isManager, isCustomRolesChannelAllowed, getRoleEntry, addRoleEntry, deleteRoleEntry, restoreRoleEntry, getGuildRoles, getDeletedRoles, getDeletedRoleEntry, removeDeletedRoleEntry, findRoleByOwner, formatDuration, getRoleResetDate } = require('../utils/customRolesSystem.js');
 const { getDatabase } = require('../utils/database.js');
 const fs = require('fs');
 const path = require('path');
@@ -645,6 +645,10 @@ async function executeRolesSettings(message, args, { client, BOT_OWNERS }) {
   if (isUserBlocked(message.author.id)) return;
 
   const guildConfig = getGuildConfig(message.guild.id);
+  if (!isCustomRolesChannelAllowed(guildConfig, message.channel.id)) {
+    await message.reply('**❌ لا يمكن استخدام أوامر الرولات الخاصة في هذا الشات.**').catch(() => {});
+    return;
+  }
   const hasPermission = isManager(message.member, guildConfig, BOT_OWNERS);
   if (!hasPermission) {
     await message.react('❌').catch(() => {});
@@ -882,6 +886,10 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
 
   const guildConfig = interaction.guild ? getGuildConfig(interaction.guild.id) : null;
   const isAdminUser = guildConfig ? isManager(interaction.member, guildConfig, BOT_OWNERS) : false;
+  if (interaction.channelId && !isCustomRolesChannelAllowed(guildConfig, interaction.channelId)) {
+    await interaction.reply({ content: '❌ لا يمكن استخدام أوامر الرولات الخاصة في هذا الشات.', ephemeral: true }).catch(() => {});
+    return;
+  }
 
   if (interaction.isModalSubmit() && interaction.customId.startsWith('customroles_panel_image_modal_')) {
     const parts = interaction.customId.split('_');

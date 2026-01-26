@@ -1,7 +1,7 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, UserSelectMenuBuilder, PermissionsBitField } = require('discord.js');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
-const { findRoleByOwner, getRoleEntry, addRoleEntry, deleteRoleEntry, getGuildConfig, updateGuildConfig } = require('../utils/customRolesSystem.js');
+const { findRoleByOwner, getRoleEntry, addRoleEntry, deleteRoleEntry, getGuildConfig, updateGuildConfig, isCustomRolesChannelAllowed } = require('../utils/customRolesSystem.js');
 const { resolveIconBuffer, applyRoleIcon } = require('../utils/roleIconUtils.js');
 const moment = require('moment-timezone');
 
@@ -747,6 +747,11 @@ async function handleTransfer({ channel, userId, role, roleEntry, interaction, p
 }
 
 async function startMyRoleFlow({ member, channel, client }) {
+  const guildConfig = getGuildConfig(member.guild.id);
+  if (!isCustomRolesChannelAllowed(guildConfig, channel.id)) {
+    await sendTemp(channel, '**❌ لا يمكن استخدام أوامر الرولات الخاصة في هذا الشات.**');
+    return;
+  }
   if (activeRolePanels.has(member.id)) {
     const activePanel = activeRolePanels.get(member.id);
     const existingChannel = await member.guild.channels.fetch(activePanel.channelId).catch(() => null);
@@ -901,12 +906,22 @@ async function startMyRoleFlow({ member, channel, client }) {
 
 async function execute(message, args, { client, BOT_OWNERS }) {
   if (isUserBlocked(message.author.id)) return;
+  const guildConfig = getGuildConfig(message.guild.id);
+  if (!isCustomRolesChannelAllowed(guildConfig, message.channel.id)) {
+    await message.reply('**❌ لا يمكن استخدام أوامر الرولات الخاصة في هذا الشات.**').catch(() => {});
+    return;
+  }
 
   await startMyRoleFlow({ member: message.member, channel: message.channel, client });
 }
 
 async function handleMemberAction(interaction, action, client) {
   if (!interaction.guild) return;
+  const guildConfig = getGuildConfig(interaction.guild.id);
+  if (!isCustomRolesChannelAllowed(guildConfig, interaction.channelId)) {
+    await interaction.reply({ content: '❌ لا يمكن استخدام أوامر الرولات الخاصة في هذا الشات.', ephemeral: true }).catch(() => {});
+    return;
+  }
   const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
   if (!member) {
     await interaction.reply({ content: '❌ العضو غير موجود.', ephemeral: true });

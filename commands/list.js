@@ -1,7 +1,7 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, EmbedBuilder } = require('discord.js');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
-const { getGuildConfig, getGuildRoles, getRoleEntry, findRoleByOwner, formatDuration, getRoleResetDate, isManager } = require('../utils/customRolesSystem.js');
+const { getGuildConfig, getGuildRoles, getRoleEntry, findRoleByOwner, formatDuration, getRoleResetDate, isManager, isCustomRolesChannelAllowed } = require('../utils/customRolesSystem.js');
 const { getDatabase } = require('../utils/database.js');
 const moment = require('moment-timezone');
 
@@ -107,6 +107,10 @@ async function execute(message, args, { client, BOT_OWNERS }) {
   if (isUserBlocked(message.author.id)) return;
 
   const guildConfig = getGuildConfig(message.guild.id);
+  if (!isCustomRolesChannelAllowed(guildConfig, message.channel.id)) {
+    await message.reply('**❌ لا يمكن استخدام أوامر الرولات الخاصة في هذا الشات.**').catch(() => {});
+    return;
+  }
   const canManage = isManager(message.member, guildConfig, BOT_OWNERS);
   if (!canManage) {
     await message.react('❌').catch(() => {});

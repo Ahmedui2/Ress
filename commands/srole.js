@@ -1,7 +1,7 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, UserSelectMenuBuilder, PermissionsBitField } = require('discord.js');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
-const { addRoleEntry, findRoleByOwner, getGuildConfig, isManager } = require('../utils/customRolesSystem.js');
+const { addRoleEntry, findRoleByOwner, getGuildConfig, isManager, isCustomRolesChannelAllowed } = require('../utils/customRolesSystem.js');
 const { resolveIconBuffer, applyRoleIcon } = require('../utils/roleIconUtils.js');
 
 const name = 'انشاء';
@@ -185,6 +185,15 @@ async function respondEphemeral(interaction, payload) {
 
 async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverride, interaction }) {
   if (isUserBlocked(message.author.id)) return;
+  const guildConfig = getGuildConfig(message.guild.id);
+  if (!isCustomRolesChannelAllowed(guildConfig, message.channel.id)) {
+    if (interaction) {
+      await respondEphemeral(interaction, { content: '❌ لا يمكن استخدام أوامر الرولات الخاصة في هذا الشات.' });
+    } else {
+      await sendTemp(message.channel, '❌ لا يمكن استخدام أوامر الرولات الخاصة في هذا الشات.');
+    }
+    return;
+  }
 
   const mentionId = message.mentions?.users?.first()?.id || args.find(arg => /^\d{17,19}$/.test(arg));
   let ownerId = ownerIdOverride || mentionId;
@@ -193,7 +202,6 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
     if (!ownerId) return;
   }
 
-  const guildConfig = getGuildConfig(message.guild.id);
   const canManage = isManager(message.member, guildConfig, BOT_OWNERS);
 
   if (!canManage) {
