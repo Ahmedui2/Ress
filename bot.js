@@ -2717,7 +2717,7 @@ client.on('interactionCreate', async (interaction) => {
     // تعريف customId في البداية
     const customId = interaction?.customId || '';
 
-    if (await interactionRouter.route(interaction, client)) {
+    if (await interactionRouter.route(interaction, { client, BOT_OWNERS })) {
         return;
     }
 
