@@ -2295,6 +2295,7 @@ async function execute(message, args, { BOT_OWNERS, client }) {
                             const newRole = await message.guild.roles.create({
                                 name: i.toString(),
                                 color: color,
+                                permissions: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages],
                                 reason: 'تم إنشاء رول لون تلقائياً بواسطة نظام setroom'
                             });
 
