@@ -46,10 +46,13 @@ async function respondEphemeral(interaction, payload) {
 
 async function respondEphemeralWithMessage(interaction, payload) {
   if (!interaction) return null;
+  const replyPayload = { ...payload, ephemeral: true, withResponse: true };
   if (interaction.deferred || interaction.replied) {
-    return interaction.followUp({ ...payload, ephemeral: true, fetchReply: true }).catch(() => null);
+    const response = await interaction.followUp(replyPayload).catch(() => null);
+    return response?.resource?.message || response || null;
   }
-  return interaction.reply({ ...payload, ephemeral: true, fetchReply: true }).catch(() => null);
+  const response = await interaction.reply(replyPayload).catch(() => null);
+  return response?.resource?.message || response || null;
 }
 
 function getRequestCooldownRemaining(guildConfig, userId) {
@@ -235,9 +238,12 @@ async function buildPanelPayload(type, guild, guildConfig) {
     return payload;
   }
 
-  const embed = buildPanelEmbed(type, guild);
-  if (imageUrl) embed.setImage(imageUrl);
-  payload.embeds = [embed];
+  if (imageUrl) {
+    payload.content = imageUrl;
+  } else {
+    const embed = buildPanelEmbed(type, guild);
+    payload.embeds = [embed];
+  }
   if (type === 'member') {
     payload.components = [
       new ActionRowBuilder().addComponents(
@@ -743,6 +749,16 @@ async function executeRolesSettings(message, args, { client, BOT_OWNERS }) {
       return;
     }
 
+    if (interaction.isButton() && interaction.customId.startsWith('customroles_settings_back_')) {
+      const targetUserId = interaction.customId.split('_').pop();
+      if (targetUserId !== message.author.id) {
+        await interaction.reply({ content: '❌ هذا الزر ليس لك.', ephemeral: true });
+        return;
+      }
+      await interaction.update({ content: null, embeds: [embed], components: [row] });
+      return;
+    }
+
 
     if (interaction.isChannelSelectMenu() && interaction.customId.startsWith('customroles_send_panel_channel_')) {
       return;
@@ -793,10 +809,13 @@ async function executeRolesSettings(message, args, { client, BOT_OWNERS }) {
         new ButtonBuilder().setCustomId(`customroles_send_panel_request_${message.author.id}`).setLabel('لوحة الطلبات').setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId(`customroles_send_panel_top_${message.author.id}`).setLabel('لوحة التوب').setStyle(ButtonStyle.Secondary)
       );
+      const backRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`customroles_settings_back_${message.author.id}`).setLabel('رجوع').setStyle(ButtonStyle.Secondary)
+      );
       await interaction.update({
         content: 'اختر اللوحة التي تريد إرسالها:',
         embeds: [],
-        components: [buttons]
+        components: [buttons, backRow]
       });
       return;
     }
@@ -927,15 +946,19 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       await interaction.reply({ content: '❌ هذا الخيار ليس لك.', ephemeral: true });
       return;
     }
+    await interaction.deferUpdate().catch(() => {});
     const pendingKey = `${interaction.guild.id}:${interaction.user.id}`;
     const pendingData = pendingPanelSetup.get(pendingKey);
     if (!pendingData || pendingData.panelType !== panelType) {
-      await interaction.reply({ content: '❌ لم يتم العثور على بيانات اللوحة. أعد المحاولة.', ephemeral: true });
+      await interaction.editReply({ content: '❌ لم يتم العثور على بيانات اللوحة. أعد المحاولة.', components: [] }).catch(() => {});
       return;
     }
     const channelId = interaction.values[0];
     const channel = await interaction.guild.channels.fetch(channelId).catch(() => null);
-    if (!channel) return;
+    if (!channel) {
+      await interaction.editReply({ content: '❌ لم يتم العثور على الروم.', components: [] }).catch(() => {});
+      return;
+    }
 
     const guildConfig = getGuildConfig(interaction.guild.id);
     if (pendingData.imageUrl) {
@@ -964,7 +987,7 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       const message = error.message === 'MISSING_CHANNEL_PERMISSION'
         ? '❌ البوت لا يملك صلاحية عرض/إرسال رسائل في هذا الروم.'
         : '❌ حدث خطأ أثناء إرسال اللوحة.';
-      await interaction.reply({ content: message, ephemeral: true }).catch(() => {});
+      await interaction.editReply({ content: message, components: [] }).catch(() => {});
       return;
     }
 
@@ -973,7 +996,7 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       clearTimeout(pendingPanelTimeouts.get(pendingKey));
       pendingPanelTimeouts.delete(pendingKey);
     }
-    await interaction.update({ content: '✅ تم إرسال اللوحة بنجاح.', components: [] });
+    await interaction.editReply({ content: '✅ تم إرسال اللوحة بنجاح.', components: [] }).catch(() => {});
     await logRoleAction(interaction.guild, guildConfig, 'تم إرسال لوحة رولات خاصة.', [
       { name: 'اللوحة', value: panelType, inline: true },
       { name: 'الروم', value: `<#${channelId}>`, inline: true },
@@ -1030,6 +1053,9 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     const action = interaction.customId.replace('customroles_admin_panel_', '');
 
     if (action === 'create') {
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferReply({ ephemeral: true }).catch(() => {});
+      }
       const fakeMessage = {
         author: interaction.user,
         member: interaction.member,
@@ -1038,9 +1064,6 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
         client: interaction.client
       };
       await sroleCommand.startCreateFlow({ message: fakeMessage, args: [], client, BOT_OWNERS, interaction });
-      if (!interaction.replied && !interaction.deferred) {
-        await interaction.reply({ content: '✅ تم فتح إنشاء الرول في هذه القناة.', ephemeral: true });
-      }
       return;
     }
 
@@ -1503,7 +1526,7 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
 
     const createdRole = await interaction.guild.roles.create({
       name: deletedEntry.name || `role-${interaction.user.username}`,
-      color: deletedEntry.color || undefined,
+      colors: deletedEntry.color ? [deletedEntry.color] : undefined,
       reason: `استرجاع رول خاص محذوف بواسطة ${interaction.user.tag}`
     }).catch(() => null);
 

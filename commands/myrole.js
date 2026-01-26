@@ -1,7 +1,7 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, UserSelectMenuBuilder, PermissionsBitField } = require('discord.js');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
-const { findRoleByOwner, addRoleEntry, deleteRoleEntry, getGuildConfig, updateGuildConfig } = require('../utils/customRolesSystem.js');
+const { findRoleByOwner, getRoleEntry, addRoleEntry, deleteRoleEntry, getGuildConfig, updateGuildConfig } = require('../utils/customRolesSystem.js');
 const { resolveIconBuffer, applyRoleIcon } = require('../utils/roleIconUtils.js');
 const moment = require('moment-timezone');
 
@@ -81,10 +81,13 @@ async function respondEphemeral(interaction, payload) {
 
 async function respondEphemeralWithMessage(interaction, payload) {
   if (!interaction) return null;
+  const replyPayload = { ...payload, ephemeral: true, withResponse: true };
   if (interaction.deferred || interaction.replied) {
-    return interaction.followUp({ ...payload, ephemeral: true, fetchReply: true }).catch(() => null);
+    const response = await interaction.followUp(replyPayload).catch(() => null);
+    return response?.resource?.message || response || null;
   }
-  return interaction.reply({ ...payload, ephemeral: true, fetchReply: true }).catch(() => null);
+  const response = await interaction.reply(replyPayload).catch(() => null);
+  return response?.resource?.message || response || null;
 }
 
 function scheduleDelete(message, delay = 180000) {
@@ -798,7 +801,10 @@ async function startMyRoleFlow({ member, channel, client }) {
     const resetMenu = async () => {
       const latestConfig = getGuildConfig(member.guild.id);
       const hasBackup = Boolean(getIconBackupState(latestConfig, member.id));
-      await sentMessage.edit({ components: buildControlComponents(sessionId, hasBackup) }).catch(() => {});
+      const latestEntry = getRoleEntry(role.id) || roleEntry;
+      const latestRole = member.guild.roles.cache.get(role.id) || role;
+      const refreshed = buildControlEmbed(latestEntry, latestRole, latestRole.members.size);
+      await sentMessage.edit({ embeds: [refreshed], components: buildControlComponents(sessionId, hasBackup) }).catch(() => {});
     };
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('myrole_action_')) {
       const session = interaction.customId.split('_').slice(2).join('_');

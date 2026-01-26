@@ -230,6 +230,12 @@ function getResetDate(activityResetAt) {
   return moment(activityResetAt).tz('Asia/Riyadh').format('YYYY-MM-DD');
 }
 
+function getRoleResetDate(guildConfig, roleId) {
+  if (!guildConfig) return null;
+  const roleResetAt = guildConfig.roleActivityResetAt?.[roleId] || guildConfig.activityResetAt;
+  return getResetDate(roleResetAt);
+}
+
 module.exports = {
   getRolesData,
   getConfigData,
@@ -247,6 +253,7 @@ module.exports = {
   isManager,
   formatDuration,
   getResetDate,
+  getRoleResetDate,
   rolesPath,
   configPath
 };

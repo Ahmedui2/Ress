@@ -44,6 +44,13 @@ async function renderRoleDetails(message, roleEntry) {
   const resetDate = getRoleResetDate(guildConfig, roleEntry.roleId);
 
   const activity = await sumActivity(members.map(member => member.id), resetDate);
+  const createdAt = roleEntry.createdAt
+    ? moment(roleEntry.createdAt).tz('Asia/Riyadh').format('YYYY-MM-DD HH:mm')
+    : 'غير معروف';
+  const createdBy = roleEntry.createdBy ? `<@${roleEntry.createdBy}>` : 'غير معروف';
+  const updatedAt = roleEntry.updatedAt
+    ? moment(roleEntry.updatedAt).tz('Asia/Riyadh').format('YYYY-MM-DD HH:mm')
+    : null;
 
   const embed = new EmbedBuilder()
     .setTitle('📌 تفاصيل رول خاص') 
@@ -53,7 +60,9 @@ async function renderRoleDetails(message, roleEntry) {
       `الأعضاء: ${members.length}\n` +
       `تفاعل الشات: ${activity.messages} رسالة\n` +
       `تفاعل الفويس: ${formatDuration(activity.voice)}\n` +
-      `الإنشاء: ${moment(roleEntry.createdAt).tz('Asia/Riyadh').format('YYYY-MM-DD HH:mm')}`
+      `الإنشاء: ${createdAt}\n` +
+      `بواسطة: ${createdBy}` +
+      (updatedAt ? `\nآخر تحديث: ${updatedAt}` : '')
     )
     .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
     .setThumbnail(message.client.user.displayAvatarURL({ size: 128 }));
