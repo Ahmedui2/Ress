@@ -216,18 +216,37 @@ function isManager(member, config, botOwners = []) {
   return false;
 }
 
+function isCustomRolesChannelAllowed(guildConfig, channelId) {
+  if (!guildConfig || !channelId) return true;
+  const allowed = guildConfig.allowedChannels || [];
+  const blocked = guildConfig.blockedChannels || [];
+  if (allowed.length > 0) {
+    return allowed.includes(channelId);
+  }
+  if (blocked.length > 0) {
+    return !blocked.includes(channelId);
+  }
+  return true;
+}
+
 function formatDuration(ms) {
-  if (!ms || ms <= 0) return '0 د';
+  if (!ms || ms <= 0) return '0m';
   const totalSeconds = Math.floor(ms / 1000);
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
-  if (hours > 0) return `${hours} س ${minutes} د`;
-  return `${minutes} د`;
+  if (hours > 0) return `${hours}h  ${minutes}m`;
+  return `${minutes}m`;
 }
 
 function getResetDate(activityResetAt) {
   if (!activityResetAt) return null;
   return moment(activityResetAt).tz('Asia/Riyadh').format('YYYY-MM-DD');
+}
+
+function getRoleResetDate(guildConfig, roleId) {
+  if (!guildConfig) return null;
+  const roleResetAt = guildConfig.roleActivityResetAt?.[roleId] || guildConfig.activityResetAt;
+  return getResetDate(roleResetAt);
 }
 
 module.exports = {
@@ -245,8 +264,10 @@ module.exports = {
   getDeletedRoleEntry,
   removeDeletedRoleEntry,
   isManager,
+  isCustomRolesChannelAllowed,
   formatDuration,
   getResetDate,
+  getRoleResetDate,
   rolesPath,
   configPath
 };
