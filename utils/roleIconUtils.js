@@ -119,9 +119,21 @@ async function resolveIconBuffer(input, attachments = []) {
 async function applyRoleIcon(role, buffer) {
   const updatedRole = await role.setIcon(buffer).catch(() => null);
   const roleId = updatedRole?.id || role?.id;
-  const refreshedRole = roleId
-    ? await role.guild.roles.fetch(roleId).catch(() => null)
-    : null;
+  if (!roleId) {
+    throw new Error('icon_not_applied');
+  }
+
+  const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+  let refreshedRole = null;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (attempt > 0) {
+      await wait(750);
+    }
+    refreshedRole = await role.guild.roles.fetch(roleId).catch(() => null);
+    if (refreshedRole?.icon) break;
+  }
+
   if (!refreshedRole || !refreshedRole.icon) {
     throw new Error('icon_not_applied');
   }
