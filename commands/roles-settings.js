@@ -15,6 +15,7 @@ const activeTopSchedules = new Map();
 const activePanelCleanups = new Map();
 const pendingPanelSetup = new Map();
 const pendingPanelTimeouts = new Map();
+const pendingBulkDeletes = new Map();
 const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
 const REQUEST_REAPPLY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const botConfigPath = path.join(__dirname, '..', 'data', 'botConfig.json');
@@ -158,6 +159,24 @@ function buildAdminRoleMenu(action, userId, guild) {
       value: role.id
     })));
 
+  return new ActionRowBuilder().addComponents(menu);
+}
+
+function buildAdminBulkDeleteMenu(userId, guild) {
+  const roles = getGuildRoles(guild.id)
+    .map(entry => guild.roles.cache.get(entry.roleId))
+    .filter(Boolean)
+    .slice(0, 25);
+  if (roles.length === 0) return null;
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`customroles_admin_bulkdelete_${userId}`)
+    .setPlaceholder('اختر الرولات المطلوب حذفها...')
+    .setMinValues(1)
+    .setMaxValues(Math.min(25, roles.length))
+    .addOptions(roles.map(role => ({
+      label: role.name.slice(0, 100),
+      value: role.id
+    })));
   return new ActionRowBuilder().addComponents(menu);
 }
 
@@ -1055,6 +1074,20 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       return;
     }
 
+    if (action === 'delete') {
+      const roleMenu = buildAdminBulkDeleteMenu(interaction.user.id, interaction.guild);
+      if (!roleMenu) {
+        await interaction.reply({ content: '❌ لا توجد رولات خاصة مسجلة حالياً.', ephemeral: true });
+        return;
+      }
+      await interaction.reply({
+        content: 'اختر الرولات المطلوب حذفها:',
+        components: [roleMenu],
+        ephemeral: true
+      });
+      return;
+    }
+
     const roleMenu = buildAdminRoleMenu(action, interaction.user.id, interaction.guild);
     if (!roleMenu) {
       await interaction.reply({ content: '❌ لا توجد رولات خاصة مسجلة حالياً.', ephemeral: true });
@@ -1259,6 +1292,107 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     return;
   }
 
+  if (interaction.isStringSelectMenu() && interaction.customId.startsWith('customroles_admin_bulkdelete_')) {
+    if (!isAdminUser) {
+      await interaction.reply({ content: '❌ لا تملك صلاحية.', ephemeral: true });
+      return;
+    }
+    const targetUserId = interaction.customId.split('_').pop();
+    if (targetUserId !== interaction.user.id) {
+      await interaction.reply({ content: '❌ هذا الاختيار ليس لك.', ephemeral: true });
+      return;
+    }
+    await interaction.deferReply({ ephemeral: true });
+    const roleIds = interaction.values;
+    const summaryLines = [];
+    const embed = new EmbedBuilder()
+      .setTitle('🗑️ تأكيد حذف الرولات')
+      .setDescription('اسم الرول - منشن المالك\n**عدد الأعضاء:**')
+      .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136');
+
+    for (const roleId of roleIds) {
+      const roleEntry = getRoleEntry(roleId);
+      const role = interaction.guild.roles.cache.get(roleId);
+      if (!roleEntry || !role) continue;
+      const ownerLine = `<@${roleEntry.ownerId}>`;
+      const membersCount = role.members.size;
+      embed.addFields({
+        name: `${role.name} - ${ownerLine}`,
+        value: `عدد الأعضاء: ${membersCount}`,
+        inline: false
+      });
+      summaryLines.push(roleId);
+    }
+
+    if (!summaryLines.length) {
+      await interaction.editReply({ content: '❌ لم يتم العثور على رولات صالحة للحذف.' });
+      return;
+    }
+
+    const sessionId = `${interaction.user.id}_${Date.now()}`;
+    pendingBulkDeletes.set(sessionId, {
+      roleIds: summaryLines,
+      requestedBy: interaction.user.id,
+      guildId: interaction.guild.id
+    });
+    setTimeout(() => pendingBulkDeletes.delete(sessionId), 120000);
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`customroles_bulkdelete_confirm_${sessionId}`).setLabel('تأكيد الحذف').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId(`customroles_bulkdelete_cancel_${sessionId}`).setLabel('إلغاء').setStyle(ButtonStyle.Secondary)
+    );
+    await interaction.editReply({ embeds: [embed], components: [row] });
+    return;
+  }
+
+  if (interaction.customId.startsWith('customroles_bulkdelete_confirm_')) {
+    if (!isAdminUser) {
+      await interaction.reply({ content: '❌ لا تملك صلاحية.', ephemeral: true });
+      return;
+    }
+    await interaction.deferUpdate();
+    const sessionId = interaction.customId.replace('customroles_bulkdelete_confirm_', '');
+    const pending = pendingBulkDeletes.get(sessionId);
+    if (!pending || pending.requestedBy !== interaction.user.id) {
+      await interaction.editReply({ content: '❌ انتهت صلاحية العملية أو ليست لك.', components: [] }).catch(() => {});
+      return;
+    }
+
+    let deletedCount = 0;
+    for (const roleId of pending.roleIds) {
+      const roleEntry = getRoleEntry(roleId);
+      const role = interaction.guild.roles.cache.get(roleId);
+      if (role) {
+        if (!role.editable) continue;
+        await role.delete(`حذف عدة رولات بواسطة ${interaction.user.tag}`).catch(() => {});
+      }
+      if (roleEntry) {
+        deleteRoleEntry(roleId, interaction.user.id);
+        deletedCount += 1;
+      }
+    }
+    pendingBulkDeletes.delete(sessionId);
+    await interaction.editReply({
+      embeds: [buildAdminSummaryEmbed('✅ تم حذف الرولات المحددة.', [
+        { name: 'عدد الرولات', value: `${deletedCount}`, inline: true },
+        { name: 'بواسطة', value: `<@${interaction.user.id}>`, inline: true }
+      ])],
+      components: []
+    }).catch(() => {});
+    return;
+  }
+
+  if (interaction.customId.startsWith('customroles_bulkdelete_cancel_')) {
+    if (!isAdminUser) {
+      await interaction.reply({ content: '❌ لا تملك صلاحية.', ephemeral: true });
+      return;
+    }
+    await interaction.deferUpdate();
+    const sessionId = interaction.customId.replace('customroles_bulkdelete_cancel_', '');
+    pendingBulkDeletes.delete(sessionId);
+    await interaction.editReply({ content: 'تم إلغاء الحذف.', components: [] }).catch(() => {});
+    return;
+  }
   if (interaction.customId.startsWith('customroles_admin_action_')) {
     if (!isAdminUser) {
       await interaction.reply({ content: '❌ لا تملك صلاحية.', ephemeral: true });
