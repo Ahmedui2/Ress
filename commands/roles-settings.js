@@ -1,7 +1,7 @@
 const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder, RoleSelectMenuBuilder, UserSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ChannelType, PermissionsBitField } = require('discord.js');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
-const { getGuildConfig, updateGuildConfig, isManager, isCustomRolesChannelAllowed, getRoleEntry, addRoleEntry, deleteRoleEntry, restoreRoleEntry, getGuildRoles, getDeletedRoles, getDeletedRoleEntry, removeDeletedRoleEntry, findRoleByOwner, formatDuration, getRoleResetDate } = require('../utils/customRolesSystem.js');
+const { getGuildConfig, getConfigData, updateGuildConfig, isManager, isCustomRolesChannelAllowed, getRoleEntry, addRoleEntry, deleteRoleEntry, restoreRoleEntry, getGuildRoles, getDeletedRoles, getDeletedRoleEntry, removeDeletedRoleEntry, findRoleByOwner, formatDuration, getRoleResetDate } = require('../utils/customRolesSystem.js');
 const { getDatabase } = require('../utils/database.js');
 const fs = require('fs');
 const path = require('path');
@@ -1583,7 +1583,7 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
 
     const createdRole = await interaction.guild.roles.create({
       name: deletedEntry.name || `role-${interaction.user.username}`,
-      colors: deletedEntry.color ? [deletedEntry.color] : undefined,
+      color: deletedEntry.color || undefined,
       permissions: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages],
       reason: `استرجاع رول خاص محذوف بواسطة ${interaction.user.tag}`
     }).catch(() => null);
@@ -2132,7 +2132,7 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
 }
 
 function restoreTopSchedules(client) {
-  const configData = require('../utils/customRolesSystem.js').getConfigData();
+  const configData = getConfigData();
   for (const [guildId, config] of Object.entries(configData)) {
     if (!config.topEnabled || !config.topChannelId || !config.topMessageId) continue;
     const guild = client.guilds.cache.get(guildId);
@@ -2143,10 +2143,30 @@ function restoreTopSchedules(client) {
   }
 }
 
+function restorePanelCleanups(client) {
+  const configData = getConfigData();
+  for (const [guildId, config] of Object.entries(configData)) {
+    const guild = client.guilds.cache.get(guildId);
+    if (!guild) continue;
+    const panelConfigs = [
+      { channelId: config.memberControlChannelId, messageId: config.memberPanelMessageId },
+      { channelId: config.adminControlChannelId, messageId: config.adminPanelMessageId },
+      { channelId: config.topChannelId, messageId: config.topMessageId }
+    ];
+
+    for (const { channelId, messageId } of panelConfigs) {
+      if (channelId && messageId) {
+        startPanelCleanup(guild, channelId, messageId);
+      }
+    }
+  }
+}
+
 module.exports = {
   executeRolesSettings,
   handleCustomRolesInteraction,
-  restoreTopSchedules
+  restoreTopSchedules,
+  restorePanelCleanups
 };
 
 interactionRouter.register('customroles_', async (interaction, context = {}) => {

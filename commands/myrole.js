@@ -81,6 +81,35 @@ async function respondEphemeral(interaction, payload) {
   }
 }
 
+function isInteractionRepliable(interaction) {
+  if (!interaction) return false;
+  if (typeof interaction.isRepliable === 'function') {
+    return interaction.isRepliable();
+  }
+  return true;
+}
+
+async function safeReply(interaction, payload) {
+  if (!isInteractionRepliable(interaction)) return false;
+  if (interaction.deferred || interaction.replied) {
+    await interaction.followUp({ ...payload, ephemeral: true }).catch(() => {});
+    return true;
+  }
+  await interaction.reply({ ...payload, ephemeral: true }).catch(() => {});
+  return true;
+}
+
+async function safeDeferReply(interaction) {
+  if (!isInteractionRepliable(interaction)) return false;
+  if (interaction.deferred || interaction.replied) return true;
+  try {
+    await interaction.deferReply({ ephemeral: true });
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 async function respondEphemeralWithMessage(interaction, payload) {
   if (!interaction) return null;
   if (interaction.deferred || interaction.replied) {
@@ -159,14 +188,21 @@ function buildControlComponents(sessionId, hasIconBackup) {
 }
 
 async function refreshPanelMessage(panelMessage, roleEntry, role) {
-  if (!panelMessage?.editable) return;
+  if (!panelMessage?.channel || !panelMessage?.id) return;
+  const latestMessage = await panelMessage.channel.messages.fetch(panelMessage.id).catch(error => {
+    if (error?.code === 10008) return null;
+    console.error(`❌ Failed to fetch panel message ${panelMessage.id}:`, error);
+    return null;
+  });
+  if (!latestMessage?.editable) return;
   const refreshedRole = await role.guild.roles.fetch(role.id).catch(error => {
     console.error(`❌ Failed to fetch role ${role.id} for panel refresh:`, error);
     return role;
   });
   const activeRole = refreshedRole || role;
   const refreshed = buildControlEmbed(roleEntry, activeRole, activeRole.members.size);
-  await panelMessage.edit({ embeds: [refreshed], components: panelMessage.components }).catch(error => {
+  await latestMessage.edit({ embeds: [refreshed], components: latestMessage.components }).catch(error => {
+    if (error?.code === 10008) return;
     console.error(`❌ Failed to edit panel message ${panelMessage.id}:`, error);
   });
 }
@@ -908,26 +944,28 @@ async function handleMemberAction(interaction, action, client) {
   if (!interaction.guild) return;
   const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
   if (!member) {
-    await interaction.reply({ content: '**❌ العضو غير موجود.**', ephemeral: true });
+    await safeReply(interaction, { content: '**❌ العضو غير موجود.**' });
     return;
   }
   const roleEntry = findRoleByOwner(member.guild.id, member.id);
   if (!roleEntry) {
-    await interaction.reply({ content: '**❌ ليس لديك رول خاص.**', ephemeral: true });
+    await safeReply(interaction, { content: '**❌ ليس لديك رول خاص.**' });
     return;
   }
   const role = member.guild.roles.cache.get(roleEntry.roleId);
   if (!role) {
-    await interaction.reply({ content: '**❌ لم يتم العثور على الرول في السيرفر.**', ephemeral: true });
+    await safeReply(interaction, { content: '**❌ لم يتم العثور على الرول في السيرفر.**' });
     return;
   }
+  if (!isInteractionRepliable(interaction)) return;
 
   if (action === 'members') {
     await handleMembersList({ channel: interaction.channel, role, interaction, roleEntry });
     return;
   }
   if (action === 'name') {
-    await interaction.deferReply({ ephemeral: true });
+    const deferred = await safeDeferReply(interaction);
+    if (!deferred) return;
     await handleNameChange({ channel: interaction.channel, userId: member.id, role, roleEntry, interaction });
     return;
   }
@@ -936,32 +974,37 @@ async function handleMemberAction(interaction, action, client) {
     return;
   }
   if (action === 'icon') {
-    await interaction.deferReply({ ephemeral: true });
+    const deferred = await safeDeferReply(interaction);
+    if (!deferred) return;
     await handleIconChange({ channel: interaction.channel, userId: member.id, role, roleEntry, interaction });
     return;
   }
   if (action === 'transfer') {
-    await interaction.deferReply({ ephemeral: true });
+    const deferred = await safeDeferReply(interaction);
+    if (!deferred) return;
     await handleTransfer({ channel: interaction.channel, userId: member.id, role, roleEntry, interaction });
     return;
   }
   if (action === 'manage') {
-    await interaction.deferReply({ ephemeral: true });
+    const deferred = await safeDeferReply(interaction);
+    if (!deferred) return;
     await handleManageMembers({ channel: interaction.channel, userId: member.id, role, roleEntry, interaction });
     return;
   }
   if (action === 'delete') {
-    await interaction.deferReply({ ephemeral: true });
+    const deferred = await safeDeferReply(interaction);
+    if (!deferred) return;
     await handleDeleteRole({ channel: interaction.channel, interaction, role, roleEntry });
     return;
   }
   if (action === 'toggle_icons') {
-    await interaction.deferReply({ ephemeral: true });
+    const deferred = await safeDeferReply(interaction);
+    if (!deferred) return;
     await handleToggleIconRoles({ channel: interaction.channel, member, role, roleEntry, interaction });
     return;
   }
 
-  await interaction.reply({ content: '❌ خيار غير معروف.', ephemeral: true });
+  await safeReply(interaction, { content: '❌ خيار غير معروف.' });
 }
 
 async function runRoleAction({ interaction, action, roleEntry, role, panelMessage }) {

@@ -25,6 +25,17 @@ async function sendTemp(channel, payload, delay = 5000) {
   return message;
 }
 
+async function safeDeferUpdate(interaction) {
+  if (!interaction) return false;
+  if (interaction.deferred || interaction.replied) return true;
+  try {
+    await interaction.deferUpdate();
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 async function respondEphemeral(interaction, payload) {
   if (!interaction) return;
   if (interaction.deferred || interaction.replied) {
@@ -361,7 +372,7 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
       try {
         const role = await message.guild.roles.create({
           name: state.name,
-          colors: state.color ? [state.color] : undefined,
+          color: state.color || undefined,
           permissions: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages],
           reason: `إنشاء رول خاص بواسطة ${message.author.tag}`
         });
@@ -450,14 +461,16 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
     if (interaction.customId === `srole_color_select_${sessionId}`) {
       const selected = interaction.values[0];
       if (selected === 'custom') {
-        await interaction.deferUpdate();
+        const deferred = await safeDeferUpdate(interaction);
+        if (!deferred) return;
         const response = await promptForMessage(message.channel, message.author.id, '**اكتب كود اللون (Hex) مثل #ff0000:**', interaction);
         if (response && /^#?[0-9A-Fa-f]{6}$/.test(response.content.trim())) {
           const value = response.content.trim().startsWith('#') ? response.content.trim() : `#${response.content.trim()}`;
           state.color = value;
         }
       } else {
-        await interaction.deferUpdate();
+        const deferred = await safeDeferUpdate(interaction);
+        if (!deferred) return;
         state.color = selected;
       }
 
