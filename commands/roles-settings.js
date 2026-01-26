@@ -2148,14 +2148,16 @@ function restorePanelCleanups(client) {
   for (const [guildId, config] of Object.entries(configData)) {
     const guild = client.guilds.cache.get(guildId);
     if (!guild) continue;
-    if (config.memberControlChannelId && config.memberPanelMessageId) {
-      startPanelCleanup(guild, config.memberControlChannelId, config.memberPanelMessageId);
-    }
-    if (config.adminControlChannelId && config.adminPanelMessageId) {
-      startPanelCleanup(guild, config.adminControlChannelId, config.adminPanelMessageId);
-    }
-    if (config.topChannelId && config.topMessageId) {
-      startPanelCleanup(guild, config.topChannelId, config.topMessageId);
+    const panelConfigs = [
+      { channelId: config.memberControlChannelId, messageId: config.memberPanelMessageId },
+      { channelId: config.adminControlChannelId, messageId: config.adminPanelMessageId },
+      { channelId: config.topChannelId, messageId: config.topMessageId }
+    ];
+
+    for (const { channelId, messageId } of panelConfigs) {
+      if (channelId && messageId) {
+        startPanelCleanup(guild, channelId, messageId);
+      }
     }
   }
 }

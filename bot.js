@@ -1301,6 +1301,8 @@ client.once(Events.ClientReady, async () => {
 
 
 
+  const RESTORE_SCHEDULES_DELAY_MS = 5000;
+
   startReminderSystem(client);
 
   setTimeout(() => {
@@ -1311,7 +1313,7 @@ client.once(Events.ClientReady, async () => {
     } catch (error) {
       console.error('❌ خطأ في استعادة جدولة لوحات الرولات الخاصة:', error);
     }
-  }, 5000);
+  }, RESTORE_SCHEDULES_DELAY_MS);
 
         // تحديث صلاحيات اللوق عند بدء البوت
         setTimeout(async () => {
