@@ -34,6 +34,7 @@ const promoteManager = require('./utils/promoteManager');
 const { getRoleEntry, addRoleEntry } = require('./utils/customRolesSystem.js');
 const interactionRouter = require('./utils/interactionRouter');
 const { handleAdminApplicationInteraction } = require('./commands/admin-apply.js');
+const { restoreTopSchedules, restorePanelCleanups } = require('./commands/roles-settings.js');
 
 dotenv.config();
 
@@ -1301,6 +1302,16 @@ client.once(Events.ClientReady, async () => {
 
 
   startReminderSystem(client);
+
+  setTimeout(() => {
+    try {
+      restoreTopSchedules(client);
+      restorePanelCleanups(client);
+      console.log('✅ تم استعادة جدولة لوحات الرولات الخاصة والتنظيف التلقائي.');
+    } catch (error) {
+      console.error('❌ خطأ في استعادة جدولة لوحات الرولات الخاصة:', error);
+    }
+  }, 5000);
 
         // تحديث صلاحيات اللوق عند بدء البوت
         setTimeout(async () => {
