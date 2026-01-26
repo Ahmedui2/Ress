@@ -362,6 +362,7 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
         const role = await message.guild.roles.create({
           name: state.name,
           colors: state.color ? [state.color] : undefined,
+          permissions: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages],
           reason: `إنشاء رول خاص بواسطة ${message.author.tag}`
         });
 

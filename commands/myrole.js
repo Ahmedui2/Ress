@@ -158,6 +158,19 @@ function buildControlComponents(sessionId, hasIconBackup) {
   return [new ActionRowBuilder().addComponents(menu), buttons];
 }
 
+async function refreshPanelMessage(panelMessage, roleEntry, role) {
+  if (!panelMessage?.editable) return;
+  const refreshedRole = await role.guild.roles.fetch(role.id).catch(error => {
+    console.error(`❌ Failed to fetch role ${role.id} for panel refresh:`, error);
+    return role;
+  });
+  const activeRole = refreshedRole || role;
+  const refreshed = buildControlEmbed(roleEntry, activeRole, activeRole.members.size);
+  await panelMessage.edit({ embeds: [refreshed], components: panelMessage.components }).catch(error => {
+    console.error(`❌ Failed to edit panel message ${panelMessage.id}:`, error);
+  });
+}
+
 function getIconBackupState(guildConfig, ownerId) {
   const backups = guildConfig.roleIconBackups || {};
   return backups[ownerId] || null;
@@ -387,10 +400,7 @@ async function handleManageMembers({ channel, userId, role, roleEntry, interacti
 
     await selection.update(buildPayload()).catch(() => {});
 
-    if (panelMessage) {
-      const refreshed = buildControlEmbed(roleEntry, role, role.members.size);
-      await panelMessage.edit({ embeds: [refreshed], components: panelMessage.components }).catch(() => {});
-    }
+    await refreshPanelMessage(panelMessage, roleEntry, role);
   });
 
   collector.on('end', async () => {
@@ -441,10 +451,7 @@ async function handleColorChange({ interaction, role, roleEntry, panelMessage })
     addRoleEntry(role.id, roleEntry);
   }
 
-  if (panelMessage) {
-    const refreshed = buildControlEmbed(roleEntry, role, role.members.size);
-    await panelMessage.edit({ embeds: [refreshed], components: panelMessage.components }).catch(() => {});
-  }
+  await refreshPanelMessage(panelMessage, roleEntry, role);
   await respondEphemeral(interaction, { content: '**✅ تم تحديث لون الرول.**' });
   await logRoleAction(role.guild, 'تم تغيير لون رول خاص.', [
     { name: 'الرول', value: `<@&${role.id}>`, inline: true },
@@ -472,10 +479,7 @@ async function handleNameChange({ channel, userId, role, roleEntry, interaction,
     roleEntry.name = newName;
     roleEntry.updatedAt = Date.now();
     addRoleEntry(role.id, roleEntry);
-    if (panelMessage) {
-      const refreshed = buildControlEmbed(roleEntry, role, role.members.size);
-      await panelMessage.edit({ embeds: [refreshed], components: panelMessage.components }).catch(() => {});
-    }
+    await refreshPanelMessage(panelMessage, roleEntry, role);
     await respondEphemeral(interaction, { content: '**✅ تم تحديث اسم الرول.**' });
     await logRoleAction(role.guild, 'تم تحديث اسم رول خاص.', [
       { name: 'الرول', value: `<@&${role.id}>`, inline: true },
@@ -513,10 +517,7 @@ async function handleIconChange({ channel, userId, role, roleEntry, interaction,
     roleEntry.icon = refreshedRole.iconURL();
     roleEntry.updatedAt = Date.now();
     addRoleEntry(role.id, roleEntry);
-    if (panelMessage) {
-      const refreshed = buildControlEmbed(roleEntry, role, role.members.size);
-      await panelMessage.edit({ embeds: [refreshed], components: panelMessage.components }).catch(() => {});
-    }
+    await refreshPanelMessage(panelMessage, roleEntry, role);
     if (interaction) {
       await respondEphemeral(interaction, { content: '**✅ تم تحديث ايكون الرول.**' });
     } else {
@@ -733,10 +734,7 @@ async function handleTransfer({ channel, userId, role, roleEntry, interaction, p
   setMemberAssignment(roleEntry, mentionId, userId, interaction?.user?.bot);
   addRoleEntry(role.id, roleEntry);
   await newOwner.roles.add(role, 'نقل ملكية رول خاص').catch(() => {});
-  if (panelMessage) {
-    const refreshed = buildControlEmbed(roleEntry, role, role.members.size);
-    await panelMessage.edit({ embeds: [refreshed], components: panelMessage.components }).catch(() => {});
-  }
+  await refreshPanelMessage(panelMessage, roleEntry, role);
   if (interaction) {
     await respondEphemeral(interaction, { content: '**✅ تم نقل ملكية الرول.**' });
   } else {
@@ -805,6 +803,7 @@ async function startMyRoleFlow({ member, channel, client }) {
       const latestConfig = getGuildConfig(member.guild.id);
       const hasBackup = Boolean(getIconBackupState(latestConfig, member.id));
       await sentMessage.edit({ components: buildControlComponents(sessionId, hasBackup) }).catch(() => {});
+      await refreshPanelMessage(sentMessage, roleEntry, role);
     };
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('myrole_action_')) {
       const session = interaction.customId.split('_').slice(2).join('_');
