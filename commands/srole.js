@@ -269,6 +269,21 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
   }
   if (!sentMessage) return;
 
+  const updateCreateMessage = async (sourceInteraction, updatedState) => {
+    const payload = { embeds: [buildStateEmbed(updatedState)], components: buildButtons(updatedState) };
+    if (sourceInteraction) {
+      if (sourceInteraction.deferred || sourceInteraction.replied) {
+        await sourceInteraction.editReply(payload).catch(() => {});
+        return;
+      }
+      if (sourceInteraction.message?.editable) {
+        await sourceInteraction.message.edit(payload).catch(() => {});
+        return;
+      }
+    }
+    await sentMessage.edit(payload).catch(() => {});
+  };
+
   const collector = sentMessage.createMessageComponentCollector({
     filter: interaction => interaction.user.id === message.author.id,
     time: 300000
@@ -279,8 +294,6 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
     const action = parts[1];
     const id = parts.slice(2).join('_');
     if (id !== sessionId) return;
-    const targetMessage = interaction.message || sentMessage;
-
     if (action === 'cancel') {
       activeCreates.delete(sessionId);
       await interaction.update({ content: '**❌ تم إلغاء إنشاء الرول.**', embeds: [], components: [] });
@@ -421,7 +434,7 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
       }
     }
 
-    await targetMessage.edit({ embeds: [buildStateEmbed(state)], components: buildButtons(state) }).catch(() => {});
+    await updateCreateMessage(interaction, state);
   });
 
   collector.on('end', async (_collected, reason) => {
@@ -449,8 +462,7 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
         state.color = selected;
       }
 
-      const targetMessage = interaction.message || sentMessage;
-      await targetMessage.edit({ embeds: [buildStateEmbed(state)], components: buildButtons(state) }).catch(() => {});
+      await interaction.editReply({ embeds: [buildStateEmbed(state)], components: buildButtons(state) }).catch(() => {});
     }
   };
 
