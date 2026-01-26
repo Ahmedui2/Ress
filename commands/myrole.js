@@ -159,14 +159,21 @@ function buildControlComponents(sessionId, hasIconBackup) {
 }
 
 async function refreshPanelMessage(panelMessage, roleEntry, role) {
-  if (!panelMessage?.editable) return;
+  if (!panelMessage?.channel || !panelMessage?.id) return;
+  const latestMessage = await panelMessage.channel.messages.fetch(panelMessage.id).catch(error => {
+    if (error?.code === 10008) return null;
+    console.error(`❌ Failed to fetch panel message ${panelMessage.id}:`, error);
+    return null;
+  });
+  if (!latestMessage?.editable) return;
   const refreshedRole = await role.guild.roles.fetch(role.id).catch(error => {
     console.error(`❌ Failed to fetch role ${role.id} for panel refresh:`, error);
     return role;
   });
   const activeRole = refreshedRole || role;
   const refreshed = buildControlEmbed(roleEntry, activeRole, activeRole.members.size);
-  await panelMessage.edit({ embeds: [refreshed], components: panelMessage.components }).catch(error => {
+  await latestMessage.edit({ embeds: [refreshed], components: latestMessage.components }).catch(error => {
+    if (error?.code === 10008) return;
     console.error(`❌ Failed to edit panel message ${panelMessage.id}:`, error);
   });
 }
