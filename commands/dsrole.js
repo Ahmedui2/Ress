@@ -34,14 +34,14 @@ async function execute(message, args, { client, BOT_OWNERS }) {
 
     const role = message.guild.roles.cache.get(targetRoleId);
     const embed = new EmbedBuilder()
-      .setTitle('⚠️ تأكيد حذف الرول')
-      .setDescription(`الرول: ${role ? `<@&${targetRoleId}>` : targetRoleId}\nالمالك: <@${roleEntry.ownerId}>`)
+      .setTitle('تأكيد حذف الرول')
+      .setDescription(`**الرول : ${role ? `<@&${targetRoleId}>` : targetRoleId}\n الأونر : <@${roleEntry.ownerId}>**`)
       .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
-      .setThumbnail(message.client.user.displayAvatarURL({ size: 128 }));
+      .setThumbnail('https://cdn.discordapp.com/attachments/1465209977378439262/1465221268692275251/delete_5.png?ex=69785124&is=6976ffa4&hm=84c2e9633637ab34f90545a3196a5243cebb0f5272247f03ff430ea0fbbf089e&');
 
     const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`dsrole_confirm_${targetRoleId}_${message.author.id}`).setLabel('تأكيد الحذف').setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId(`dsrole_cancel_${targetRoleId}_${message.author.id}`).setLabel('إلغاء').setStyle(ButtonStyle.Secondary)
+      new ButtonBuilder().setCustomId(`dsrole_confirm_${targetRoleId}_${message.author.id}`).setLabel('تأكيد الحذف').setEmoji('<:emoji_7:1465221394966253768>').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId(`dsrole_cancel_${targetRoleId}_${message.author.id}`).setLabel('إلغاء').setEmoji('<:emoji_7:1465221361839505622>').setStyle(ButtonStyle.Secondary)
     );
 
     const sentMessage = await message.channel.send({ embeds: [embed], components: [row] });
@@ -91,7 +91,7 @@ async function execute(message, args, { client, BOT_OWNERS }) {
   const options = guildRoles.slice(0, 25).map(role => ({
     label: role.name || role.roleId,
     value: role.roleId,
-    description: `مالك: ${role.ownerId}`
+    description: `اي دي الأونر  : ${role.ownerId}`
   }));
 
   const menu = new StringSelectMenuBuilder()
@@ -104,10 +104,11 @@ async function execute(message, args, { client, BOT_OWNERS }) {
   const row = new ActionRowBuilder().addComponents(menu);
 
   const embed = new EmbedBuilder()
-    .setTitle('🗑️ حذف متعدد للرولات الخاصة')
-    .setDescription('**اختر الرولات المراد حذفها:**')
+    .setTitle('Delete roles')
+    .setDescription('**اختر الرولات المراد حذفها :**')
     .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
-    .setThumbnail(message.client.user.displayAvatarURL({ size: 128 }));
+    .setThumbnail('https://cdn.discordapp.com/attachments/1465209977378439262/1465221268692275251/delete_5.png?ex=69785124&is=6976ffa4&hm=84c2e9633637ab34f90545a3196a5243cebb0f5272247f03ff430ea0fbbf089e&')
+.setFooter({ text: 'Roles sys;' });
 
   const sentMessage = await message.channel.send({ embeds: [embed], components: [row] });
 
@@ -121,8 +122,8 @@ async function execute(message, args, { client, BOT_OWNERS }) {
 
     const selectedRoles = interaction.values;
     const confirmRow = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`dsrole_bulk_confirm_${message.author.id}`).setLabel('تأكيد الحذف').setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId(`dsrole_bulk_cancel_${message.author.id}`).setLabel('إلغاء').setStyle(ButtonStyle.Secondary)
+      new ButtonBuilder().setCustomId(`dsrole_bulk_confirm_${message.author.id}`).setLabel('تأكيد الحذف').setEmoji('<:emoji_7:1465221394966253768>').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId(`dsrole_bulk_cancel_${message.author.id}`).setLabel('إلغاء').setEmoji('<:emoji_7:1465221361839505622>').setStyle(ButtonStyle.Secondary)
     );
 
     await interaction.update({
