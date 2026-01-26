@@ -279,6 +279,7 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
     const action = parts[1];
     const id = parts.slice(2).join('_');
     if (id !== sessionId) return;
+    const targetMessage = interaction.message || sentMessage;
 
     if (action === 'cancel') {
       activeCreates.delete(sessionId);
@@ -420,7 +421,7 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
       }
     }
 
-    await sentMessage.edit({ embeds: [buildStateEmbed(state)], components: buildButtons(state) }).catch(() => {});
+    await targetMessage.edit({ embeds: [buildStateEmbed(state)], components: buildButtons(state) }).catch(() => {});
   });
 
   collector.on('end', async (_collected, reason) => {
@@ -448,7 +449,8 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
         state.color = selected;
       }
 
-      await interaction.message.edit({ embeds: [buildStateEmbed(state)], components: buildButtons(state) });
+      const targetMessage = interaction.message || sentMessage;
+      await targetMessage.edit({ embeds: [buildStateEmbed(state)], components: buildButtons(state) }).catch(() => {});
     }
   };
 

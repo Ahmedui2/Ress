@@ -412,6 +412,21 @@ function buildChannelsPayload(message, guildConfig, embed, row) {
   if (allowed.length) {
     allowMenu.setDefaultChannels(allowed.slice(0, 25));
   }
+  const logMenu = new ChannelSelectMenuBuilder()
+    .setCustomId(`customroles_manage_logs_${message.author.id}`)
+    .setPlaceholder('روم السجلات')
+    .setMinValues(0)
+    .setMaxValues(1)
+    .addChannelTypes(ChannelType.GuildText);
+  if (guildConfig.logChannelId) {
+    logMenu.setDefaultChannels([guildConfig.logChannelId]);
+  }
+  const clearLogsRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`customroles_manage_logs_clear_${message.author.id}`)
+      .setLabel('إلغاء السجلات')
+      .setStyle(ButtonStyle.Secondary)
+  );
   const blockMenu = new ChannelSelectMenuBuilder()
     .setCustomId(`customroles_manage_blocked_${message.author.id}`)
     .setPlaceholder('الشاتات المحظورة')
@@ -426,6 +441,8 @@ function buildChannelsPayload(message, guildConfig, embed, row) {
     content: 'حدّد الشاتات المسموحة والمحظورة:',
     embeds: [channelsEmbed],
     components: [
+      new ActionRowBuilder().addComponents(logMenu),
+      clearLogsRow,
       new ActionRowBuilder().addComponents(allowMenu),
       new ActionRowBuilder().addComponents(blockMenu),
       row
@@ -780,6 +797,19 @@ async function executeRolesSettings(message, args, { client, BOT_OWNERS }) {
       return;
     }
 
+    if (interaction.isChannelSelectMenu() && interaction.customId.startsWith('customroles_manage_logs_')) {
+      const targetUserId = interaction.customId.split('_').pop();
+      if (targetUserId !== message.author.id) {
+        await interaction.reply({ content: '❌ هذا الخيار ليس لك.', ephemeral: true });
+        return;
+      }
+      const logChannelId = interaction.values[0] || null;
+      updateGuildConfig(message.guild.id, { logChannelId });
+      const updatedConfig = getGuildConfig(message.guild.id);
+      await interaction.update(buildChannelsPayload(message, updatedConfig, embed, row));
+      return;
+    }
+
     if (interaction.isChannelSelectMenu() && interaction.customId.startsWith('customroles_manage_blocked_')) {
       const targetUserId = interaction.customId.split('_').pop();
       if (targetUserId !== message.author.id) {
@@ -787,6 +817,18 @@ async function executeRolesSettings(message, args, { client, BOT_OWNERS }) {
         return;
       }
       updateGuildConfig(message.guild.id, { blockedChannels: normalizeUniqueIds(interaction.values) });
+      const updatedConfig = getGuildConfig(message.guild.id);
+      await interaction.update(buildChannelsPayload(message, updatedConfig, embed, row));
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('customroles_manage_logs_clear_')) {
+      const targetUserId = interaction.customId.split('_').pop();
+      if (targetUserId !== message.author.id) {
+        await interaction.reply({ content: '❌ هذا الزر ليس لك.', ephemeral: true });
+        return;
+      }
+      updateGuildConfig(message.guild.id, { logChannelId: null });
       const updatedConfig = getGuildConfig(message.guild.id);
       await interaction.update(buildChannelsPayload(message, updatedConfig, embed, row));
       return;
