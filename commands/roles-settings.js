@@ -1,4 +1,4 @@
-const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder, RoleSelectMenuBuilder, UserSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ChannelType } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder, RoleSelectMenuBuilder, UserSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ChannelType, PermissionsBitField } = require('discord.js');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
 const { getGuildConfig, updateGuildConfig, isManager, getRoleEntry, addRoleEntry, deleteRoleEntry, restoreRoleEntry, getGuildRoles, getDeletedRoles, getDeletedRoleEntry, removeDeletedRoleEntry, findRoleByOwner, formatDuration, getRoleResetDate } = require('../utils/customRolesSystem.js');
@@ -18,6 +18,10 @@ const pendingPanelTimeouts = new Map();
 const pendingBulkDeletes = new Map();
 const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
 const REQUEST_REAPPLY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const BASE_ROLE_PERMISSIONS = [
+  PermissionsBitField.Flags.ViewChannel,
+  PermissionsBitField.Flags.SendMessages
+];
 
 function scheduleDelete(message, delay = 180000) {
   if (!message) return;
@@ -1504,6 +1508,7 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     const createdRole = await interaction.guild.roles.create({
       name: deletedEntry.name || `role-${interaction.user.username}`,
       color: deletedEntry.color || undefined,
+      permissions: BASE_ROLE_PERMISSIONS,
       reason: `استرجاع رول خاص محذوف بواسطة ${interaction.user.tag}`
     }).catch(() => null);
 
@@ -1702,6 +1707,7 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
 
     const role = await interaction.guild.roles.create({
       name: roleName,
+      permissions: BASE_ROLE_PERMISSIONS,
       reason: `موافقة على طلب رول خاص ${member.user.tag}`
     }).catch(() => null);
 

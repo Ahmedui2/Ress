@@ -804,7 +804,12 @@ async function startMyRoleFlow({ member, channel, client }) {
     const resetMenu = async () => {
       const latestConfig = getGuildConfig(member.guild.id);
       const hasBackup = Boolean(getIconBackupState(latestConfig, member.id));
-      await sentMessage.edit({ components: buildControlComponents(sessionId, hasBackup) }).catch(() => {});
+      const refreshedRole = await role.guild.roles.fetch(role.id).catch(() => role);
+      const refreshedEmbed = buildControlEmbed(roleEntry, refreshedRole, refreshedRole.members.size);
+      await sentMessage.edit({
+        embeds: [refreshedEmbed],
+        components: buildControlComponents(sessionId, hasBackup)
+      }).catch(() => {});
     };
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('myrole_action_')) {
       const session = interaction.customId.split('_').slice(2).join('_');

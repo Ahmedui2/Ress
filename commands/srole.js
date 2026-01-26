@@ -6,6 +6,10 @@ const { resolveIconBuffer, applyRoleIcon } = require('../utils/roleIconUtils.js'
 
 const name = 'انشاء';
 const aliases = ['srole'];
+const BASE_ROLE_PERMISSIONS = [
+  PermissionsBitField.Flags.ViewChannel,
+  PermissionsBitField.Flags.SendMessages
+];
 
 const activeCreates = new Map();
 
@@ -362,6 +366,7 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
         const role = await message.guild.roles.create({
           name: state.name,
           colors: state.color ? [state.color] : undefined,
+          permissions: BASE_ROLE_PERMISSIONS,
           reason: `إنشاء رول خاص بواسطة ${message.author.tag}`
         });
 
