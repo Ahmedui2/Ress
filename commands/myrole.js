@@ -1,7 +1,7 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, UserSelectMenuBuilder, PermissionsBitField } = require('discord.js');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
-const { findRoleByOwner, addRoleEntry, deleteRoleEntry, getGuildConfig } = require('../utils/customRolesSystem.js');
+const { findRoleByOwner, addRoleEntry, deleteRoleEntry, getGuildConfig, updateGuildConfig } = require('../utils/customRolesSystem.js');
 const { resolveIconBuffer, applyRoleIcon } = require('../utils/roleIconUtils.js');
 const moment = require('moment-timezone');
 
@@ -135,7 +135,7 @@ function buildControlEmbed(roleEntry, role, membersCount) {
     .setThumbnail(role.guild.client.user.displayAvatarURL({ size: 128 }));
 }
 
-function buildControlComponents(sessionId) {
+function buildControlComponents(sessionId, hasIconBackup) {
   const menu = new StringSelectMenuBuilder()
     .setCustomId(`myrole_action_${sessionId}`)
     .setPlaceholder('اختر إجراءً...')
@@ -145,7 +145,8 @@ function buildControlComponents(sessionId) {
       { label: 'تغيير الأيقونة', value: 'icon', emoji: '✨' },
       { label: 'إضافة/إزالة', value: 'manage', emoji: '➕' },
       { label: 'الأعضاء', value: 'members', emoji: '👥' },
-      { label: 'نقل الملكية', value: 'transfer', emoji: '🔁' }
+      { label: 'نقل الملكية', value: 'transfer', emoji: '🔁' },
+      { label: hasIconBackup ? 'إرجاع الرولات' : 'إزالة جميع الأيقونات', value: 'toggle_icons', emoji: '🧩' }
     ]);
 
   const buttons = new ActionRowBuilder().addComponents(
@@ -154,6 +155,93 @@ function buildControlComponents(sessionId) {
   );
 
   return [new ActionRowBuilder().addComponents(menu), buttons];
+}
+
+function getIconBackupState(guildConfig, ownerId) {
+  const backups = guildConfig.roleIconBackups || {};
+  return backups[ownerId] || null;
+}
+
+function setIconBackupState(guildConfig, ownerId, backup) {
+  const backups = { ...(guildConfig.roleIconBackups || {}) };
+  if (backup) {
+    backups[ownerId] = backup;
+  } else {
+    delete backups[ownerId];
+  }
+  return backups;
+}
+
+async function handleToggleIconRoles({ channel, member, role, roleEntry, interaction, panelMessage }) {
+  const guildConfig = getGuildConfig(role.guild.id);
+  const existingBackup = getIconBackupState(guildConfig, roleEntry.ownerId);
+
+  if (existingBackup?.roleIds?.length) {
+    let restored = 0;
+    for (const roleId of existingBackup.roleIds) {
+      const targetRole = role.guild.roles.cache.get(roleId);
+      if (!targetRole) continue;
+      await member.roles.add(targetRole, 'إرجاع الرولات المحفوظة للأيقونات').then(() => {
+        restored += 1;
+      }).catch(() => {});
+    }
+    const updatedBackups = setIconBackupState(guildConfig, roleEntry.ownerId, null);
+    updateGuildConfig(role.guild.id, { roleIconBackups: updatedBackups });
+    if (interaction) {
+      await respondEphemeral(interaction, { content: `✅ تم إرجاع ${restored} رول.` });
+    } else {
+      await sendTemp(channel, `✅ تم إرجاع ${restored} رول.`);
+    }
+    return;
+  }
+
+  const rolePosition = role.position;
+  const rolesToRemove = member.roles.cache
+    .filter(r => r.position > rolePosition && r.icon)
+    .map(r => r.id);
+
+  if (rolesToRemove.length === 0) {
+    if (interaction) {
+      await respondEphemeral(interaction, { content: '⚠️ لا توجد رولات بأيقونات أعلى من رولك.' });
+    } else {
+      await sendTemp(channel, '⚠️ لا توجد رولات بأيقونات أعلى من رولك.');
+    }
+    return;
+  }
+
+  let removed = 0;
+  for (const roleId of rolesToRemove) {
+    const targetRole = role.guild.roles.cache.get(roleId);
+    if (!targetRole) continue;
+    await member.roles.remove(targetRole, 'إزالة رولات ذات أيقونات أعلى من الرول الخاص').then(() => {
+      removed += 1;
+    }).catch(() => {});
+  }
+
+  const updatedBackups = setIconBackupState(guildConfig, roleEntry.ownerId, {
+    roleIds: rolesToRemove,
+    removedAt: Date.now()
+  });
+  updateGuildConfig(role.guild.id, { roleIconBackups: updatedBackups });
+  if (interaction) {
+    await respondEphemeral(interaction, { content: `✅ تم إزالة ${removed} رول بأيقونات مؤقتًا.` });
+  } else {
+    await sendTemp(channel, `✅ تم إزالة ${removed} رول بأيقونات مؤقتًا.`);
+  }
+}
+
+function splitFieldText(text, maxLength = 1024) {
+  if (!text) return [];
+  const chunks = [];
+  let remaining = text;
+  while (remaining.length > maxLength) {
+    let sliceIndex = remaining.lastIndexOf('\n', maxLength);
+    if (sliceIndex < 1) sliceIndex = maxLength;
+    chunks.push(remaining.slice(0, sliceIndex));
+    remaining = remaining.slice(sliceIndex).trimStart();
+  }
+  if (remaining.length) chunks.push(remaining);
+  return chunks;
 }
 
 async function handleManageMembers({ channel, userId, role, roleEntry, interaction, panelMessage }) {
@@ -498,7 +586,14 @@ async function handleMembersList({ channel, role, interaction, roleEntry }) {
       .setThumbnail(channel.client.user.displayAvatarURL({ size: 128 }));
 
     if (detailsText) {
-      embed.addFields({ name: 'تفاصيل المحددين', value: detailsText.slice(0, 1024), inline: false });
+      const chunks = splitFieldText(detailsText);
+      chunks.forEach((chunk, index) => {
+        embed.addFields({
+          name: index === 0 ? 'تفاصيل المحددين' : 'تكملة التفاصيل',
+          value: chunk,
+          inline: false
+        });
+      });
     }
 
     return { embeds: [embed], components };
@@ -650,8 +745,16 @@ async function handleTransfer({ channel, userId, role, roleEntry, interaction, p
 
 async function startMyRoleFlow({ member, channel, client }) {
   if (activeRolePanels.has(member.id)) {
-    await sendTemp(channel, '**⚠️ لديك لوحة مفتوحة بالفعل.**');
-    return;
+    const activePanel = activeRolePanels.get(member.id);
+    const existingChannel = await member.guild.channels.fetch(activePanel.channelId).catch(() => null);
+    const existingMessage = existingChannel
+      ? await existingChannel.messages.fetch(activePanel.messageId).catch(() => null)
+      : null;
+    if (existingMessage) {
+      await sendTemp(channel, '**⚠️ لديك لوحة مفتوحة بالفعل.**');
+      return;
+    }
+    activeRolePanels.delete(member.id);
   }
   const roleEntry = findRoleByOwner(member.guild.id, member.id);
   if (!roleEntry) {
@@ -675,11 +778,13 @@ async function startMyRoleFlow({ member, channel, client }) {
   const embed = buildControlEmbed(roleEntry, role, membersCount);
 
   const sessionId = `${member.id}_${Date.now()}`;
-  const sentMessage = await channel.send({ embeds: [embed], components: buildControlComponents(sessionId) });
+  const hasIconBackup = Boolean(getIconBackupState(getGuildConfig(member.guild.id), member.id));
+  const sentMessage = await channel.send({ embeds: [embed], components: buildControlComponents(sessionId, hasIconBackup) });
   scheduleDelete(sentMessage);
-  activeRolePanels.set(member.id, sentMessage.id);
+  activeRolePanels.set(member.id, { messageId: sentMessage.id, channelId: sentMessage.channel.id });
   setTimeout(() => {
-    if (activeRolePanels.get(member.id) === sentMessage.id) {
+    const panel = activeRolePanels.get(member.id);
+    if (panel?.messageId === sentMessage.id) {
       activeRolePanels.delete(member.id);
     }
   }, 240000);
@@ -690,6 +795,11 @@ async function startMyRoleFlow({ member, channel, client }) {
   });
 
   collector.on('collect', async interaction => {
+    const resetMenu = async () => {
+      const latestConfig = getGuildConfig(member.guild.id);
+      const hasBackup = Boolean(getIconBackupState(latestConfig, member.id));
+      await sentMessage.edit({ components: buildControlComponents(sessionId, hasBackup) }).catch(() => {});
+    };
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('myrole_action_')) {
       const session = interaction.customId.split('_').slice(2).join('_');
       if (session !== sessionId) return;
@@ -698,17 +808,20 @@ async function startMyRoleFlow({ member, channel, client }) {
       if (action === 'name') {
         await interaction.deferUpdate();
         await handleNameChange({ channel, userId: member.id, role, roleEntry, interaction, panelMessage: sentMessage });
+        await resetMenu();
         return;
       }
 
       if (action === 'color') {
         await handleColorChange({ interaction, role, roleEntry, panelMessage: sentMessage });
+        await resetMenu();
         return;
       }
 
       if (action === 'icon') {
         await interaction.deferUpdate();
         await handleIconChange({ channel, userId: member.id, role, roleEntry, interaction, panelMessage: sentMessage });
+        await resetMenu();
         return;
       }
 
@@ -716,21 +829,40 @@ async function startMyRoleFlow({ member, channel, client }) {
         await interaction.deferUpdate();
         if (!role.editable) {
           await respondEphemeral(interaction, { content: '**❌ لا يمكن تعديل الأعضاء بسبب صلاحيات البوت.**' });
+          await resetMenu();
           return;
         }
         await handleManageMembers({ channel, userId: member.id, role, roleEntry, interaction, panelMessage: sentMessage });
+        await resetMenu();
         return;
       }
 
       if (action === 'members') {
         await interaction.deferUpdate();
         await handleMembersList({ channel, role, interaction, roleEntry });
+        await resetMenu();
         return;
       }
 
       if (action === 'transfer') {
         await interaction.deferUpdate();
         await handleTransfer({ channel, userId: member.id, role, roleEntry, interaction, panelMessage: sentMessage });
+        await resetMenu();
+        return;
+      }
+
+      if (action === 'delete') {
+        await interaction.deferUpdate();
+        await handleDeleteRole({ channel, interaction, role, roleEntry, panelMessage: sentMessage });
+        collector.stop('deleted');
+        await resetMenu();
+        return;
+      }
+
+      if (action === 'toggle_icons') {
+        await interaction.deferUpdate();
+        await handleToggleIconRoles({ channel, member, role, roleEntry, interaction, panelMessage: sentMessage });
+        await resetMenu();
         return;
       }
     }
@@ -748,36 +880,8 @@ async function startMyRoleFlow({ member, channel, client }) {
 
     if (action === 'delete') {
       await interaction.deferUpdate();
-      const confirmRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`myrole_delete_confirm_${sessionId}`).setLabel('تأكيد الحذف').setStyle(ButtonStyle.Danger),
-        new ButtonBuilder().setCustomId(`myrole_delete_cancel_${sessionId}`).setLabel('إلغاء').setStyle(ButtonStyle.Secondary)
-      );
-      const confirmMessage = await respondEphemeralWithMessage(interaction, {
-        content: '**هل أنت متأكد من حذف الرول الخاص؟**',
-        components: [confirmRow]
-      });
-      const confirmation = await confirmMessage.awaitMessageComponent({
-        filter: i => i.user.id === member.id,
-        time: 60000
-      }).catch(() => null);
-      if (!confirmation) return;
-
-      if (confirmation.customId === `myrole_delete_cancel_${sessionId}`) {
-        await confirmation.update({ content: 'تم إلغاء الحذف.', components: [] }).catch(() => {});
-        return;
-      }
-
-      const targetRole = role.guild.roles.cache.get(role.id);
-      if (targetRole && !targetRole.editable) {
-        await confirmation.update({ content: '❌ لا يمكن حذف الرول بسبب صلاحيات البوت.', components: [] }).catch(() => {});
-        return;
-      }
-      if (targetRole) {
-        await targetRole.delete(`حذف رول خاص بواسطة المالك ${member.user.tag}`).catch(() => {});
-      }
-      deleteRoleEntry(role.id, member.id);
-      await confirmation.update({ content: '✅ تم حذف الرول الخاص بنجاح.', components: [] }).catch(() => {});
-      await sentMessage.edit({ components: [], content: '**تم حذف الرول.**', embeds: [] }).catch(() => {});
+      await handleDeleteRole({ channel, interaction, role, roleEntry, panelMessage: sentMessage });
+      collector.stop('deleted');
     }
   });
 
@@ -841,6 +945,16 @@ async function handleMemberAction(interaction, action, client) {
     await handleManageMembers({ channel: interaction.channel, userId: member.id, role, roleEntry, interaction });
     return;
   }
+  if (action === 'delete') {
+    await interaction.deferReply({ ephemeral: true });
+    await handleDeleteRole({ channel: interaction.channel, interaction, role, roleEntry });
+    return;
+  }
+  if (action === 'toggle_icons') {
+    await interaction.deferReply({ ephemeral: true });
+    await handleToggleIconRoles({ channel: interaction.channel, member, role, roleEntry, interaction });
+    return;
+  }
 
   await interaction.reply({ content: '❌ خيار غير معروف.', ephemeral: true });
 }
@@ -882,8 +996,71 @@ async function runRoleAction({ interaction, action, roleEntry, role, panelMessag
     await handleManageMembers({ channel: interaction.channel, userId: interaction.user.id, role, roleEntry, interaction, panelMessage });
     return;
   }
+  if (action === 'delete') {
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply({ ephemeral: true });
+    }
+    await handleDeleteRole({ channel: interaction.channel, interaction, role, roleEntry, panelMessage });
+    return;
+  }
+  if (action === 'toggle_icons') {
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply({ ephemeral: true });
+    }
+    const member = await interaction.guild.members.fetch(roleEntry.ownerId).catch(() => null);
+    if (!member) {
+      await respondEphemeral(interaction, { content: '❌ العضو غير موجود.' });
+      return;
+    }
+    await handleToggleIconRoles({ channel: interaction.channel, member, role, roleEntry, interaction, panelMessage });
+    return;
+  }
 
   await respondEphemeral(interaction, { content: '❌ خيار غير معروف.' });
+}
+
+async function handleDeleteRole({ channel, interaction, role, roleEntry, panelMessage }) {
+  const confirmRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('myrole_delete_confirm').setLabel('تأكيد الحذف').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId('myrole_delete_cancel').setLabel('إلغاء').setStyle(ButtonStyle.Secondary)
+  );
+  const confirmMessage = await respondEphemeralWithMessage(interaction, {
+    content: '**هل أنت متأكد من حذف الرول الخاص؟**',
+    components: [confirmRow]
+  });
+  if (!confirmMessage) return;
+
+  const confirmation = await confirmMessage.awaitMessageComponent({
+    filter: i => i.user.id === interaction.user.id,
+    time: 60000
+  }).catch(() => null);
+  if (!confirmation) return;
+
+  if (confirmation.customId === 'myrole_delete_cancel') {
+    await confirmation.update({ content: 'تم إلغاء الحذف.', components: [] }).catch(() => {});
+    return;
+  }
+
+  const targetRole = role.guild.roles.cache.get(role.id);
+  if (targetRole && !targetRole.editable) {
+    await confirmation.update({ content: '❌ لا يمكن حذف الرول بسبب صلاحيات البوت.', components: [] }).catch(() => {});
+    return;
+  }
+  if (targetRole) {
+    await targetRole.delete(`حذف رول خاص بواسطة المالك ${interaction.user.tag}`).catch(() => {});
+  }
+  deleteRoleEntry(role.id, interaction.user.id);
+  const ownerMember = await role.guild.members.fetch(roleEntry.ownerId).catch(() => null);
+  const ownerName = ownerMember?.displayName || interaction.user.displayName || interaction.user.username;
+  await confirmation.update({ content: '✅ تم حذف الرول الخاص بنجاح.', components: [] }).catch(() => {});
+  await sendTemp(channel, '**✅ تم حذف الرول الخاص.**');
+  await logRoleAction(role.guild, 'تم حذف رول خاص بواسطة المالك.', [
+    { name: 'الرول', value: `<@&${roleEntry.roleId}>`, inline: true },
+    { name: 'المالك', value: ownerName, inline: true }
+  ]);
+  if (panelMessage?.editable) {
+    await panelMessage.edit({ components: [], content: '**تم حذف الرول.**', embeds: [] }).catch(() => {});
+  }
 }
 
 module.exports = { name, aliases, execute, startMyRoleFlow, handleMemberAction, runRoleAction };

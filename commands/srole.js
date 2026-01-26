@@ -47,6 +47,16 @@ async function logRoleAction(guild, guildConfig, description, fields = []) {
   await channel.send({ embeds: [embed] }).catch(() => {});
 }
 
+async function applyRoleCategoryPosition(role, guildConfig) {
+  if (!role || !guildConfig?.roleCategoryId) return;
+  const referenceRole = role.guild.roles.cache.get(guildConfig.roleCategoryId);
+  if (!referenceRole) return;
+  if (!referenceRole.editable) return;
+  const desiredPosition = Math.max(1, referenceRole.position - 1);
+  if (role.position === desiredPosition) return;
+  await role.setPosition(desiredPosition).catch(() => {});
+}
+
 const PRESET_COLORS = [
   { label: 'أحمر', value: '#e74c3c' },
   { label: 'أزرق', value: '#3498db' },
@@ -287,14 +297,15 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
         if (state.iconBuffer) {
           finalRole = await applyRoleIcon(role, state.iconBuffer);
         }
+        await applyRoleCategoryPosition(finalRole, guildConfig);
 
         const ownerMember = await message.guild.members.fetch(state.ownerId).catch(() => null);
         if (ownerMember) {
           await ownerMember.roles.add(role, 'منح رول خاص جديد').catch(() => {});
         }
 
-        addRoleEntry(role.id, {
-          roleId: role.id,
+        addRoleEntry(finalRole.id, {
+          roleId: finalRole.id,
           guildId: message.guild.id,
           ownerId: state.ownerId,
           createdAt: Date.now(),

@@ -67,7 +67,7 @@ function buildListEmbed(listEntries, page, client) {
   const pageEntries = listEntries.slice(start, start + PAGE_SIZE);
 
   const description = pageEntries.map((entry, index) => (
-    `**${start + index + 1}. ${entry.name}** — <@&${entry.roleId}>\n` +
+    `**${start + index + 1}. ${entry.name}** — ${entry.roleExists ? `<@&${entry.roleId}>` : 'رول غير موجود'}\n` +
     `👥 ${entry.members} | 💬 ${entry.messages} | 🔊 ${formatDuration(entry.voice)}`
   )).join('\n\n');
 
@@ -146,6 +146,7 @@ async function execute(message, args, { client, BOT_OWNERS }) {
     listEntries.push({
       name: role ? role.name : roleEntry.name,
       roleId: roleEntry.roleId,
+      roleExists: Boolean(role),
       members: members.length,
       voice: activity.voice,
       messages: activity.messages
