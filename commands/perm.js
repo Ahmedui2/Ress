@@ -45,133 +45,122 @@ function loadAdminRoles() {
   }
 }
 
+const PERMISSION_DESCRIPTION_MAP = {
+  CreateInstantInvite: 'السماح بإنشاء دعوات للقنوات',
+  KickMembers: 'السماح بطرد الأعضاء من السيرفر',
+  BanMembers: 'السماح بحظر الأعضاء من السيرفر',
+  Administrator: 'منح جميع الصلاحيات في السيرفر',
+  ManageChannels: 'إنشاء القنوات وتعديلها وحذفها',
+  ManageGuild: 'إدارة إعدادات السيرفر',
+  AddReactions: 'السماح بإضافة التفاعلات للرسائل',
+  ViewAuditLog: 'عرض سجل التدقيق الخاص بالسيرفر',
+  PrioritySpeaker: 'منح أولوية للصوت',
+  Stream: 'السماح بمشاركة الشاشة/البث',
+  ViewChannel: 'السماح بمشاهدة القنوات',
+  SendMessages: 'السماح بإرسال الرسائل في القنوات',
+  SendTTSMessages: 'السماح بإرسال رسائل TTS',
+  ManageMessages: 'حذف وتثبيت الرسائل وإدارتها',
+  EmbedLinks: 'عرض معاينات الروابط المرسلة',
+  AttachFiles: 'السماح بإرفاق الملفات',
+  ReadMessageHistory: 'السماح بقراءة الرسائل السابقة',
+  MentionEveryone: 'السماح بمنشن @everyone و@here',
+  UseExternalEmojis: 'السماح باستخدام الإيموجي من سيرفرات أخرى',
+  ViewGuildInsights: 'مشاهدة إحصاءات السيرفر',
+  Connect: 'السماح بالانضمام للقنوات الصوتية',
+  Speak: 'السماح بالتحدث في القنوات الصوتية',
+  MuteMembers: 'السماح بكتم أعضاء الصوت',
+  DeafenMembers: 'السماح بصمّ أعضاء الصوت',
+  MoveMembers: 'السماح بنقل الأعضاء بين القنوات',
+  UseVAD: 'السماح باستخدام كشف الصوت التلقائي',
+  ChangeNickname: 'السماح بتغيير الاسم المستعار الخاص',
+  ManageNicknames: 'تغيير أسماء الأعضاء المستعارة',
+  ManageRoles: 'إدارة الرتب والصلاحيات',
+  ManageWebhooks: 'إنشاء وتعديل وحذف الويبهوك',
+  ManageGuildExpressions: 'إدارة الإيموجي والملصقات',
+  UseApplicationCommands: 'السماح باستخدام أوامر السلاش والتطبيقات',
+  RequestToSpeak: 'السماح بطلب التحدث في المنصة',
+  ManageEvents: 'إنشاء وإدارة فعاليات السيرفر',
+  ManageThreads: 'إدارة المواضيع وتعديلها',
+  CreatePublicThreads: 'السماح بإنشاء مواضيع عامة',
+  CreatePrivateThreads: 'السماح بإنشاء مواضيع خاصة',
+  UseExternalStickers: 'السماح باستخدام ملصقات من سيرفرات أخرى',
+  SendMessagesInThreads: 'السماح بإرسال الرسائل في المواضيع',
+  UseEmbeddedActivities: 'السماح باستخدام الأنشطة داخل الصوت',
+  ModerateMembers: 'السماح بتطبيق مهلة على الأعضاء',
+  ViewCreatorMonetizationAnalytics: 'عرض تحليلات تحقيق الدخل لصانعي المحتوى',
+  UseSoundboard: 'السماح باستخدام لوحة الأصوات',
+  UseExternalSounds: 'السماح باستخدام أصوات من سيرفرات أخرى',
+  SendVoiceMessages: 'السماح بإرسال رسائل صوتية'
+};
+
+function formatPermissionKeyLabel(key) {
+  return key
+    .replace(/([A-Z])/g, ' $1')
+    .replace(/\bT T S\b/g, 'TTS')
+    .replace(/\bV A D\b/g, 'VAD')
+    .trim();
+}
+
+const PERMISSION_DEFINITIONS = Object.keys(PermissionsBitField.Flags).map(key => ({
+  key,
+  label: formatPermissionKeyLabel(key),
+  description: PERMISSION_DESCRIPTION_MAP[key] || 'صلاحية خاصة في دسكورد'
+}));
+
+const PERMISSIONS_PER_PAGE = 25;
+const PERMISSION_LABELS = new Map(PERMISSION_DEFINITIONS.map(permission => [permission.key, permission.label]));
+
+function formatPermissionLabel(key) {
+  return PERMISSION_LABELS.get(key) || key;
+}
+
 /**
  * Build a select menu for common permissions.  The values correspond to the
  * keys on PermissionsBitField.Flags.  Users can select one or more of
  * these options to allow for the target roles.  The labels and
  * descriptions are provided in English to make them clearer.
  */
-function buildPermissionSelectMenu() {
-  const options = [
-    {
-      label: 'View Channel',
-      description: 'Allows the role to view channels',
-      value: 'ViewChannel'
-    },
-    {
-      label: 'Send Messages',
-      description: 'Allows the role to send messages',
-      value: 'SendMessages'
-    },
-    {
-      label: 'Read Message History',
-      description: 'Allows the role to read channel history',
-      value: 'ReadMessageHistory'
-    },
-    {
-      label: 'Manage Messages',
-      description: 'Allows the role to manage messages',
-      value: 'ManageMessages'
-    },
-    {
-      label: 'Connect (Voice)',
-      description: 'Allows the role to join voice channels',
-      value: 'Connect'
-    },
-    {
-      label: 'Speak (Voice)',
-      description: 'Allows the role to speak in voice channels',
-      value: 'Speak'
-    },
-    {
-      label: 'Manage Channels',
-      description: 'Allows the role to create/delete/modify channels',
-      value: 'ManageChannels'
-    },
-    {
-      label: 'Manage Roles',
-      description: 'Allows the role to manage other roles',
-      value: 'ManageRoles'
-    },
-    {
-      label: 'Use External Emojis',
-      description: 'Allows the role to use external emojis',
-      value: 'UseExternalEmojis'
-    },
-    {
-      label: 'Use Embedded Activities',
-      description: 'Allows the role to use voice embedded activities',
-      value: 'UseEmbeddedActivities'
-    },
-    // Additional permissions for more flexibility
-    {
-      label: 'Add Reactions',
-      description: 'Allows the role to add reactions to messages',
-      value: 'AddReactions'
-    },
-    {
-      label: 'Attach Files',
-      description: 'Allows the role to attach files',
-      value: 'AttachFiles'
-    },
-    {
-      label: 'Embed Links',
-      description: 'Allows the role to embed links in messages',
-      value: 'EmbedLinks'
-    },
-    {
-      label: 'Use Application Commands',
-      description: 'Allows the role to use slash commands',
-      value: 'UseApplicationCommands'
-    },
-    {
-      label: 'Mention Everyone',
-      description: 'Allows the role to mention @everyone and @here',
-      value: 'MentionEveryone'
-    },
-    {
-      label: 'Manage Webhooks',
-      description: 'Allows the role to create, edit, and delete webhooks',
-      value: 'ManageWebhooks'
-    },
-    {
-      label: 'Manage Events',
-      description: 'Allows the role to manage guild scheduled events',
-      value: 'ManageEvents'
-    },
-    {
-      label: 'Kick Members',
-      description: 'Allows the role to kick members',
-      value: 'KickMembers'
-    },
-    {
-      label: 'Ban Members',
-      description: 'Allows the role to ban members',
-      value: 'BanMembers'
-    },
-    {
-      label: 'Moderate Members',
-      description: 'Allows the role to timeout members',
-      value: 'ModerateMembers'
-    },
-    {
-      label: 'Manage Threads',
-      description: 'Allows the role to manage threads',
-      value: 'ManageThreads'
-    },
-    {
-      label: 'Send Messages In Threads',
-      description: 'Allows the role to send messages in threads',
-      value: 'SendMessagesInThreads'
-    }
-  ];
+function getPermissionPage(pageIndex) {
+  const totalPages = Math.max(1, Math.ceil(PERMISSION_DEFINITIONS.length / PERMISSIONS_PER_PAGE));
+  const safeIndex = Math.min(Math.max(pageIndex, 0), totalPages - 1);
+  const start = safeIndex * PERMISSIONS_PER_PAGE;
+  const pageOptions = PERMISSION_DEFINITIONS.slice(start, start + PERMISSIONS_PER_PAGE);
+  return { options: pageOptions, pageIndex: safeIndex, totalPages };
+}
 
+function buildPermissionSelectMenu(pageIndex) {
+  const { options } = getPermissionPage(pageIndex);
   return new StringSelectMenuBuilder()
     .setCustomId('perm_select_permissions')
-    .setPlaceholder('اختر الصلاحيات المسموح بها')
-    .addOptions(options)
+    .setPlaceholder('ابحث واختر الصلاحيات من القائمة')
+    .addOptions(options.map(option => ({
+      label: option.label,
+      description: option.description,
+      value: option.key
+    })))
     .setMinValues(1)
     .setMaxValues(options.length);
+}
+
+function buildPermissionPageControls(pageIndex) {
+  const { totalPages } = getPermissionPage(pageIndex);
+  if (totalPages <= 1) {
+    return null;
+  }
+
+  const prevButton = new ButtonBuilder()
+    .setCustomId('perm_permissions_prev')
+    .setLabel('السابق')
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(pageIndex <= 0);
+
+  const nextButton = new ButtonBuilder()
+    .setCustomId('perm_permissions_next')
+    .setLabel('التالي')
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(pageIndex >= totalPages - 1);
+
+  return new ActionRowBuilder().addComponents(prevButton, nextButton);
 }
 
 /**
@@ -386,7 +375,8 @@ async function execute(message, args, { client, BOT_OWNERS }) {
       specifiedChannels: mentionedChannels.map(ch => ch.id),
       selectedPermissions: [],
       excludedChannels: [],
-      action: null // Will be set to 'add' or 'remove' after user selection
+      action: null, // Will be set to 'add' or 'remove' after user selection
+      permissionPage: 0
     };
     sessionStore.set(message.author.id, session);
 
@@ -437,24 +427,64 @@ async function handleInteraction(interaction, context) {
       // present the permission selection menu with an appropriate description.
       const selectedAction = (interaction.values && interaction.values[0]) || 'add';
       session.action = selectedAction;
+      session.permissionPage = 0;
       // Prepare the embed for selecting specific permissions.
       const isRemove = selectedAction === 'remove';
+      const { totalPages } = getPermissionPage(session.permissionPage);
+      const guidanceText = totalPages > 1
+        ? '\n**يمكنك البحث داخل القائمة واستخدام أزرار التنقل.**'
+        : '\n**يمكنك البحث داخل القائمة.**';
       const permEmbed = colorManager.createEmbed()
         .setTitle('اختيار الصلاحيات')
         .setDescription(
           isRemove
-            ? '**اختر الصلاحيات التي تريد إزالتها من الرولات المحددة**'
-            : '**اختر الصلاحيات التي تريد إضافتها للرولات المحددة**'
+            ? `**اختر الصلاحيات التي تريد إزالتها من الرولات المحددة**${guidanceText}`
+            : `**اختر الصلاحيات التي تريد إضافتها للرولات المحددة**${guidanceText}`
         )
         .setThumbnail(
           'https://cdn.discordapp.com/attachments/1373799493111386243/1400390888416608286/download__3_-removebg-preview.png?ex=688d1fe5&is=688bce65&hm=55055a587668561ce27baf0665663f801e14662d4bf849351564a563b1e53b41&'
         );
-      const permMenu = buildPermissionSelectMenu();
+      if (totalPages > 1) {
+        permEmbed.setFooter({ text: `صفحة ${session.permissionPage + 1} من ${totalPages}` });
+      }
+      const permMenu = buildPermissionSelectMenu(session.permissionPage);
       const permRow = new ActionRowBuilder().addComponents(permMenu);
+      const pageControls = buildPermissionPageControls(session.permissionPage);
+      const components = pageControls ? [permRow, pageControls] : [permRow];
       // After deferring the interaction, update the original message to display the
       // permission selection embed and menu.  Using interaction.message.edit
       // ensures we are editing the existing message rather than a nonexistent reply.
-      await interaction.message.edit({ embeds: [permEmbed], components: [permRow] });
+      await interaction.message.edit({ embeds: [permEmbed], components });
+      return;
+    }
+
+    if (customId === 'perm_permissions_prev' || customId === 'perm_permissions_next') {
+      const delta = customId === 'perm_permissions_next' ? 1 : -1;
+      session.permissionPage += delta;
+      const { totalPages, pageIndex } = getPermissionPage(session.permissionPage);
+      session.permissionPage = pageIndex;
+
+      const guidanceText = totalPages > 1
+        ? '\n**يمكنك البحث داخل القائمة واستخدام أزرار التنقل.**'
+        : '\n**يمكنك البحث داخل القائمة.**';
+      const permEmbed = colorManager.createEmbed()
+        .setTitle('اختيار الصلاحيات')
+        .setDescription(
+          session.action === 'remove'
+            ? `**اختر الصلاحيات التي تريد إزالتها من الرولات المحددة**${guidanceText}`
+            : `**اختر الصلاحيات التي تريد إضافتها للرولات المحددة**${guidanceText}`
+        )
+        .setThumbnail(
+          'https://cdn.discordapp.com/attachments/1373799493111386243/1400390888416608286/download__3_-removebg-preview.png?ex=688d1fe5&is=688bce65&hm=55055a587668561ce27baf0665663f801e14662d4bf849351564a563b1e53b41&'
+        );
+      if (totalPages > 1) {
+        permEmbed.setFooter({ text: `صفحة ${session.permissionPage + 1} من ${totalPages}` });
+      }
+      const permMenu = buildPermissionSelectMenu(session.permissionPage);
+      const permRow = new ActionRowBuilder().addComponents(permMenu);
+      const pageControls = buildPermissionPageControls(session.permissionPage);
+      const components = pageControls ? [permRow, pageControls] : [permRow];
+      await interaction.message.edit({ embeds: [permEmbed], components });
       return;
     }
 
@@ -623,7 +653,7 @@ async function applyPermissions(interaction, session) {
     await Promise.all(workers);
     // Prepare a summary message
     const rolesMention = session.roles.map(id => `<@&${id}>`).join(', ');
-    const permsList = session.selectedPermissions.map(p => `• ${p}`).join('\n');
+    const permsList = session.selectedPermissions.map(p => `• ${formatPermissionLabel(p)}`).join('\n');
     const channelCount = updatedChannels;
     const excludedCount = session.excludedChannels ? session.excludedChannels.length : 0;
     const actionFieldName = session.action === 'remove' ? '**الصلاحيات المزالة**' : '**الصلاحيات المضافة**';
