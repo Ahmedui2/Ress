@@ -855,36 +855,29 @@ async function restoreBackup(backupFileName, guild, restoredBy, options, progres
             stats.channelsCreated = channelResults.filter(r => r.status === 'fulfilled' && r.value).length +
                                     standaloneResults.filter(r => r.status === 'fulfilled' && r.value).length;
 
-            // 🎯 ترتيب الكاتوقريات بالتوازي
-            await Promise.allSettled(
-                backupData.data.categories.map(async (catData) => {
-                    const newCatId = categoryMap.get(catData.id);
-                    if (newCatId) {
-                        const cat = guild.channels.cache.get(newCatId);
-                        if (cat) await cat.setPosition(catData.position).catch(() => {});
-                    }
-                })
-            );
-
-            // 🎯 ترتيب القنوات داخل الكاتوقريات بالتوازي
-            const allChannelsForOrdering = [];
+            // 🎯 ترتيب الكاتوقريات والقنوات دفعة واحدة (طلب واحد) للحفاظ على الترتيب بأقصى سرعة
+            const positions = [];
             for (const catData of backupData.data.categories) {
-                for (const chData of catData.channels) {
-                    allChannelsForOrdering.push(chData);
+                const newCatId = categoryMap.get(catData.id);
+                if (newCatId) {
+                    positions.push({ channel: newCatId, position: catData.position });
                 }
-            }
-            // إضافة القنوات خارج الكاتوقريات
-            allChannelsForOrdering.push(...backupData.data.channels);
-
-            await Promise.allSettled(
-                allChannelsForOrdering.map(async (chData) => {
+                for (const chData of catData.channels) {
                     const newChId = channelMap.get(chData.id);
                     if (newChId) {
-                        const ch = guild.channels.cache.get(newChId);
-                        if (ch) await ch.setPosition(chData.position).catch(() => {});
+                        positions.push({ channel: newChId, position: chData.position });
                     }
-                })
-            );
+                }
+            }
+            for (const chData of backupData.data.channels) {
+                const newChId = channelMap.get(chData.id);
+                if (newChId) {
+                    positions.push({ channel: newChId, position: chData.position });
+                }
+            }
+            if (positions.length > 0) {
+                await guild.channels.setPositions(positions).catch(() => {});
+            }
         }
 
         // إنشاء الإيموجيز بالتوازي الكامل
@@ -921,19 +914,15 @@ async function restoreBackup(backupFileName, guild, restoredBy, options, progres
             if (hasMessages) {
                 parallelOperations.push((async () => {
                     const messageChannels = Object.entries(backupData.data.messages || {});
-                    const channelBatchSize = 8; // زيادة إلى 8 قنوات بالتوازي
+                    await Promise.allSettled(
+                        messageChannels.map(async ([oldChannelId, messages]) => {
+                            const newChannelId = channelMap.get(oldChannelId);
+                            const channel = newChannelId ? guild.channels.cache.get(newChannelId) : null;
 
-                    for (let i = 0; i < messageChannels.length; i += channelBatchSize) {
-                        const batch = messageChannels.slice(i, i + channelBatchSize);
-
-                        await Promise.allSettled(
-                            batch.map(async ([oldChannelId, messages]) => {
-                                const newChannelId = channelMap.get(oldChannelId);
-                                const channel = newChannelId ? guild.channels.cache.get(newChannelId) : null;
-
-                                if (channel && channel.type === ChannelType.GuildText && messages && messages.length > 0) {
-                                    const messagesToRestore = messages.slice(0, 100);
-                                    for (const messageData of messagesToRestore) {
+                            if (channel && channel.type === ChannelType.GuildText && messages && messages.length > 0) {
+                                const messagesToRestore = messages.slice(0, 100);
+                                await Promise.allSettled(
+                                    messagesToRestore.map(async (messageData) => {
                                         try {
                                             const content = messageData.content || '';
                                             const embeds = messageData.embeds || [];
@@ -950,7 +939,7 @@ async function restoreBackup(backupFileName, guild, restoredBy, options, progres
                                                 await retryOperation(
                                                     async () => await channel.send({ content: messageContent, embeds: embeds }),
                                                     2,
-                                                    50,
+                                                    0,
                                                     'Send Message'
                                                 );
                                                 stats.messagesRestored++;
@@ -958,24 +947,22 @@ async function restoreBackup(backupFileName, guild, restoredBy, options, progres
                                         } catch (error) {
                                             console.error(`فشل إرسال رسالة في ${channel.name}`);
                                         }
-                                    }
-                                }
-                            })
-                        );
-                    }
+                                    })
+                                );
+                            }
+                        })
+                    );
 
                     // استعادة الثريدات
                     const threadChannels = Object.entries(backupData.data.threads || {});
-                    for (let i = 0; i < threadChannels.length; i += channelBatchSize) {
-                        const batch = threadChannels.slice(i, i + channelBatchSize);
+                    await Promise.allSettled(
+                        threadChannels.map(async ([oldChannelId, threads]) => {
+                            const newChannelId = channelMap.get(oldChannelId);
+                            const channel = newChannelId ? guild.channels.cache.get(newChannelId) : null;
 
-                        await Promise.allSettled(
-                            batch.map(async ([oldChannelId, threads]) => {
-                                const newChannelId = channelMap.get(oldChannelId);
-                                const channel = newChannelId ? guild.channels.cache.get(newChannelId) : null;
-
-                                if (channel && channel.type === ChannelType.GuildText && threads && threads.length > 0) {
-                                    for (const threadData of threads) {
+                            if (channel && channel.type === ChannelType.GuildText && threads && threads.length > 0) {
+                                await Promise.allSettled(
+                                    threads.map(async (threadData) => {
                                         try {
                                             const thread = await retryOperation(
                                                 async () => await channel.threads.create({
@@ -984,40 +971,42 @@ async function restoreBackup(backupFileName, guild, restoredBy, options, progres
                                                     reason: 'Backup Loading'
                                                 }),
                                                 2,
-                                                500,
+                                                0,
                                                 `Threads: ${threadData.name}`
                                             );
 
-                                            for (const msgData of threadData.messages || []) {
-                                                try {
-                                                    const content = msgData.content || '';
-                                                    const embeds = msgData.embeds || [];
+                                            await Promise.allSettled(
+                                                (threadData.messages || []).map(async (msgData) => {
+                                                    try {
+                                                        const content = msgData.content || '';
+                                                        const embeds = msgData.embeds || [];
 
-                                                    if (content || embeds.length > 0) {
-                                                        let senderName = 'Unknown User';
-                                                        if (msgData.author && msgData.author.id) {
-                                                            const member = await guild.members.fetch(msgData.author.id).catch(() => null);
-                                                            senderName = member ? `<@${msgData.author.id}>` : (msgData.author.global_name || msgData.author.username || msgData.author.tag || `User#${msgData.author.id}`);
+                                                        if (content || embeds.length > 0) {
+                                                            let senderName = 'Unknown User';
+                                                            if (msgData.author && msgData.author.id) {
+                                                                const member = await guild.members.fetch(msgData.author.id).catch(() => null);
+                                                                senderName = member ? `<@${msgData.author.id}>` : (msgData.author.global_name || msgData.author.username || msgData.author.tag || `User#${msgData.author.id}`);
+                                                            }
+
+                                                            const messageContent = `**From :** ${senderName}\n${content}`;
+                                                            await thread.send({ content: messageContent, embeds: embeds });
                                                         }
-
-                                                        const messageContent = `**From :** ${senderName}\n${content}`;
-                                                        await thread.send({ content: messageContent, embeds: embeds });
+                                                    } catch (error) {
+                                                        console.error(`فشل إرسال رسالة في ثريد ${thread.name}`);
                                                     }
-                                                } catch (error) {
-                                                    console.error(`فشل إرسال رسالة في ثريد ${thread.name}`);
-                                                }
-                                            }
+                                                })
+                                            );
 
                                             if (threadData.archived) await thread.setArchived(true);
                                             stats.threadsRestored++;
                                         } catch (error) {
                                             console.error(`فشل إنشاء ثريد ${threadData.name}:`, error);
                                         }
-                                    }
-                                }
-                            })
-                        );
-                    }
+                                    })
+                                );
+                            }
+                        })
+                    );
                 })());
             }
 
@@ -1066,51 +1055,41 @@ async function restoreBackup(backupFileName, guild, restoredBy, options, progres
                 parallelOperations.push((async () => {
                     await guild.members.fetch({ limit: 1000 });
 
-                    const batchSize = 30; // زيادة إلى 30 عضو بالتوازي لتسريع أكبر
-                    for (let i = 0; i < backupData.data.members.length; i += batchSize) {
-                        const batch = backupData.data.members.slice(i, i + batchSize);
+                    const results = await Promise.allSettled(
+                        backupData.data.members.map(async (memberData) => {
+                            try {
+                                const member = guild.members.cache.get(memberData.userId);
+                                if (!member) return { success: false };
 
-                        const results = await Promise.allSettled(
-                            batch.map(async (memberData) => {
-                                try {
-                                    const member = guild.members.cache.get(memberData.userId);
-                                    if (!member) return { success: false };
+                                const rolesToAdd = memberData.roles
+                                    .map(oldRoleId => roleMap.get(oldRoleId))
+                                    .filter(newRoleId => newRoleId && guild.roles.cache.has(newRoleId));
 
-                                    const rolesToAdd = memberData.roles
-                                        .map(oldRoleId => roleMap.get(oldRoleId))
-                                        .filter(newRoleId => newRoleId && guild.roles.cache.has(newRoleId));
-
-                                    if (rolesToAdd.length > 0) {
-                                        await retryOperation(
-                                            async () => await member.roles.add(rolesToAdd),
-                                            2,
-                                            200,
-                                            `Add roles to ${memberData.username}`
-                                        );
-                                    }
-
-                                    if (memberData.nickname) {
-                                        await member.setNickname(memberData.nickname).catch(() => {});
-                                    }
-
-                                    return { success: true };
-                                } catch (err) {
-                                    return { success: false, error: err.message, username: memberData.username };
+                                if (rolesToAdd.length > 0) {
+                                    await retryOperation(
+                                        async () => await member.roles.add(rolesToAdd),
+                                        2,
+                                        0,
+                                        `Add roles to ${memberData.username}`
+                                    );
                                 }
-                            })
-                        );
 
-                        for (const result of results) {
-                            if (result.status === 'fulfilled' && result.value.success) {
-                                stats.memberRolesRestored++;
-                            } else if (result.status === 'fulfilled' && result.value.error) {
-                                stats.errors.push(`فشل استعادة رولات ${result.value.username}: ${result.value.error}`);
+                                if (memberData.nickname) {
+                                    await member.setNickname(memberData.nickname).catch(() => {});
+                                }
+
+                                return { success: true };
+                            } catch (err) {
+                                return { success: false, error: err.message, username: memberData.username };
                             }
-                        }
+                        })
+                    );
 
-                        // تقليل التأخير إلى 200ms
-                        if (i + batchSize < backupData.data.members.length) {
-                            await new Promise(resolve => setTimeout(resolve, 200));
+                    for (const result of results) {
+                        if (result.status === 'fulfilled' && result.value.success) {
+                            stats.memberRolesRestored++;
+                        } else if (result.status === 'fulfilled' && result.value.error) {
+                            stats.errors.push(`فشل استعادة رولات ${result.value.username}: ${result.value.error}`);
                         }
                     }
                 })());
@@ -1709,6 +1688,9 @@ module.exports = {
         });
     }
 };
+
+module.exports.getAllBackups = getAllBackups;
+module.exports.restoreBackup = restoreBackup;
 
 // معالج عام لمودال الباكب (خارج execute لتجنب التكرار)
 let modalHandlerRegistered = false;

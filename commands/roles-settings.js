@@ -13,6 +13,7 @@ const { resolveIconBuffer, applyRoleIcon } = require('../utils/roleIconUtils.js'
 
 const activeTopSchedules = new Map();
 const activePanelCleanups = new Map();
+const panelCleanupKeepIds = new Map();
 const pendingPanelSetup = new Map();
 const pendingPanelTimeouts = new Map();
 const pendingBulkDeletes = new Map();
@@ -603,10 +604,14 @@ function startTopSchedule(guild, channel, messageId) {
 }
 
 function startPanelCleanup(guild, channelId, keepMessageId) {
-  if (!guild || !channelId) return;
+  if (!guild || !channelId || !keepMessageId) return;
   const cleanupKey = `${guild.id}:${channelId}`;
+  const keepIds = panelCleanupKeepIds.get(cleanupKey) || new Set();
+  keepIds.add(keepMessageId);
+  panelCleanupKeepIds.set(cleanupKey, keepIds);
+
   if (activePanelCleanups.has(cleanupKey)) {
-    clearInterval(activePanelCleanups.get(cleanupKey));
+    return;
   }
 
   const interval = setInterval(async () => {
@@ -614,7 +619,8 @@ function startPanelCleanup(guild, channelId, keepMessageId) {
     if (!channel || !channel.isTextBased()) return;
     const messages = await channel.messages.fetch({ limit: 100 }).catch(() => null);
     if (!messages) return;
-    const deletable = messages.filter(message => message.id !== keepMessageId);
+    const protectedIds = panelCleanupKeepIds.get(cleanupKey) || new Set();
+    const deletable = messages.filter(message => !protectedIds.has(message.id));
     if (deletable.size === 0) return;
     await channel.bulkDelete(deletable, true).catch(() => {});
   }, 180000);
