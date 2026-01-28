@@ -39,16 +39,16 @@ function updateTimeRemaining(embed, activeVacation) {
         const seconds = totalSeconds % 60;
 
         if (days > 0) {
-            timeDisplay = `${days}d ${hours}h ${minutes}m ${seconds}s`;
+            timeDisplay = `**${days}d ${hours}h ${minutes}m ${seconds}s**`;
         } else if (hours > 0) {
-            timeDisplay = `${hours}h ${minutes}m ${seconds}s`;
+            timeDisplay = `**${hours}h ${minutes}m ${seconds}s**`;
         } else if (minutes > 0) {
-            timeDisplay = `${minutes}m ${seconds}s`;
+            timeDisplay = `**${minutes}m ${seconds}s**`;
         } else {
-            timeDisplay = `${seconds}s`;
+            timeDisplay = `**${seconds}s**`;
         }
     } else {
-        timeDisplay = "انتهت الإجازة";
+        timeDisplay = "Ended";
     }
 
     // تحديث الحقل الثاني (Time Remaining)
@@ -86,7 +86,7 @@ async function execute(message, args, { client, BOT_OWNERS }) {
     const activeVacation = vacations.active?.[targetUser.id];
 
     if (!activeVacation) {
-        const desc = isSelfCheck ? 'أنت لست في إجازة حالياً.' : `${targetUser.tag} ليس في إجازة حالياً.`;
+        const desc = isSelfCheck ? `** انت مب بإجازه\n للتقديم اكتب اجازه**`: `**${targetUser.tag} ليس في إجازة حالياً.**`;
         const noVacationEmbed = new EmbedBuilder().setDescription(desc).setColor(colorManager.getColor());
         return message.reply({ embeds: [noVacationEmbed] });
     }
@@ -98,8 +98,8 @@ async function execute(message, args, { client, BOT_OWNERS }) {
         .setColor(colorManager.getColor('active') || '#2ECC71')
         .setThumbnail(targetUser.displayAvatarURL())
         .addFields(
-            { name: "الحالة", value: "في إجازة", inline: true },
-            { name: "المتبقي", value: remainingTime > 0 ? ms(remainingTime, { long: true }) : "انتهت", inline: true },
+            { name: "الحالة", value: "in vacation", inline: true },
+            { name: "وقتها", value: remainingTime > 0 ? ms(remainingTime, { long: true }) : "Ended", inline: true },
             { name: "المعتمد", value: activeVacation.approvedBy ? `<@${activeVacation.approvedBy}>` : 'غير معروف', inline: true },
             { name: "الرولات", value: activeVacation.removedRoles?.map(r => `<@&${r}>`).join(' ') || 'لا توجد', inline: false }
         )
@@ -117,7 +117,8 @@ async function execute(message, args, { client, BOT_OWNERS }) {
     if (isSelfCheck) {
         const endButton = new ButtonBuilder()
             .setCustomId(`vac_end_request_${targetUser.id}`)
-            .setLabel("طلب إنهاء الإجازة مبكراً")
+            .setLabel("طلب إنهاء الإجازة")
+        .setEmoji('<:emoji_24:1463998546100355177>')
             .setStyle(ButtonStyle.Danger);
         const row = new ActionRowBuilder().addComponents(endButton);
         components.push(row);
@@ -183,7 +184,7 @@ async function handleInteraction(interaction, context) {
                 const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
                 
                 return interaction.reply({
-                    content: `❌ **عليك كولداون حالياً بسبب رفض سابق.**\nالمتبقي: ${hours} ساعة و ${minutes} دقيقة.`,
+                    content: `❌ **عليك كولداون حالياً بسبب رفض سابق.\nالمتبقي : ${hours}h , ${minutes}m.**`,
                     ephemeral: true
                 });
             }
@@ -199,18 +200,20 @@ async function handleInteraction(interaction, context) {
         const sourceMessageId = interaction.message?.id || 'unknown';
         const confirmButton = new ButtonBuilder()
             .setCustomId(`vac_end_confirm_${userId}_${sourceMessageId}`)
-            .setLabel("نعم، أرسل الطلب")
-            .setStyle(ButtonStyle.Danger);
+            .setLabel("Yes, Send")
+        .setEmoji('<:emoji_2:1436850308780265615>')
+            .setStyle(ButtonStyle.Secondary);
 
         const cancelButton = new ButtonBuilder()
             .setCustomId(`vac_end_cancel_${userId}_${sourceMessageId}`)
-            .setLabel("لا، إلغاء")
+            .setLabel("No, Cancel")
+        .setEmoji('<:emoji_23:1463998483488051465>')
             .setStyle(ButtonStyle.Secondary);
 
         const row = new ActionRowBuilder().addComponents(confirmButton, cancelButton);
 
         await interaction.reply({
-            content: 'هل أنت متأكد من أنك تريد طلب إنهاء مبكر لإجازتك؟.',
+            content: '- **هل أنت متأكد من أنك تريد طلب إنهاء مبكر لإجازتك؟.**',
             components: [row],
             ephemeral: true
         });
@@ -238,7 +241,7 @@ async function handleInteraction(interaction, context) {
             const activeVacation = vacations.active?.[userId];
 
             if (!activeVacation) {
-                return interaction.reply({ content: 'لا توجد إجازة نشطة لك.', ephemeral: true });
+                return interaction.reply({ content: '**لا توجد إجازة نشطة لك.**', ephemeral: true });
             }
 
             // إضافة الطلب إلى قائمة الطلبات المعلقة للإنهاء
@@ -275,7 +278,7 @@ async function handleInteraction(interaction, context) {
             const member = await interaction.guild.members.fetch(userId);
 
             const embed = new EmbedBuilder()
-                .setTitle("إنهاء إجازة مبكر")
+                .setTitle("Request for end")
                 .setColor(colorManager.getColor('pending') || '#E67E22')
                 .setAuthor({ name: user.tag, iconURL: user.displayAvatarURL() })
                 .addFields(
@@ -288,8 +291,8 @@ async function handleInteraction(interaction, context) {
                 .setTimestamp();
 
             const buttons = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId(`vac_approve_termination_${userId}`).setLabel("موافقة على الإنهاء").setStyle(ButtonStyle.Success),
-                new ButtonBuilder().setCustomId(`vac_reject_termination_${userId}`).setLabel("رفض الإنهاء").setStyle(ButtonStyle.Danger)
+                new ButtonBuilder().setCustomId(`vac_approve_termination_${userId}`).setLabel("Accept?").setEmoji('<:emoji_23:1463998510319013929>').setStyle(ButtonStyle.Success),
+                new ButtonBuilder().setCustomId(`vac_reject_termination_${userId}`).setLabel("Reject?").setEmoji('<:emoji_23:1463998483488051465>').setStyle(ButtonStyle.Danger)
             );
 
             let notificationSent = false;
@@ -300,7 +303,7 @@ async function handleInteraction(interaction, context) {
                     const channel = await client.channels.fetch(settings.notificationChannel);
                     if (channel && channel.isTextBased()) {
                         await channel.send({
-                            content: '⏰ **طلب إنهاء إجازة مبكر**',
+                            content: '**Vacation Sys;**',
                             embeds: [embed],
                             components: [buttons]
                         });
@@ -319,7 +322,7 @@ async function handleInteraction(interaction, context) {
                     for (const approver of approvers) {
                         try {
                             await approver.send({
-                                content: '⏰ **طلب إنهاء إجازة مبكر**',
+                                content: '**Vacation Sys;**',
                                 embeds: [embed],
                                 components: [buttons]
                             });
@@ -335,7 +338,7 @@ async function handleInteraction(interaction, context) {
                 for (const approver of approvers) {
                     try {
                         await approver.send({
-                            content: '⏰ **طلب إنهاء إجازة مبكر**',
+                            content: '**Vacation Sys;**',
                             embeds: [embed],
                             components: [buttons]
                         });
@@ -362,14 +365,16 @@ async function handleInteraction(interaction, context) {
             // تعطيل جميع الأزرار نهائياً
             const disabledConfirmButton = new ButtonBuilder()
                 .setCustomId(`vac_end_sent_${userId}`)
-                .setLabel("✅ تم الإرسال")
+                .setLabel("Done")
+            .setEmoji('<:emoji_23:1463998510319013929>')
                 .setStyle(ButtonStyle.Success)
                 .setDisabled(true);
 
             const disabledCancelButton = new ButtonBuilder()
                 .setCustomId('vac_end_cancel_disabled')
-                .setLabel("إلغاء")
-                .setStyle(ButtonStyle.Secondary)
+                .setLabel("Cancel")
+            .setEmoji('<:emoji_2:1436850308780265615>')
+                .setStyle(ButtonStyle.Danger)
                 .setDisabled(true);
 
             const disabledRow = new ActionRowBuilder().addComponents(disabledConfirmButton, disabledCancelButton);
@@ -383,7 +388,8 @@ async function handleInteraction(interaction, context) {
             try {
                 const disabledButton = new ButtonBuilder()
                     .setCustomId(`vac_end_processing_${userId}`)
-                    .setLabel("⏳ تم إرسال الطلب")
+                    .setLabel("Sended")
+                .setEmoji('<:emoji_11:1448570670270251079>')
                     .setStyle(ButtonStyle.Secondary)
                     .setDisabled(true);
 
@@ -421,7 +427,7 @@ async function handleInteraction(interaction, context) {
 
         const disabledCancelButton = new ButtonBuilder()
             .setCustomId('vac_end_cancelled_cancel')
-            .setLabel("✅ Cancelled")
+            .setLabel("Cancelled")
             .setStyle(ButtonStyle.Success)
             .setDisabled(true);
 

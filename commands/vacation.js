@@ -70,7 +70,7 @@ async function execute(message, args, { BOT_OWNERS }) {
             const hours = Math.floor(timeLeft / (1000 * 60 * 60));
             const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
             
-            replyEmbed.setDescription(`❌ **عليك كولداون حالياً.**\nالمتبقي: ${hours} ساعة و ${minutes} دقيقة.`);
+            replyEmbed.setDescription(`❌ **عليك كولداون حالياً.\nالمتبقي : ${hours}h , ${minutes}h.**`);
             return message.reply({ embeds: [replyEmbed], ephemeral: true });
         } else {
             // تنظيف الكولداون المنتهي
@@ -84,7 +84,8 @@ async function execute(message, args, { BOT_OWNERS }) {
         return message.reply({ embeds: [replyEmbed], ephemeral: true });
     }
 
-    replyEmbed.setDescription("** اضغط عالزر وقدم اجازتك للمسؤولين **.");
+    replyEmbed.setDescription("** اضغط عالزر وقدم اجازتك للمسؤولين **.")
+    .setThumbnail('https://cdn.discordapp.com/attachments/1418630684368437402/1464000140850495713/sunbed.png?ex=6973dfe1&is=69728e61&hm=6a95a72b7f73ed7def4bf4bcd50725f1f1ce7173155c620dd7c6d82de5a849b5&');
     const requestButton = new ButtonBuilder()
         .setCustomId(`vac_request_start_${member.id}`)
         .setLabel("Vacation")
@@ -226,16 +227,16 @@ async function handleInteraction(interaction, context) {
                 .setColor(colorManager.getColor('pending') || '#E67E22')
                 .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
                 .addFields(
-                    { name: "___العضو___", value: `${member}`, inline: true },
-                    { name: "___المدة___", value: `**${ms(durationMs, { long: true })}**`, inline: true },
-                    { name: "___السبب___", value: reason, inline: false },
-                    { name: "___الرولات المراد إزالتها___", value: rolesDisplay, inline: false }
+                    { name: "*العضو*", value: `${member}`, inline: true },
+                    { name: "*المدة*", value: `___${ms(durationMs, { long: true })}___`, inline: true },
+                    { name: "*السبب*", value: reason, inline: false },
+                    { name: "*الرولات المراد إزالتها*", value: rolesDisplay, inline: false }
                 )
                 .setTimestamp();
 
             const buttons = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId(`vac_approve_${userId}`).setLabel("موافقة").setStyle(ButtonStyle.Success),
-                new ButtonBuilder().setCustomId(`vac_reject_${userId}`).setLabel("رفض").setStyle(ButtonStyle.Danger)
+                new ButtonBuilder().setCustomId(`vac_approve_${userId}`).setLabel("Allow?").setEmoji('<:emoji_41:1430334120839479449>').setStyle(ButtonStyle.Success),
+                new ButtonBuilder().setCustomId(`vac_reject_${userId}`).setLabel("Deny?").setEmoji('<:emoji_45:1430334556078211082>').setStyle(ButtonStyle.Danger)
             );
 
             // Send notifications
@@ -257,7 +258,8 @@ async function handleInteraction(interaction, context) {
                 const originalMessage = await interaction.message.fetch();
                 const disabledButton = new ButtonBuilder()
                     .setCustomId(`vac_request_used_${userId}`)
-                    .setLabel("✅ تم الإرسال")
+                    .setLabel("Done")
+                .setEmoji('<:emoji_41:1430334120839479449>')
                     .setStyle(ButtonStyle.Success)
                     .setDisabled(true);
 
@@ -336,11 +338,11 @@ async function handleInteraction(interaction, context) {
 
             const successEmbed = new EmbedBuilder()
                 .setColor(colorManager.getColor('approved') || '#2ECC71')
-                .setTitle('✅ تم قبول طلب الإجازة')
+                .setTitle('✅ Accepted ')
                 .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
                 .addFields(
                     { name: " العضو", value: `${member}`, inline: true },
-                    { name: " لمسؤول", value: `${approverMember}`, inline: true },
+                    { name: " المسؤول", value: `${approverMember}`, inline: true },
                     { name: " تاريخ البدء", value: `<t:${Math.floor(new Date(pendingRequest.startDate).getTime() / 1000)}:f>`, inline: true },
                     { name: " تاريخ الانتهاء", value: `<t:${Math.floor(new Date(pendingRequest.endDate).getTime() / 1000)}:f>`, inline: true },
                     { name: " السبب", value: pendingRequest.reason || 'غير محدد', inline: false }
@@ -353,13 +355,14 @@ async function handleInteraction(interaction, context) {
             // DM user
             try {
                 const dmEmbed = new EmbedBuilder()
-                    .setTitle('✅ تمت الموافقة على إجازتك')
+                    .setTitle('Vacation Accepted')
                     .setColor(colorManager.getColor('approved') || '#2ECC71')
-                    .setDescription(`أهلاً بك، لقد تمت الموافقة على طلب الإجازة الخاص بك في **${interaction.guild.name}**`)
+                .setThumbnail('https://cdn.discordapp.com/attachments/1418630684368437402/1464004613358354602/accept_1.png?ex=6973e40b&is=6972928b&hm=a3f08eef0d2e935d2ac79e7ec2abac142118666f007cc9834f11573983f658dc&')
+                    .setDescription(`** ياهلا، تم الموافقه على اجازتك\n سيرفر : ${interaction.guild.name}**`)
                     .addFields(
                         { name: " المسؤول", value: `${approverMember.user.tag}`, inline: true },
                         { name: " تنتهي في", value: `<t:${Math.floor(new Date(pendingRequest.endDate).getTime() / 1000)}:f>`, inline: true },
-                        { name: " ملاحظة", value: '"يمكنك الانهاء عن طريق كتابة "اجازتي ', inline: false }
+                        { name: " ملاحظة", value: 'للأنهاء اكتب اجازتي', inline: false }
                     )
                     .setTimestamp();
                 await member.user.send({ embeds: [dmEmbed] });
@@ -425,7 +428,7 @@ async function handleInteraction(interaction, context) {
 
         const rejectEmbed = new EmbedBuilder()
             .setColor(colorManager.getColor('rejected') || '#E74C3C')
-            .setTitle('❌ Request Rejected')
+            .setTitle('❌ Vacation Rejected')
             .setAuthor({ name: member?.user.tag || 'User', iconURL: member?.user.displayAvatarURL() })
             .addFields(
                 { name: " العضو", value: `<@${userId}>`, inline: true },
@@ -434,7 +437,7 @@ async function handleInteraction(interaction, context) {
                 { name: " السبب الأصلي", value: pendingRequest.reason, inline: false },
                 { name: " الكولداون", value: "12 ساعة", inline: true }
             )
-            .setFooter({ text: 'Space' })
+            .setFooter({ text: '🔴' })
             .setTimestamp();
 
         await interaction.editReply({ embeds: [rejectEmbed], components: [] });
@@ -443,9 +446,10 @@ async function handleInteraction(interaction, context) {
         if (member) {
             try {
                 const dmEmbed = new EmbedBuilder()
-                    .setTitle('❌ تم رفض طلب إجازتك')
+                    .setTitle('Vacation Denied')
                     .setColor(colorManager.getColor('rejected') || '#E74C3C')
-                    .setDescription(`نعتذر، لقد تم رفض طلب الإجازة الخاص بك في **${interaction.guild.name}**`)
+                .setThumbnail('https://cdn.discordapp.com/attachments/1418630684368437402/1464004608954339328/error.png?ex=6973e40a&is=6972928a&hm=cb04087e1992141dba1178f94cbaabd7a5b056fef0699964c66a40102c2dade5&')
+                    .setDescription(`** لقد تم رفض طلب اجازتك\n سيرفر : ${interaction.guild.name}**`)
                     .addFields(
                         { name: " المسؤول", value: `${approverMember.user.tag}`, inline: true },
                         { name: " سبب الرفض", value: rejectReason, inline: false },
