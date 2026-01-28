@@ -247,7 +247,7 @@ async function handleToggleIconRoles({ channel, member, role, roleEntry, interac
 
   const rolePosition = role.position;
   const rolesToRemove = member.roles.cache
-    .filter(r => r.position > rolePosition && r.icon)
+    .filter(r => r.position > rolePosition && (r.icon || r.color !== 0))
     .map(r => r.id);
 
   if (rolesToRemove.length === 0) {
@@ -400,6 +400,7 @@ async function handleManageMembers({ channel, userId, role, roleEntry, interacti
     }
 
     if (selection.isUserSelectMenu() && selection.customId === `myrole_manage_add_${sessionId}`) {
+      await selection.deferUpdate().catch(() => {});
       for (const id of selection.values) {
         const member = await role.guild.members.fetch(id).catch(() => null);
         if (!member) continue;
@@ -411,6 +412,7 @@ async function handleManageMembers({ channel, userId, role, roleEntry, interacti
     }
 
     if (selection.isStringSelectMenu() && selection.customId === `myrole_manage_remove_${sessionId}`) {
+      await selection.deferUpdate().catch(() => {});
       if (!selection.values.includes('none')) {
         for (const id of selection.values) {
           const member = await role.guild.members.fetch(id).catch(() => null);
@@ -434,7 +436,7 @@ async function handleManageMembers({ channel, userId, role, roleEntry, interacti
       ]);
     }
 
-    await selection.update(buildPayload()).catch(() => {});
+    await selection.editReply(buildPayload()).catch(() => {});
 
     await refreshPanelMessage(panelMessage, roleEntry, role);
   });
@@ -664,8 +666,9 @@ async function handleMembersList({ channel, role, interaction, roleEntry }) {
     }
 
     if (selection.isStringSelectMenu() && selection.customId === `myrole_members_select_${sessionId}`) {
+      await selection.deferUpdate().catch(() => {});
       if (selection.values.includes('none')) {
-        await selection.update(buildPayload()).catch(() => {});
+        await selection.editReply(buildPayload()).catch(() => {});
         return;
       }
       const now = Date.now();
@@ -684,7 +687,7 @@ async function handleMembersList({ channel, role, interaction, roleEntry }) {
         details.push(`**${member.displayName} (<@${member.id}>)\n• حصل على الرول بتاريخ : ${assignedAt}\n• منذ : ${since}\n• اللي اعطاه الرول : ${assignedBy}**`);
       }
       detailsText = details.join('\n\n') || null;
-      await selection.update(buildPayload()).catch(() => {});
+      await selection.editReply(buildPayload()).catch(() => {});
     }
   });
 
