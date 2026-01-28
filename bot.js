@@ -16,7 +16,7 @@ if (global.v8debug === undefined) {
 
 // زيادة حدود الذاكرة والمستمعين وتخزين الكاش
 require('events').EventEmitter.defaultMaxListeners = Infinity;
-process.setMaxListeners(50);
+process.setMaxListeners(0);
 
 const { Client, GatewayIntentBits, Partials, Collection, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, EmbedBuilder, Events, MessageFlags } = require('discord.js');
 const dotenv = require('dotenv');
@@ -411,17 +411,33 @@ try {
 
   // تسجيل معالج setactive ونظام الرولات التفاعلية
   try {
+
     const setactiveCommand = require('./commands/setactive.js');
+
     const interactiveRolesManager = require('./utils/interactiveRolesManager.js');
-    
+
     
 
     
+
+    client.on('messageCreate', async (message) => {
+
+      if (interactiveRolesManager.handleMessage) {
+
+        await interactiveRolesManager.handleMessage(message);
+
+      }
+
+    });
+
   } catch (error) {
+
     console.error('❌ خطأ في تسجيل نظام الرولات التفاعلية:', error);
+
   }
 
 let isDataDirty = false;
+
 let saveTimeout = null;
 
 // Cache للبيانات المستخدمة بكثرة
@@ -745,7 +761,6 @@ global.updatePrefix = updatePrefix;
 global.scheduleSave = scheduleSave;
 global.reloadData = reloadData;
 global.cleanInvalidUserIds = cleanInvalidUserIds;
-global.setupGlobalSetupCollector = setupGlobalSetupCollector;
 global.invalidateCache = invalidateCache;
 global.updateAdminRolesCache = updateAdminRolesCache;
 
@@ -1906,7 +1921,7 @@ client.on('messageCreate', async message => {
     const hasAdminRole = CURRENT_ADMIN_ROLES.length > 0 && member.roles.cache.some(role => CURRENT_ADMIN_ROLES.includes(role.id));
 
     // Commands for everyone (help, tops, تفاعلي, ستريكي, profile, myprofile, داوني)
-    if (commandName === 'رولي' || commandName === 'tops' || commandName === 'توب' || commandName === 'تفاعلي' || commandName === 'تواجدي' || commandName === 'me' || commandName === 'ستريكي' || commandName === 'profile' || commandName === 'id' || commandName === 'p' || commandName === 'myprofile' || commandName === 'داوني') {
+    if (commandName === 'رولي' || commandName === 'tops' || commandName === 'توب' || commandName === 'تفاعلي' || commandName === 'انهاء' || commandName === 'user' || commandName === 'ستريكي' || commandName === 'profile' || commandName === 'id' || commandName === 'مشاكلي' || commandName === 'myprofile' || commandName === 'داوني') {
       if (commandName === 'مسؤولياتي') {
         await showUserResponsibilities(message, message.author, responsibilities, client);
       } else {
@@ -1918,7 +1933,7 @@ client.on('messageCreate', async message => {
       await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
     }
     // Commands for admins and owners (user, مسؤول, اجازه, check, rooms)
-    else if (commandName === 'user' || commandName === 'list' || commandName === 'حذف' || commandName === 'settings' || commandName === 'انشاء' || commandName === 'اجازه' || commandName === 'مسؤولياتي' || commandName === 'اجازتي' || commandName === 'check' || commandName === 'rooms') {
+    else if (commandName === 'user' || commandName === 'list' || commandName === 'حذف' || commandName === 'settings' || commandName === 'problem' || commandName === 'مشكله' || commandName === 'settings' || commandName === 'انشاء' || commandName === 'اجازه' || commandName === 'مسؤولياتي' || commandName === 'اجازتي' || commandName === 'check' || commandName === 'rooms') {
       if (commandName === 'مسؤول') {
         console.log(`🔍 التحقق من صلاحيات المستخدم ${message.author.id} لأمر مسؤول:`);
         console.log(`- isOwner: ${isOwner}`);
