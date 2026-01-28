@@ -35,6 +35,7 @@ const { getRoleEntry, addRoleEntry } = require('./utils/customRolesSystem.js');
 const interactionRouter = require('./utils/interactionRouter');
 const { handleAdminApplicationInteraction } = require('./commands/admin-apply.js');
 const { restoreTopSchedules, restorePanelCleanups } = require('./commands/roles-settings.js');
+const { handleChannelDelete, handleRoleDelete } = require('./utils/protectionManager.js');
 
 dotenv.config();
 
@@ -1407,6 +1408,22 @@ client.on('roleUpdate', async (oldRole, newRole) => {
     } catch (error) {
         console.error('❌ خطأ في معالجة تحديث الرول:', error);
     }
+});
+
+client.on('channelDelete', channel => {
+  try {
+    handleChannelDelete(channel);
+  } catch (error) {
+    console.error('❌ خطأ في حماية القنوات:', error);
+  }
+});
+
+client.on('roleDelete', role => {
+  try {
+    handleRoleDelete(role);
+  } catch (error) {
+    console.error('❌ خطأ في حماية الرولات:', error);
+  }
 });
 
 // تتبع التفاعلات - معالج محسن ومحدث
