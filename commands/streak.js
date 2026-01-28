@@ -103,6 +103,9 @@ function initializeDatabase() {
 
 function runQuery(sql, params = []) {
     return new Promise((resolve, reject) => {
+        if (!db) {
+            return reject(new Error('Streak database not initialized'));
+        }
         db.run(sql, params, function(err) {
             if (err) reject(err);
             else resolve(this);
@@ -112,6 +115,9 @@ function runQuery(sql, params = []) {
 
 function getQuery(sql, params = []) {
     return new Promise((resolve, reject) => {
+        if (!db) {
+            return reject(new Error('Streak database not initialized'));
+        }
         db.get(sql, params, (err, row) => {
             if (err) reject(err);
             else resolve(row);
@@ -121,6 +127,9 @@ function getQuery(sql, params = []) {
 
 function allQuery(sql, params = []) {
     return new Promise((resolve, reject) => {
+        if (!db) {
+            return reject(new Error('Streak database not initialized'));
+        }
         db.all(sql, params, (err, rows) => {
             if (err) reject(err);
             else resolve(rows);
@@ -148,6 +157,64 @@ function normalizeDividerUrl(url) {
         console.log(`⚠️ رابط خط فاصل غير صالح: ${url}`);
         return null;
     }
+}
+
+function getDividerCachePath(guildId, imageUrl) {
+    const baseDir = path.join(__dirname, '..', 'data', 'streak_dividers');
+    const extension = (() => {
+        try {
+            const parsedUrl = new URL(imageUrl);
+            return path.extname(parsedUrl.pathname) || '.png';
+        } catch (error) {
+            return '.png';
+        }
+    })();
+    return path.join(baseDir, `${guildId}${extension}`);
+}
+
+async function cacheDividerImage(guildId, imageUrl) {
+    try {
+        const baseDir = path.join(__dirname, '..', 'data', 'streak_dividers');
+        if (!fs.existsSync(baseDir)) {
+            fs.mkdirSync(baseDir, { recursive: true });
+        }
+
+        const response = await axios.get(imageUrl, {
+            responseType: 'arraybuffer',
+            timeout: 10000,
+            maxRedirects: 5,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (compatible; StreakBot/1.0)',
+                'Accept': 'image/*,*/*'
+            }
+        });
+
+        const filePath = getDividerCachePath(guildId, imageUrl);
+        fs.writeFileSync(filePath, Buffer.from(response.data, 'binary'));
+        return filePath;
+    } catch (error) {
+        console.log(`⚠️ تعذر حفظ صورة الخط الفاصل محلياً: ${error.message}`);
+        return null;
+    }
+}
+
+function resolveDividerSource(settings, guildId) {
+    const rawValue = settings?.dividerImageUrl;
+    if (!rawValue) return null;
+
+    if (rawValue.startsWith('local:')) {
+        const localPath = rawValue.replace(/^local:/, '');
+        if (fs.existsSync(localPath)) {
+            return { type: 'local', path: localPath };
+        }
+        console.log(`⚠️ ملف الخط الفاصل المحلي غير موجود: ${localPath}`);
+        return null;
+    }
+
+    const normalizedUrl = normalizeDividerUrl(rawValue);
+    if (!normalizedUrl) return null;
+
+    return { type: 'url', url: normalizedUrl };
 }
 
 function getDividerFilename(url) {
@@ -672,13 +739,13 @@ async function handleLockedRoomMessage(message, client, botOwners) {
 }
 
 async function createDivider(channel, user, settings, guildId, userMessageIds = []) {
-    const dividerUrl = normalizeDividerUrl(settings?.dividerImageUrl);
-    if (!dividerUrl) {
+    const dividerSource = resolveDividerSource(settings, guildId);
+    if (!dividerSource) {
         console.log('⚠️ لا يوجد رابط صورة للخط الفاصل في الإعدادات');
         return;
     }
 
-    console.log(`🖼️ إنشاء خط فاصل للمستخدم ${user.username} - رابط: ${dividerUrl}`);
+    console.log(`🖼️ إنشاء خط فاصل للمستخدم ${user.username} - المصدر: ${dividerSource.type}`);
 
     const deleteButton = new ActionRowBuilder()
         .addComponents(
@@ -690,45 +757,64 @@ async function createDivider(channel, user, settings, guildId, userMessageIds = 
         );
 
     try {
-        // محاولة تحميل الصورة كـ attachment
-        const axios = require('axios');
         let dividerMsg;
-        
-        try {
-            // تحميل الصورة من الرابط
-            const response = await axios.get(dividerUrl, { 
-                responseType: 'arraybuffer',
-                timeout: 10000,
-                maxRedirects: 5,
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (compatible; StreakBot/1.0)',
-                    'Accept': 'image/*,*/*'
-                }
-            });
-            
-            const buffer = Buffer.from(response.data, 'binary');
-            const filename = getDividerFilename(dividerUrl);
-            
-            const attachment = new AttachmentBuilder(buffer, { name: filename });
-            
-            // إرسال الصورة كـ attachment مع الزر
-            dividerMsg = await channel.send({ 
+
+        if (dividerSource.type === 'local') {
+            const attachment = new AttachmentBuilder(dividerSource.path);
+            dividerMsg = await channel.send({
                 files: [attachment],
                 components: [deleteButton]
             });
-            
-            console.log(`✅ تم إرسال الخط الفاصل كـ attachment - معرف الرسالة: ${dividerMsg.id}`);
-        } catch (downloadError) {
-            console.log(`❌ فشل تحميل صورة الخط الفاصل:`, downloadError.message);
-            try {
-                const filename = getDividerFilename(dividerUrl);
+            console.log(`✅ تم إرسال الخط الفاصل من الملف المحلي - معرف الرسالة: ${dividerMsg.id}`);
+        } else {
+            const cachedPath = await cacheDividerImage(guildId, dividerSource.url);
+            if (cachedPath) {
+                const attachment = new AttachmentBuilder(cachedPath);
                 dividerMsg = await channel.send({
-                    files: [{ attachment: dividerUrl, name: filename }],
+                    files: [attachment],
                     components: [deleteButton]
                 });
-                console.log(`✅ تم إرسال الخط الفاصل من الرابط مباشرة - معرف الرسالة: ${dividerMsg.id}`);
-            } catch (sendError) {
-                console.log(`❌ فشل إرسال الخط الفاصل من الرابط:`, sendError.message);
+                console.log(`✅ تم إرسال الخط الفاصل من التخزين المحلي - معرف الرسالة: ${dividerMsg.id}`);
+                const updatedSettings = { ...settings, dividerImageUrl: `local:${cachedPath}` };
+                await saveSettings(guildId, updatedSettings);
+            }
+        }
+
+        if (!dividerMsg && dividerSource.type === 'url') {
+            try {
+                const response = await axios.get(dividerSource.url, { 
+                    responseType: 'arraybuffer',
+                    timeout: 10000,
+                    maxRedirects: 5,
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (compatible; StreakBot/1.0)',
+                        'Accept': 'image/*,*/*'
+                    }
+                });
+                
+                const buffer = Buffer.from(response.data, 'binary');
+                const filename = getDividerFilename(dividerSource.url);
+                
+                const attachment = new AttachmentBuilder(buffer, { name: filename });
+                
+                dividerMsg = await channel.send({ 
+                    files: [attachment],
+                    components: [deleteButton]
+                });
+                
+                console.log(`✅ تم إرسال الخط الفاصل كـ attachment - معرف الرسالة: ${dividerMsg.id}`);
+            } catch (downloadError) {
+                console.log(`❌ فشل تحميل صورة الخط الفاصل:`, downloadError.message);
+                try {
+                    const filename = getDividerFilename(dividerSource.url);
+                    dividerMsg = await channel.send({
+                        files: [{ attachment: dividerSource.url, name: filename }],
+                        components: [deleteButton]
+                    });
+                    console.log(`✅ تم إرسال الخط الفاصل من الرابط مباشرة - معرف الرسالة: ${dividerMsg.id}`);
+                } catch (sendError) {
+                    console.log(`❌ فشل إرسال الخط الفاصل من الرابط:`, sendError.message);
+                }
             }
         }
         
@@ -946,15 +1032,26 @@ async function getApprovers(settings, guild, botOwners) {
     return [...new Set(approvers)];
 }
 
-async function handleApproveRestore(interaction, client) {
+async function handleApproveRestore(interaction, client, botOwners) {
     const [, , , guildId, userId] = interaction.customId.split('_');
 
     if (!guildId || !userId) {
         return interaction.reply({ content: '**تعذر تحديد بيانات الطلب**', flags: 64 });
     }
 
+    const settings = await getSettings(guildId);
+    const guild = await client.guilds.fetch(guildId).catch(() => null);
+    if (!settings || !guild) {
+        return interaction.reply({ content: '**تعذر تحميل إعدادات السيرفر**', flags: 64 });
+    }
+
+    const approvers = await getApprovers(settings, guild, botOwners || []);
+    if (!approvers.includes(interaction.user.id)) {
+        return interaction.reply({ content: '**ليس لديك صلاحية لقبول الطلب**', flags: 64 });
+    }
+
     if (!interaction.deferred && !interaction.replied) {
-        await interaction.deferUpdate();
+        await interaction.deferReply({ ephemeral: true });
     }
 
     const request = await getQuery(
@@ -970,13 +1067,13 @@ async function handleApproveRestore(interaction, client) {
         );
         
         if (cancelledRequest) {
-            if (interaction.deferred) {
+            if (interaction.deferred || interaction.replied) {
                 return interaction.editReply({ content: '**تم إلغاء هذا الطلب تلقائياً لأن العضو بدأ سلسلة ستريك جديدة بالفعل**' });
             }
             return interaction.reply({ content: '**تم إلغاء هذا الطلب تلقائياً لأن العضو بدأ سلسلة ستريك جديدة بالفعل**', flags: 64 });
         }
         
-        if (interaction.deferred) {
+        if (interaction.deferred || interaction.replied) {
             return interaction.editReply({ content: '**لا يوجد طلب استعادة قيد الانتظار لهذا المستخدم**' });
         }
         return interaction.reply({ content: '**لا يوجد طلب استعادة قيد الانتظار لهذا المستخدم**', flags: 64 });
@@ -1007,20 +1104,46 @@ async function handleApproveRestore(interaction, client) {
         embeds: [colorManager.createEmbed()
             .setTitle('**تمت الموافقة على الطلب**')
             .setDescription(`تمت الموافقة على استعادة الـ Streak للعضو <@${userId}>`)
-            ],
-        components: []
+            ]
     });
+
+    if (interaction.message) {
+        const disabledButtons = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId(`streak_approve_restore_${guildId}_${userId}`)
+                .setLabel('موافقة')
+                .setStyle(ButtonStyle.Success)
+                .setDisabled(true),
+            new ButtonBuilder()
+                .setCustomId(`streak_reject_restore_${guildId}_${userId}`)
+                .setLabel('رفض')
+                .setStyle(ButtonStyle.Danger)
+                .setDisabled(true)
+        );
+        await interaction.message.edit({ components: [disabledButtons] }).catch(() => {});
+    }
 }
 
-async function handleRejectRestore(interaction, client) {
+async function handleRejectRestore(interaction, client, botOwners) {
     const [, , , guildId, userId] = interaction.customId.split('_');
 
     if (!guildId || !userId) {
         return interaction.reply({ content: '**تعذر تحديد بيانات الطلب**', flags: 64 });
     }
 
+    const settings = await getSettings(guildId);
+    const guild = await client.guilds.fetch(guildId).catch(() => null);
+    if (!settings || !guild) {
+        return interaction.reply({ content: '**تعذر تحميل إعدادات السيرفر**', flags: 64 });
+    }
+
+    const approvers = await getApprovers(settings, guild, botOwners || []);
+    if (!approvers.includes(interaction.user.id)) {
+        return interaction.reply({ content: '**ليس لديك صلاحية لرفض الطلب**', flags: 64 });
+    }
+
     if (!interaction.deferred && !interaction.replied) {
-        await interaction.deferUpdate();
+        await interaction.deferReply({ ephemeral: true });
     }
 
     const request = await getQuery(
@@ -1036,13 +1159,13 @@ async function handleRejectRestore(interaction, client) {
         );
         
         if (cancelledRequest) {
-            if (interaction.deferred) {
+            if (interaction.deferred || interaction.replied) {
                 return interaction.editReply({ content: '**تم إلغاء هذا الطلب تلقائياً لأن العضو بدأ سلسلة ستريك جديدة بالفعل**' });
             }
             return interaction.reply({ content: '**تم إلغاء هذا الطلب تلقائياً لأن العضو بدأ سلسلة ستريك جديدة بالفعل**', flags: 64 });
         }
         
-        if (interaction.deferred) {
+        if (interaction.deferred || interaction.replied) {
             return interaction.editReply({ content: '**لا يوجد طلب استعادة قيد الانتظار لهذا المستخدم**' });
         }
         return interaction.reply({ content: '**لا يوجد طلب استعادة قيد الانتظار لهذا المستخدم**', flags: 64 });
@@ -1070,9 +1193,24 @@ async function handleRejectRestore(interaction, client) {
         embeds: [colorManager.createEmbed()
             .setTitle('**تم رفض الطلب**')
             .setDescription(`تم رفض طلب استعادة الـ Streak للعضو <@${userId}>`)
-            .setColor('#FFFFFF')],
-        components: []
+            .setColor('#FFFFFF')]
     });
+
+    if (interaction.message) {
+        const disabledButtons = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId(`streak_approve_restore_${guildId}_${userId}`)
+                .setLabel('موافقة')
+                .setStyle(ButtonStyle.Success)
+                .setDisabled(true),
+            new ButtonBuilder()
+                .setCustomId(`streak_reject_restore_${guildId}_${userId}`)
+                .setLabel('رفض')
+                .setStyle(ButtonStyle.Danger)
+                .setDisabled(true)
+        );
+        await interaction.message.edit({ components: [disabledButtons] }).catch(() => {});
+    }
 }
 
 function startStreakScheduler(client) {
@@ -1242,7 +1380,8 @@ module.exports = {
                 return interaction.reply({ content: '**الرابط غير صالح، تأكد أنه رابط صورة صحيح**', flags: 64 });
             }
             let settings = await getSettings(guildId) || {};
-            settings.dividerImageUrl = imageUrl;
+            const cachedPath = await cacheDividerImage(guildId, imageUrl);
+            settings.dividerImageUrl = cachedPath ? `local:${cachedPath}` : imageUrl;
             await saveSettings(guildId, settings);
             
             const statusEmbed = createStatusEmbed(settings);
@@ -1278,11 +1417,11 @@ module.exports = {
         }
 
         if (customId.startsWith('streak_approve_restore_')) {
-            return handleApproveRestore(interaction, client);
+            return handleApproveRestore(interaction, client, BOT_OWNERS);
         }
 
         if (customId.startsWith('streak_reject_restore_')) {
-            return handleRejectRestore(interaction, client);
+            return handleRejectRestore(interaction, client, BOT_OWNERS);
         }
 
         // التحقق من الصلاحيات لجميع التفاعلات ما عدا طلبات الاستعادة
@@ -1431,6 +1570,14 @@ module.exports = {
 
     async handleMessageDelete(message, client) {
         try {
+            if (!db) {
+                try {
+                    await initializeDatabase();
+                } catch (error) {
+                    console.error('❌ فشل في تهيئة قاعدة البيانات أثناء حذف رسالة Streak:', error);
+                    return;
+                }
+            }
             // استخدام guildId و channelId بدلاً من guild و channel لدعم partial messages
             const guildId = message.guildId || message.guild?.id;
             const channelId = message.channelId || message.channel?.id;

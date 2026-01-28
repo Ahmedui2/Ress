@@ -158,21 +158,26 @@ function shouldShowSeconds(users) {
 async function getTopUsers(db, category, period, limit = 50) {
     try {
         const now = moment().tz('Asia/Riyadh');
+        const nowMs = now.valueOf();
         let dateFilter = '';
         let params = [];
+        let periodStartMs = null;
 
         if (period === 'daily') {
             const today = now.format('YYYY-MM-DD');
             dateFilter = 'AND date = ?';
             params.push(today);
+            periodStartMs = now.clone().startOf('day').valueOf();
         } else if (period === 'weekly') {
             const weekStart = now.clone().startOf('week').format('YYYY-MM-DD');
             dateFilter = 'AND date >= ?';
             params.push(weekStart);
+            periodStartMs = now.clone().startOf('week').valueOf();
         } else if (period === 'monthly') {
             const monthStart = now.clone().startOf('month').format('YYYY-MM-DD');
             dateFilter = 'AND date >= ?';
             params.push(monthStart);
+            periodStartMs = now.clone().startOf('month').valueOf();
         }
 
         let query = '';
@@ -271,7 +276,12 @@ async function getTopUsers(db, category, period, limit = 50) {
             const updatedResults = [...results];
             
             for (const [userId, session] of client.voiceSessions.entries()) {
-                const liveDuration = Date.now() - (session.startTime || session.sessionStartTime);
+                let liveDuration = 0;
+                if (!session.isAFK) {
+                    const liveStart = session.lastTrackedTime || session.startTime || session.sessionStartTime || nowMs;
+                    const effectiveStart = periodStartMs ? Math.max(liveStart, periodStartMs) : liveStart;
+                    liveDuration = Math.max(0, nowMs - effectiveStart);
+                }
                 const existingUser = updatedResults.find(r => r.user_id === userId);
                 
                 if (existingUser) {

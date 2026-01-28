@@ -482,7 +482,7 @@ async function handleInteraction(interaction, context) {
 
         if (action === 'reject') {
             const modal = new ModalBuilder()
-                .setCustomId(`vac_reject_term_modal_${userId}_${interaction.message?.id || 'unknown'}`)
+                .setCustomId(`vac_reject_termination_modal_${userId}_${interaction.message?.id || 'unknown'}`)
                 .setTitle('رفض إنهاء الإجازة');
 
             const reasonInput = new TextInputBuilder()
@@ -560,7 +560,7 @@ async function handleInteraction(interaction, context) {
         }
     }
 
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('vac_reject_term_modal_')) {
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('vac_reject_termination_modal_')) {
         const parts = interaction.customId.split('_');
         const userId = parts[4];
         const sourceMessageId = parts[5];
