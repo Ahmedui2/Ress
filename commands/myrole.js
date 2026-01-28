@@ -81,6 +81,35 @@ async function respondEphemeral(interaction, payload) {
   }
 }
 
+function isInteractionRepliable(interaction) {
+  if (!interaction) return false;
+  if (typeof interaction.isRepliable === 'function') {
+    return interaction.isRepliable();
+  }
+  return true;
+}
+
+async function safeReply(interaction, payload) {
+  if (!isInteractionRepliable(interaction)) return false;
+  if (interaction.deferred || interaction.replied) {
+    await interaction.followUp({ ...payload, ephemeral: true }).catch(() => {});
+    return true;
+  }
+  await interaction.reply({ ...payload, ephemeral: true }).catch(() => {});
+  return true;
+}
+
+async function safeDeferReply(interaction) {
+  if (!isInteractionRepliable(interaction)) return false;
+  if (interaction.deferred || interaction.replied) return true;
+  try {
+    await interaction.deferReply({ ephemeral: true });
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 async function respondEphemeralWithMessage(interaction, payload) {
   if (!interaction) return null;
   if (interaction.deferred || interaction.replied) {
@@ -131,7 +160,7 @@ function buildControlEmbed(roleEntry, role, membersCount) {
     .setTitle('التحكم بالرول الخاص')
     .setDescription(description)
     .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
-    .setThumbnail('https://cdn.discordapp.com/attachments/1465209977378439262/1465336713932181547/management.png?ex=6978bca9&is=69776b29&hm=a17826a20f609e991c57c481204b4ca31c296005a24defaf2958000b4bd32221&')
+    .setThumbnail('https://cdn.discordapp.com/attachments/1462053630722052137/1465722134763536618/channels.png?ex=697a239c&is=6978d21c&hm=7c81be345ccae344cb53b404db8bda9c9795ed8876104716823471c63fcbbc07&')
 .setFooter({ text: 'Roles sys;' });
 
 }
@@ -339,7 +368,7 @@ async function handleManageMembers({ channel, userId, role, roleEntry, interacti
           .setDescription(description)
 
           .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
-          .setThumbnail('https://cdn.discordapp.com/attachments/1465209977378439262/1465341916752380058/system_1.png?ex=6978c181&is=69777001&hm=9a9758a585f5feeb30ae896f3f646dbf9ffac69f0d1b596b1faccd505fc7f74f&')
+          .setThumbnail('https://cdn.discordapp.com/attachments/1462053630722052137/1465722969228574963/system_1.png?ex=697a2463&is=6978d2e3&hm=8f6864998ef0fe3a85eed31682b56f0118f9bd617ccf9a6ae1312c2a8bd0bbf3&')
       ],
       components
     };
@@ -915,26 +944,28 @@ async function handleMemberAction(interaction, action, client) {
   if (!interaction.guild) return;
   const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
   if (!member) {
-    await interaction.reply({ content: '**❌ العضو غير موجود.**', ephemeral: true });
+    await safeReply(interaction, { content: '**❌ العضو غير موجود.**' });
     return;
   }
   const roleEntry = findRoleByOwner(member.guild.id, member.id);
   if (!roleEntry) {
-    await interaction.reply({ content: '**❌ ليس لديك رول خاص.**', ephemeral: true });
+    await safeReply(interaction, { content: '**❌ ليس لديك رول خاص.**' });
     return;
   }
   const role = member.guild.roles.cache.get(roleEntry.roleId);
   if (!role) {
-    await interaction.reply({ content: '**❌ لم يتم العثور على الرول في السيرفر.**', ephemeral: true });
+    await safeReply(interaction, { content: '**❌ لم يتم العثور على الرول في السيرفر.**' });
     return;
   }
+  if (!isInteractionRepliable(interaction)) return;
 
   if (action === 'members') {
     await handleMembersList({ channel: interaction.channel, role, interaction, roleEntry });
     return;
   }
   if (action === 'name') {
-    await interaction.deferReply({ ephemeral: true });
+    const deferred = await safeDeferReply(interaction);
+    if (!deferred) return;
     await handleNameChange({ channel: interaction.channel, userId: member.id, role, roleEntry, interaction });
     return;
   }
@@ -943,32 +974,37 @@ async function handleMemberAction(interaction, action, client) {
     return;
   }
   if (action === 'icon') {
-    await interaction.deferReply({ ephemeral: true });
+    const deferred = await safeDeferReply(interaction);
+    if (!deferred) return;
     await handleIconChange({ channel: interaction.channel, userId: member.id, role, roleEntry, interaction });
     return;
   }
   if (action === 'transfer') {
-    await interaction.deferReply({ ephemeral: true });
+    const deferred = await safeDeferReply(interaction);
+    if (!deferred) return;
     await handleTransfer({ channel: interaction.channel, userId: member.id, role, roleEntry, interaction });
     return;
   }
   if (action === 'manage') {
-    await interaction.deferReply({ ephemeral: true });
+    const deferred = await safeDeferReply(interaction);
+    if (!deferred) return;
     await handleManageMembers({ channel: interaction.channel, userId: member.id, role, roleEntry, interaction });
     return;
   }
   if (action === 'delete') {
-    await interaction.deferReply({ ephemeral: true });
+    const deferred = await safeDeferReply(interaction);
+    if (!deferred) return;
     await handleDeleteRole({ channel: interaction.channel, interaction, role, roleEntry });
     return;
   }
   if (action === 'toggle_icons') {
-    await interaction.deferReply({ ephemeral: true });
+    const deferred = await safeDeferReply(interaction);
+    if (!deferred) return;
     await handleToggleIconRoles({ channel: interaction.channel, member, role, roleEntry, interaction });
     return;
   }
 
-  await interaction.reply({ content: '❌ خيار غير معروف.', ephemeral: true });
+  await safeReply(interaction, { content: '❌ خيار غير معروف.' });
 }
 
 async function runRoleAction({ interaction, action, roleEntry, role, panelMessage }) {
