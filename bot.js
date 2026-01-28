@@ -1053,15 +1053,19 @@ client.once(Events.ClientReady, async () => {
         else if (oldChannelId && !newChannelId) {
             if (existingSession) {
                 const currentTime = Date.now();
-                // حساب الوقت المتبقي منذ آخر عملية حفظ فقط
-                const duration = currentTime - existingSession.lastTrackedTime;
-                
+                let duration = 0;
+                let startTime = existingSession.lastTrackedTime;
+                if (existingSession.isAFK && existingSession.afkSince) {
+                    startTime = existingSession.afkSince;
+                }
+                duration = currentTime - startTime;
+
                 if (duration > 1000) {
                     await trackUserActivity(userId, 'voice_time', {
                         duration: duration,
                         channelId: oldChannelId,
                         channelName: oldChannelName,
-                        startTime: existingSession.lastTrackedTime,
+                        startTime: startTime,
                         endTime: currentTime
                     }).catch(() => {});
                 }
@@ -1076,14 +1080,18 @@ client.once(Events.ClientReady, async () => {
         else if (oldChannelId && newChannelId && oldChannelId !== newChannelId) {
             if (existingSession) {
                 const currentTime = Date.now();
-                const duration = currentTime - existingSession.lastTrackedTime;
+                let startTime = existingSession.lastTrackedTime;
+                if (existingSession.isAFK && existingSession.afkSince) {
+                    startTime = existingSession.afkSince;
+                }
+                const duration = currentTime - startTime;
                 
                 if (duration > 1000) {
                     await trackUserActivity(userId, 'voice_time', {
                         duration: duration,
                         channelId: oldChannelId,
                         channelName: oldChannelName,
-                        startTime: existingSession.lastTrackedTime,
+                        startTime: startTime,
                         endTime: currentTime
                     }).catch(() => {});
                 }
@@ -1132,9 +1140,25 @@ client.once(Events.ClientReady, async () => {
 
             for (const [userId, session] of client.voiceSessions.entries()) {
                 try {
-                    const totalSessionDuration = now - (session.startTime || session.sessionStartTime);
+                    const sessionStart = session.startTime || session.sessionStartTime;
+                    const totalSessionDuration = now - sessionStart;
                     if (totalSessionDuration >= AFK_LIMIT) {
-                        session.isAFK = true;
+                        if (!session.isAFK) {
+                            const limitTime = sessionStart + AFK_LIMIT;
+                            const remaining = limitTime - session.lastTrackedTime;
+                            if (remaining > 1000) {
+                                await trackUserActivity(userId, 'voice_time', {
+                                    duration: remaining,
+                                    channelId: session.channelId,
+                                    channelName: session.channelName,
+                                    startTime: session.lastTrackedTime,
+                                    endTime: limitTime
+                                }).catch(() => {});
+                            }
+                            session.lastTrackedTime = Math.max(session.lastTrackedTime, limitTime);
+                            session.isAFK = true;
+                            session.afkSince = limitTime;
+                        }
                         continue;
                     }
 
