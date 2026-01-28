@@ -3252,7 +3252,7 @@ client.on('interactionCreate', async (interaction) => {
         }
 
         // Handle regular vacation approvals and rejections
-        if (interaction.isButton() && interaction.customId.startsWith('vac_approve_')) {
+        if (interaction.isButton() && interaction.customId.startsWith('vac_approve_') && !interaction.customId.startsWith('vac_approve_termination_')) {
             const vacationCommand = client.commands.get('اجازه');
             if (vacationCommand && typeof vacationCommand.handleInteraction === 'function') {
                 await vacationCommand.handleInteraction(interaction, vacationContext);
@@ -3262,7 +3262,8 @@ client.on('interactionCreate', async (interaction) => {
 
         if (interaction.customId.startsWith('vac_list_') || 
             interaction.customId.startsWith('vac_pending_') || 
-            interaction.customId.startsWith('vac_terminate_')) {
+            interaction.customId.startsWith('vac_terminate_') ||
+            interaction.customId.startsWith('vac_term_')) {
 
             const vacationsCommand = client.commands.get('اجازات');
 
