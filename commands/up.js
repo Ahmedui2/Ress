@@ -238,16 +238,48 @@ module.exports = {
                 if (settings.logChannel && promotionDetails.length > 0) {
                     const logChannel = client.channels.cache.get(settings.logChannel);
                     if (logChannel) {
+                        // Build the base embed with static fields
                         const logEmbed = colorManager.createEmbed()
                             .setTitle(selectedAction === 'up' ? '✅️ Promoted Successfully' : '🔽 Demoted Successfully')
-                            .addFields([
-                                { name: 'المسؤول المنفذ', value: `${message.author}`, inline: true },
-                                { name: 'عدد الترقيات', value: `**${selectedLevels}**`, inline: true },
-                                { name: 'نوع العملية', value: `**${selectedAction === 'up' ? 'ترقية' : 'تنزيل'} (${selectedType === 'rank' ? 'حرف' : 'ظواهر'})**`, inline: true },
-                                { name: 'المتأثرين', value: promotionDetails.slice(0, 10).join('\n') + (promotionDetails.length > 10 ? `\n\n*... وغيرهم ( ${promotionDetails.length - 10} آخرين )*` : '') },
-                                { name: 'التاريخ', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
-                            ])
                             .setTimestamp();
+
+                        // Prepare the list of field objects to add. Start with the static ones.
+                        const fields = [];
+                        fields.push({ name: 'المسؤول المنفذ', value: `${message.author}`, inline: true });
+                        fields.push({ name: 'عدد الترقيات', value: `**${selectedLevels}**`, inline: true });
+                        fields.push({ name: 'نوع العملية', value: `**${selectedAction === 'up' ? 'ترقية' : 'تنزيل'} (${selectedType === 'rank' ? 'حرف' : 'ظواهر'})**`, inline: true });
+                        // We'll add the affected members list later and timestamp after
+                        fields.push({ name: 'التاريخ', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true });
+
+                        // Build the affected members string(s) ensuring each does not exceed Discord's 1024 character per field limit.
+                        const maxFieldLength = 1024;
+                        const lines = promotionDetails.slice(0, 10); // limit to first 10 affected entries in logs
+                        if (promotionDetails.length > 10) {
+                            lines.push(`\n*... وغيرهم ( ${promotionDetails.length - 10} آخرين )*`);
+                        }
+                        let current = '';
+                        let part = 1;
+                        lines.forEach((line, idx) => {
+                            // Determine if adding this line would exceed the max length
+                            // +1 for a newline when needed
+                            const newLen = current.length + (current.length ? 1 : 0) + line.length;
+                            if (newLen > maxFieldLength) {
+                                // Push the current chunk and start a new one
+                                fields.push({ name: part === 1 ? 'المتأثرين' : `المتأثرين (جزء ${part})`, value: current });
+                                part++;
+                                current = line;
+                            } else {
+                                current += (current.length ? '\n' : '') + line;
+                            }
+                        });
+                        if (current) {
+                            fields.push({ name: part === 1 ? 'المتأثرين' : `المتأثرين (جزء ${part})`, value: current });
+                        }
+                        // Add the built fields to the embed in chunks of 25 to respect Discord's field limits
+                        // (There are only a few fields expected here, but we stay safe.)
+                        // Discord allows up to 25 fields per embed. We send only one embed.
+                        logEmbed.addFields(fields);
+
                         await logChannel.send({ embeds: [logEmbed] }).catch(() => {});
                     }
                 }
