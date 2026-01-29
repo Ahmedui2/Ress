@@ -2266,29 +2266,3 @@ interactionRouter.register('customroles_', async (interaction, context = {}) => 
   const { client, BOT_OWNERS } = context;
   await handleCustomRolesInteraction(interaction, client, BOT_OWNERS || []);
 });
-  if (interaction.isModalSubmit() && interaction.customId.startsWith('customroles_search_modal_')) {
-    if (!isAdminUser) {
-      await interaction.reply({ content: '❌ لا تملك صلاحية.', ephemeral: true });
-      return;
-    }
-    const payload = interaction.customId.replace('customroles_search_modal_', '');
-    const lastUnderscore = payload.lastIndexOf('_');
-    const action = payload.slice(0, lastUnderscore);
-    const requesterId = payload.slice(lastUnderscore + 1);
-    if (requesterId !== interaction.user.id) {
-      await interaction.reply({ content: '❌ هذا النموذج ليس لك.', ephemeral: true });
-      return;
-    }
-    await interaction.deferReply({ ephemeral: true });
-    const query = interaction.fields.getTextInputValue('customroles_search_query');
-    const roleMenu = buildAdminRoleMenu(action, interaction.user.id, interaction.guild, query);
-    if (!roleMenu) {
-      await interaction.editReply({ content: '❌ لا توجد نتائج مطابقة ضمن الرولات الخاصة.' });
-      return;
-    }
-    await interaction.editReply({
-      content: 'اختر الرول المطلوب:',
-      components: [roleMenu]
-    });
-    return;
-  }
