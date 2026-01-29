@@ -2060,74 +2060,12 @@ isBotPromotion(guildId, userId, roleId) {
     // Member leave/join handlers for promotions
     async handleMemberLeave(member) {
         try {
-            const activePromotes = readJson(activePromotesPath, {});
             const leftMembersPromotes = readJson(leftMembersPromotesPath, {});
-            const userPromotes = [];
-
-            // البحث عن الترقيات النشطة للعضو
-            for (const [promoteId, promoteData] of Object.entries(activePromotes)) {
-                if (promoteData.userId === member.id && promoteData.guildId === member.guild.id) {
-                    userPromotes.push({ promoteId, ...promoteData });
-                }
-            }
-
-            if (userPromotes.length > 0) {
-                // حفظ بيانات العضو المنسحب
-                const memberKey = `${member.id}_${member.guild.id}`;
-                leftMembersPromotes[memberKey] = {
-                    userId: member.id,
-                    guildId: member.guild.id,
-                    username: member.user.username,
-                    displayName: member.displayName,
-                    leftAt: Date.now(),
-                    promotes: userPromotes
-                };
-
+            const memberKey = `${member.id}_${member.guild.id}`;
+            if (leftMembersPromotes[memberKey]) {
+                delete leftMembersPromotes[memberKey];
                 writeJson(leftMembersPromotesPath, leftMembersPromotes);
-
-                // تسجيل انسحاب
-                const settings = this.getSettings();
-                if (settings.logChannel) {
-                    try {
-                        const logChannel = await member.guild.channels.fetch(settings.logChannel);
-                        if (logChannel) {
-                            const embed = colorManager.createEmbed()
-                                .setTitle('**عضو عليه ترقية قد انسحب**')
-                                .setDescription(`قام عضو عليه ترقية بالانسحاب - تم حفظ بياناته للحماية`)
-                                .addFields([
-                                    { name: '**العضو**', value: `<@${member.id}>`, inline: true },
-                                    { name: '**وقت الانسحاب**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
-                                    { name: '**عدد الترقيات**', value: userPromotes.length.toString(), inline: true }
-                                ])
-                                .setColor('#ff9500')
-                                .setTimestamp();
-
-                            // إضافة تفاصيل الترقيات
-                            let promotesList = '';
-                            for (let i = 0; i < Math.min(userPromotes.length, 5); i++) {
-                                const promoteData = userPromotes[i];
-                                const role = await member.guild.roles.fetch(promoteData.roleId).catch(() => null);
-                                const roleName = role ? role.name : `Role ID: ${promoteData.roleId}`;
-                                const endTime = promoteData.endTime ? `<t:${Math.floor(promoteData.endTime / 1000)}:R>` : 'نهائي';
-                                promotesList += `• **${roleName}** - ينتهي: ${endTime}\n`;
-                            }
-
-                            if (userPromotes.length > 5) {
-                                promotesList += `• **+${userPromotes.length - 5} ترقية إضافية**\n`;
-                            }
-
-                            embed.addFields([{ name: '**الترقيات المحفوظة**', value: promotesList || 'لا توجد', inline: false }]);
-
-                            await logChannel.send({ embeds: [embed] });
-                        }
-                    } catch (error) {
-                        console.error('خطأ في إرسال لوق الانسحاب:', error);
-                    }
-                }
-
-                console.log(`تم حفظ ${userPromotes.length} ترقية للعضو المنسحب: ${member.displayName}`);
             }
-
         } catch (error) {
             console.error('خطأ في معالجة انسحاب العضو:', error);
         }
@@ -2137,117 +2075,10 @@ isBotPromotion(guildId, userId, roleId) {
         try {
             const leftMembersPromotes = readJson(leftMembersPromotesPath, {});
             const memberKey = `${member.id}_${member.guild.id}`;
-            const memberData = leftMembersPromotes[memberKey];
-
-            if (memberData && memberData.promotes && memberData.promotes.length > 0) {
-                const activePromotes = readJson(activePromotesPath, {});
-                let restoredPromotes = 0;
-                const failedPromotes = [];
-
-                for (const promoteData of memberData.promotes) {
-                    try {
-                        // فحص إذا كانت الترقية منتهية الصلاحية
-                        if (promoteData.endTime && promoteData.endTime <= Date.now()) {
-                            failedPromotes.push({
-                                reason: 'انتهت المدة أثناء الغياب',
-                                roleId: promoteData.roleId
-                            });
-                            continue;
-                        }
-
-                        // التحقق من وجود الرول
-                        const role = await member.guild.roles.fetch(promoteData.roleId).catch(() => null);
-                        if (!role) {
-                            failedPromotes.push({
-                                reason: 'الرول غير موجود',
-                                roleId: promoteData.roleId
-                            });
-                            continue;
-                        }
-
-                        // التحقق من أن العضو لا يملك الرول
-                        if (!member.roles.cache.has(promoteData.roleId)) {
-                            // إضافة الرول مرة أخرى
-                            await member.roles.add(promoteData.roleId, `إعادة تطبيق ترقية بعد العودة: ${promoteData.reason}`);
-                        }
-
-                        // إعادة إضافة الترقية للقائمة النشطة
-                        const newPromoteId = `${member.id}_${promoteData.roleId}_${Date.now()}`;
-                        const restoredPromote = {
-                            ...promoteData,
-                            id: newPromoteId,
-                            restoredAfterLeave: true,
-                            restoredAt: Date.now(),
-                            originalLeftAt: memberData.leftAt
-                        };
-
-                        activePromotes[newPromoteId] = restoredPromote;
-                        restoredPromotes++;
-
-                    } catch (error) {
-                        console.error(`خطأ في إعادة تطبيق ترقية:`, error);
-                        failedPromotes.push({
-                            reason: error.message || 'خطأ غير معروف',
-                            roleId: promoteData.roleId
-                        });
-                    }
-                }
-
-                // حفظ التغييرات
-                if (restoredPromotes > 0) {
-                    writeJson(activePromotesPath, activePromotes);
-                }
-
-                // حذف بيانات العضو المنسحب
+            if (leftMembersPromotes[memberKey]) {
                 delete leftMembersPromotes[memberKey];
                 writeJson(leftMembersPromotesPath, leftMembersPromotes);
-
-                // تسجيل العودة
-                const settings = this.getSettings();
-                if (settings.logChannel) {
-                    try {
-                        const logChannel = await member.guild.channels.fetch(settings.logChannel);
-                        if (logChannel) {
-                            const embed = colorManager.createEmbed()
-                                .setTitle('**عاد عضو عليه ترقية**')
-                                .setDescription(`عاد عضو عليه ترقية وتم إعادة تطبيق الترقيات`)
-                                .addFields([
-                                    { name: '**العضو**', value: `<@${member.id}>`, inline: true },
-                                    { name: '**وقت العودة**', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
-                                    { name: '**تم استعادتها**', value: restoredPromotes.toString(), inline: true }
-                                ])
-                                .setColor('#00ff00')
-                                .setTimestamp();
-
-                            if (failedPromotes.length > 0) {
-                                embed.addFields([{
-                                    name: '**فشل في استعادتها**',
-                                    value: failedPromotes.length.toString(),
-                                    inline: true
-                                }]);
-                            }
-
-                            const timeSinceLeft = Date.now() - memberData.leftAt;
-                            const timeLeftText = timeSinceLeft > 3600000 ?
-                                `${Math.floor(timeSinceLeft / 3600000)} ساعة` :
-                                `${Math.floor(timeSinceLeft / 60000)} دقيقة`;
-
-                            embed.addFields([{
-                                name: '**فترة الغياب**',
-                                value: timeLeftText,
-                                inline: true
-                            }]);
-
-                            await logChannel.send({ embeds: [embed] });
-                        }
-                    } catch (error) {
-                        console.error('خطأ في إرسال لوق العودة:', error);
-                    }
-                }
-
-                console.log(`تم إعادة تطبيق ${restoredPromotes} ترقية للعضو العائد: ${member.displayName}`);
             }
-
         } catch (error) {
             console.error('خطأ في معالجة عودة العضو:', error);
         }

@@ -1261,6 +1261,8 @@ async function handleMemberUpdate(oldMember, newMember, client) {
         if (executorMember) {
           // Authorised if guild owner
           if (executorMember.id === guild.ownerId) authorized = true;
+          // Authorised if the bot removed the mute (scheduled expiry or command action)
+          else if (client?.user?.id && executorMember.id === client.user.id) authorized = true;
           // Or if has responsible roles from config
           else if (config.responsibleRoleIds && config.responsibleRoleIds.some((rid) => executorMember.roles.cache.has(rid))) {
             authorized = true;
