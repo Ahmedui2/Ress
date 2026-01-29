@@ -8,6 +8,14 @@ const backupsDir = path.join(__dirname, '..', 'backups');
 
 const activeRestores = new Set();
 const restoringStates = new Map();
+const pendingChecks = new Map();
+
+function cancelPendingCheck(guildId) {
+  if (pendingChecks.has(guildId)) {
+    clearTimeout(pendingChecks.get(guildId));
+    pendingChecks.delete(guildId);
+  }
+}
 
 function readJSON(filePath, fallback) {
   try {
@@ -122,24 +130,6 @@ async function restoreProtection(backupFileName, guild, mode) {
   }
 
   if (mode === 'channels' || mode === 'all') {
-    const createCategories = Promise.allSettled(
-      (backupData.data.categories || []).map(async (catData) => {
-        try {
-          const newCat = await guild.channels.create({
-            name: catData.name,
-            type: ChannelType.GuildCategory,
-            position: catData.position,
-            permissionOverwrites: convertPermissions(catData.permissionOverwrites || [])
-          });
-          categoryMap.set(catData.id, newCat.id);
-          channelMap.set(catData.id, newCat.id);
-          return newCat;
-        } catch (err) {
-          return null;
-        }
-      })
-    );
-
     const createRootChannels = Promise.allSettled(
       (backupData.data.channels || []).map(async (chData) => {
         try {
@@ -163,43 +153,48 @@ async function restoreProtection(backupFileName, guild, mode) {
       })
     );
 
-    await createCategories;
+    const createCategoryPipelines = (backupData.data.categories || []).map(async (catData) => {
+      try {
+        const newCat = await guild.channels.create({
+          name: catData.name,
+          type: ChannelType.GuildCategory,
+          position: catData.position,
+          permissionOverwrites: convertPermissions(catData.permissionOverwrites || [])
+        });
+        categoryMap.set(catData.id, newCat.id);
+        channelMap.set(catData.id, newCat.id);
 
-    const allChannelsInCategories = [];
-    for (const catData of backupData.data.categories || []) {
-      const parentId = categoryMap.get(catData.id);
-      if (parentId) {
-        for (const chData of catData.channels || []) {
-          allChannelsInCategories.push({ ...chData, parentId });
-        }
+        await Promise.allSettled(
+          (catData.channels || []).map(async (chData) => {
+            try {
+              const opts = {
+                name: chData.name,
+                type: chData.type,
+                parent: newCat.id,
+                position: chData.position,
+                permissionOverwrites: convertPermissions(chData.permissionOverwrites || [])
+              };
+              if (chData.topic) opts.topic = chData.topic;
+              if (chData.nsfw !== undefined) opts.nsfw = chData.nsfw;
+              if (chData.rateLimitPerUser) opts.rateLimitPerUser = chData.rateLimitPerUser;
+              if (chData.bitrate) opts.bitrate = chData.bitrate;
+              if (chData.userLimit) opts.userLimit = chData.userLimit;
+              const newCh = await guild.channels.create(opts);
+              channelMap.set(chData.id, newCh.id);
+              return newCh;
+            } catch (err) {
+              return null;
+            }
+          })
+        );
+
+        return newCat;
+      } catch (err) {
+        return null;
       }
-    }
+    });
 
-    const createCategoryChannels = Promise.allSettled(
-      allChannelsInCategories.map(async (chData) => {
-        try {
-          const opts = {
-            name: chData.name,
-            type: chData.type,
-            parent: chData.parentId,
-            position: chData.position,
-            permissionOverwrites: convertPermissions(chData.permissionOverwrites || [])
-          };
-          if (chData.topic) opts.topic = chData.topic;
-          if (chData.nsfw !== undefined) opts.nsfw = chData.nsfw;
-          if (chData.rateLimitPerUser) opts.rateLimitPerUser = chData.rateLimitPerUser;
-          if (chData.bitrate) opts.bitrate = chData.bitrate;
-          if (chData.userLimit) opts.userLimit = chData.userLimit;
-          const newCh = await guild.channels.create(opts);
-          channelMap.set(chData.id, newCh.id);
-          return newCh;
-        } catch (err) {
-          return null;
-        }
-      })
-    );
-
-    await Promise.allSettled([createRootChannels, createCategoryChannels]);
+    await Promise.allSettled([createRootChannels, ...createCategoryPipelines]);
 
     const positions = [];
     for (const catData of backupData.data.categories || []) {
@@ -230,6 +225,7 @@ async function triggerRestore(guild, config, reason, mode) {
   if (!config?.backupFile || activeRestores.has(guild.id)) return;
   activeRestores.add(guild.id);
   restoringStates.set(guild.id, { startedAt: Date.now(), reason });
+  cancelPendingCheck(guild.id);
   try {
     if (mode === 'channels') {
       await deleteChannelsOnly(guild);
@@ -248,7 +244,10 @@ async function triggerRestore(guild, config, reason, mode) {
 }
 
 function scheduleCheck(guild, config, reason) {
-  setImmediate(async () => {
+  cancelPendingCheck(guild.id);
+  const timeoutId = setTimeout(async () => {
+    pendingChecks.delete(guild.id);
+    if (activeRestores.has(guild.id) || restoringStates.has(guild.id)) return;
     const channelCount = getCurrentChannelCount(guild);
     const roleCount = getCurrentRoleCount(guild);
     const expectedChannels = config.expectedChannels || 0;
@@ -258,9 +257,6 @@ function scheduleCheck(guild, config, reason) {
     if (channelTrigger || roleTrigger) {
       const mode = channelTrigger && roleTrigger ? 'all' : (channelTrigger ? 'channels' : 'roles');
       await triggerRestore(guild, config, reason, mode);
-      if (!activeRestores.has(guild.id)) {
-        scheduleCheck(guild, config, 'post-restore');
-      }
       return;
     }
 
@@ -269,11 +265,9 @@ function scheduleCheck(guild, config, reason) {
     if (channelsMissing || rolesMissing) {
       const mode = channelsMissing && rolesMissing ? 'all' : (channelsMissing ? 'channels' : 'roles');
       await triggerRestore(guild, config, 'repair', mode);
-      if (!activeRestores.has(guild.id)) {
-        scheduleCheck(guild, config, 'post-repair');
-      }
     }
-  });
+  }, 250);
+  pendingChecks.set(guild.id, timeoutId);
 }
 
 function handleChannelDelete(channel) {
@@ -281,9 +275,7 @@ function handleChannelDelete(channel) {
   if (!guild) return;
   const config = getGuildConfig(guild.id);
   if (!config?.enabled) return;
-  if (restoringStates.has(guild.id)) {
-    setImmediate(() => scheduleCheck(guild, config, 'restore-conflict'));
-  }
+  if (activeRestores.has(guild.id) || restoringStates.has(guild.id)) return;
   scheduleCheck(guild, config, 'channels');
 }
 
@@ -292,9 +284,7 @@ function handleRoleDelete(role) {
   if (!guild) return;
   const config = getGuildConfig(guild.id);
   if (!config?.enabled) return;
-  if (restoringStates.has(guild.id)) {
-    setImmediate(() => scheduleCheck(guild, config, 'restore-conflict'));
-  }
+  if (activeRestores.has(guild.id) || restoringStates.has(guild.id)) return;
   scheduleCheck(guild, config, 'roles');
 }
 
