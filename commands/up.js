@@ -9,6 +9,8 @@ const {
 const colorManager = require('../utils/colorManager');
 const promoteManager = require('../utils/promoteManager');
 const { getRealUserStats } = require('../utils/userStatsCollector');
+const fs = require('fs');
+const path = require('path');
 
 // ذاكرة مؤقتة للرولات الإدارية لتقليل عمليات البحث المتكررة
 let cachedAdminRoles = null;
@@ -57,10 +59,30 @@ module.exports = {
             return message.reply({ content: '**⚠️ لديك عملية قيد التنفيذ حالياً ، يرجى الانتظار .**', flags: MessageFlags.Ephemeral });
         }
 
-        const hasPermission = await promoteManager.hasPermission({ 
+        let hasPermission = await promoteManager.hasPermission({ 
             user: message.author, 
             member: message.member 
         }, BOT_OWNERS);
+
+        if (!hasPermission) {
+            const settings = promoteManager.getSettings();
+            const permissionType = settings.allowedUsers?.type;
+
+            if (permissionType === 'owners') {
+                hasPermission = BOT_OWNERS.includes(message.author.id);
+            } else if (permissionType === 'roles') {
+                hasPermission = message.member.roles.cache.some(role => settings.allowedUsers.targets.includes(role.id));
+            } else if (permissionType === 'responsibility') {
+                const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
+                const responsibilities = fs.existsSync(responsibilitiesPath)
+                    ? JSON.parse(fs.readFileSync(responsibilitiesPath, 'utf8'))
+                    : {};
+                hasPermission = settings.allowedUsers.targets.some((respName) => {
+                    const respData = responsibilities[respName];
+                    return respData?.responsibles?.includes(message.author.id);
+                });
+            }
+        }
 
         if (!hasPermission) {
             return message.reply({ content: '**❌ ليس لديك صلاحية لاستخدام هذا الأمر .**', flags: MessageFlags.Ephemeral });

@@ -36,6 +36,7 @@ const interactionRouter = require('./utils/interactionRouter');
 const { handleAdminApplicationInteraction } = require('./commands/admin-apply.js');
 const { restoreTopSchedules, restorePanelCleanups } = require('./commands/roles-settings.js');
 const { handleChannelDelete, handleRoleDelete } = require('./utils/protectionManager.js');
+let interactiveRolesManager;
 dotenv.config();
 
 // مسارات ملفات البيانات
@@ -414,7 +415,7 @@ try {
 
     const setactiveCommand = require('./commands/setactive.js');
 
-    const interactiveRolesManager = require('./utils/interactiveRolesManager.js');
+    interactiveRolesManager = require('./utils/interactiveRolesManager.js');
 
     
 
