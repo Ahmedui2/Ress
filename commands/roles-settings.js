@@ -139,6 +139,18 @@ function buildAdminSummaryEmbed(title, fields = [], description = null) {
   return embed;
 }
 
+function buildRoleOptions(guild) {
+  return getGuildRoles(guild.id)
+    .map(entry => guild.roles.cache.get(entry.roleId))
+    .filter(Boolean)
+    .map(role => ({
+      label: (role.name && role.name.trim() ? role.name : `Role ${role.id}`).slice(0, 100),
+      value: role.id
+    }))
+    .filter(option => option.label && option.value)
+    .slice(0, 25);
+}
+
 function buildAdminRoleMenu(action, userId, guild) {
   if (action === 'add') {
     const menu = new RoleSelectMenuBuilder()
@@ -149,39 +161,27 @@ function buildAdminRoleMenu(action, userId, guild) {
     return new ActionRowBuilder().addComponents(menu);
   }
 
-  const roles = getGuildRoles(guild.id)
-    .map(entry => guild.roles.cache.get(entry.roleId))
-    .filter(Boolean)
-    .slice(0, 25);
-  if (roles.length === 0) return null;
+  const roleOptions = buildRoleOptions(guild);
+  if (roleOptions.length === 0) return null;
   const menu = new StringSelectMenuBuilder()
     .setCustomId(`customroles_admin_panel_select_${action}_${userId}`)
     .setPlaceholder('اختر رولاً خاصاً...')
     .setMinValues(1)
     .setMaxValues(1)
-    .addOptions(roles.map(role => ({
-      label: role.name.slice(0, 100),
-      value: role.id
-    })));
+    .addOptions(roleOptions);
 
   return new ActionRowBuilder().addComponents(menu);
 }
 
 function buildAdminBulkDeleteMenu(userId, guild) {
-  const roles = getGuildRoles(guild.id)
-    .map(entry => guild.roles.cache.get(entry.roleId))
-    .filter(Boolean)
-    .slice(0, 25);
-  if (roles.length === 0) return null;
+  const roleOptions = buildRoleOptions(guild);
+  if (roleOptions.length === 0) return null;
   const menu = new StringSelectMenuBuilder()
     .setCustomId(`customroles_admin_bulkdelete_${userId}`)
     .setPlaceholder('اختر الرولات المطلوب حذفها...')
     .setMinValues(1)
-    .setMaxValues(Math.min(25, roles.length))
-    .addOptions(roles.map(role => ({
-      label: role.name.slice(0, 100),
-      value: role.id
-    })));
+    .setMaxValues(Math.min(25, roleOptions.length))
+    .addOptions(roleOptions);
   return new ActionRowBuilder().addComponents(menu);
 }
 

@@ -542,6 +542,24 @@ async function handleIconChange({ channel, userId, role, roleEntry, interaction,
   if (!response) return;
 
   try {
+    const rawInput = response.content.trim();
+    if (rawInput === '0' || rawInput === '٠') {
+      await role.setIcon(null).catch(() => {});
+      roleEntry.icon = null;
+      roleEntry.updatedAt = Date.now();
+      addRoleEntry(role.id, roleEntry);
+      await refreshPanelMessage(panelMessage, roleEntry, role);
+      if (interaction) {
+        await respondEphemeral(interaction, { content: '**✅ تم إزالة ايكون الرول.**' });
+      } else {
+        await sendTemp(channel, '**✅ تم إزالة ايكون الرول.**');
+      }
+      await logRoleAction(role.guild, 'تم إزالة ايكون رول خاص.', [
+        { name: 'الرول', value: `<@&${role.id}>`, inline: true },
+        { name: 'المالك', value: `<@${roleEntry.ownerId}>`, inline: true }
+      ]);
+      return;
+    }
     const buffer = await resolveIconBuffer(response.content, [...response.attachments.values()]);
     if (!buffer) {
       if (interaction) {
