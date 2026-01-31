@@ -1548,6 +1548,12 @@ client.on('messageReactionRemove', async (reaction, user) => {
 let pairingsCache = {};
 const pairingsPath = path.join(__dirname, 'data', 'pairings.json');
 
+function normalizeUserId(input) {
+  if (!input) return null;
+  const cleaned = String(input).replace(/[<@!>]/g, '').trim();
+  return /^\d{17,19}$/.test(cleaned) ? cleaned : null;
+}
+
 // Load pairings from disk to memory once at startup
 function loadPairingsToCache() {
   try {
@@ -1555,6 +1561,30 @@ function loadPairingsToCache() {
       const data = fs.readFileSync(pairingsPath, 'utf8');
       if (data && data.trim() !== '') {
         pairingsCache = JSON.parse(data);
+        let sanitized = 0;
+        for (const [userId, entry] of Object.entries(pairingsCache)) {
+          const normalizedUserId = normalizeUserId(userId);
+          const normalizedTargetId = normalizeUserId(entry?.targetId);
+          if (!normalizedUserId || !normalizedTargetId) {
+            delete pairingsCache[userId];
+            sanitized += 1;
+            continue;
+          }
+          if (normalizedUserId !== userId) {
+            pairingsCache[normalizedUserId] = {
+              ...entry,
+              targetId: normalizedTargetId,
+            };
+            delete pairingsCache[userId];
+            sanitized += 1;
+          } else if (normalizedTargetId !== entry?.targetId) {
+            pairingsCache[userId].targetId = normalizedTargetId;
+            sanitized += 1;
+          }
+        }
+        if (sanitized > 0) {
+          savePairings();
+        }
         console.log('✅ Loaded pairings into memory cache');
       }
     }
@@ -1605,8 +1635,8 @@ client.on('messageCreate', async message => {
       if (message.author.id !== ALLOWED_ID) {
         return message.reply('❌ **هذا الأمر متاح فقط لشخص محدد.**');
       }
-      const targetId = content.split(' ')[1];
-      if (!/^\d{17,19}$/.test(targetId)) {
+      const targetId = normalizeUserId(content.split(' ')[1]);
+      if (!targetId) {
         return message.reply('❌ **آيدي غير صحيح.**');
       }
       if (targetId === message.author.id) {
@@ -1643,8 +1673,14 @@ client.on('messageCreate', async message => {
 
     // Forward messages
     if (pairingsCache[message.author.id]) {
-      const targetId = pairingsCache[message.author.id].targetId;
+      const targetId = normalizeUserId(pairingsCache[message.author.id].targetId);
       const ALLOWED_ID = '636930315503534110';
+
+      if (!targetId) {
+        delete pairingsCache[message.author.id];
+        savePairings();
+        return message.reply('❌ **تم حذف الاقتران بسبب آيدي غير صالح.**');
+      }
       
       try {
         const targetUser = await client.users.fetch(targetId);
@@ -1671,6 +1707,10 @@ client.on('messageCreate', async message => {
           name: e?.name,
           message: e?.message
         });
+        if (e?.code === 10013) {
+          delete pairingsCache[message.author.id];
+          savePairings();
+        }
         // يضع خطأ فقط للشخص الأساسي إذا فشل الإرسال
         if (message.author.id === ALLOWED_ID) {
           await message.react('❌').catch(() => {
