@@ -266,6 +266,9 @@ setInterval(async () => {
       prob.warnings = {};
       prob.responses = {};
       prob.voiceWarned = {};
+      prob.voiceWarnedHigh = {};
+      prob.voiceOwnerNotified = {};
+      prob.voiceLoggedHigh = {};
       prob.lastWarningReset = now;
       // Persist the update
       saveActiveProblemsToDisk();
@@ -397,6 +400,16 @@ function isOwnerOrResponsible(member, owners) {
 function isAdmin(member, adminRoles) {
   if (!member) return false;
   return adminRoles.some((roleId) => member.roles.cache.has(roleId));
+}
+
+function getProblemOwners(client) {
+  if (client && Array.isArray(client._problemOwners) && client._problemOwners.length > 0) {
+    return client._problemOwners;
+  }
+  if (global.BOT_OWNERS && Array.isArray(global.BOT_OWNERS)) {
+    return global.BOT_OWNERS;
+  }
+  return [];
 }
 
 // Command name and aliases
@@ -894,7 +907,7 @@ async function handleMessage(message, client) {
         } catch (_) {}
         // If the user has a high role relative to the bot, notify bot owners about this interaction.
         if (hasHighRole) {
-          const owners = client && Array.isArray(client._problemOwners) ? client._problemOwners : [];
+          const owners = getProblemOwners(client);
           for (const ownerId of owners) {
             // Skip notifying the user themselves if they happen to be an owner
             if (ownerId === message.author.id) continue;
@@ -1050,7 +1063,7 @@ async function handleVoice(oldState, newState, client) {
           try {
             if (!prob.voiceOwnerNotified) prob.voiceOwnerNotified = {};
             if (!prob.voiceOwnerNotified[userId]) {
-              const owners = client && Array.isArray(client._problemOwners) ? client._problemOwners : [];
+          const owners = getProblemOwners(client);
               for (const ownerId of owners) {
                 if (ownerId === userId) continue;
                 try {
@@ -1706,6 +1719,23 @@ function getEffectiveRoleNameLength(name) {
     // the given problem; otherwise it sends a new embed and stores the message ID on
     // the problem object.  The separator attachments are passed through to preserve
     // the horizontal line if enabled.  Errors are logged but do not throw.
+    async function findExistingLogMessage(logsChannel, prob, botId) {
+      const messages = await logsChannel.messages.fetch({ limit: 25 }).catch(() => null);
+      if (!messages) return null;
+      for (const msg of messages.values()) {
+        if (!msg.author || msg.author.id !== botId) continue;
+        const embed = msg.embeds?.[0];
+        const desc = embed?.description || '';
+        if (!desc) continue;
+        const hasFirst = desc.includes(`<@${prob.firstId}>`);
+        const hasSecond = desc.includes(`<@${prob.secondId}>`);
+        if (hasFirst && hasSecond) {
+          return msg;
+        }
+      }
+      return null;
+    }
+
     async function updateProblemLog(prob, logEmbed, files = []) {
       try {
         // Ensure we have a client reference and can look up the guild
@@ -1722,6 +1752,15 @@ function getEffectiveRoleNameLength(name) {
         if (prob.logMessageId) {
           const existingMsg = await logsChannel.messages.fetch(prob.logMessageId).catch(() => null);
           if (existingMsg) {
+            await existingMsg.edit({ embeds: [logEmbed] }).catch(() => {});
+            return;
+          }
+        }
+        if (!prob.logMessageId && lastClient?.user?.id) {
+          const existingMsg = await findExistingLogMessage(logsChannel, prob, lastClient.user.id);
+          if (existingMsg) {
+            prob.logMessageId = existingMsg.id;
+            saveActiveProblemsToDisk();
             await existingMsg.edit({ embeds: [logEmbed] }).catch(() => {});
             return;
           }
