@@ -642,6 +642,7 @@ async function createProblems(interaction, session, context) {
   }
   const muteRoleId = config.muteRoleId;
   const timestamp = Date.now();
+  const isMultiParty = session.firstParties.length > 1 || session.secondParties.length > 1;
   // Iterate through each combination of selected first and second parties.
   for (const firstId of session.firstParties) {
     for (const secondId of session.secondParties) {
@@ -692,7 +693,7 @@ async function createProblems(interaction, session, context) {
         console.error('Failed to DM second party:', err);
       }
       // Post log to logs channel if defined
-      if (logsChannel) {
+      if (logsChannel && !isMultiParty) {
         const logEmbed = colorManager.createEmbed()
           .setTitle(' بروبلم جديد')
           .setDescription(
@@ -709,6 +710,24 @@ async function createProblems(interaction, session, context) {
           logsChannel.send({ files }).catch(() => {});
         }
       }
+    }
+  }
+  // If multiple parties are involved, send one combined log embed instead of one per pair.
+  if (logsChannel && isMultiParty) {
+    const firstPartiesText = session.firstParties.map((id) => `<@${id}>`).join('\n');
+    const secondPartiesText = session.secondParties.map((id) => `<@${id}>`).join('\n');
+    const logEmbed = colorManager.createEmbed()
+      .setTitle(' بروبلم جديد')
+      .setDescription(
+        `**المسؤول : <@${session.moderatorId}>\n الطرف الأول :\n${firstPartiesText}\n الطرف الثاني :\n${secondPartiesText}\n\n السبب : ${session.reason}**`
+      )
+      // Add the standard thumbnail to logs
+      .setThumbnail(LOG_THUMBNAIL_URL)
+      .setTimestamp();
+    const files = getSeparatorAttachments();
+    logsChannel.send({ content: '@here', embeds: [logEmbed] }).catch(() => {});
+    if (files && files.length > 0) {
+      logsChannel.send({ files }).catch(() => {});
     }
   }
   // Acknowledge to the moderator
@@ -959,6 +978,7 @@ async function handleVoice(oldState, newState, client) {
   const guild = newState.guild;
   const newChannel = newState.channel;
   if (!newChannel) return; // user left or not joined
+  if (newChannel.type === ChannelType.GuildStageVoice) return;
   // Check if there is an active problem involving this user
   for (const [key, prob] of activeProblems.entries()) {
     const { firstId, secondId } = prob;
@@ -2317,7 +2337,10 @@ module.exports = {
   name,
   execute,
   executeSetup,
-  handleInteraction
+  handleInteraction,
+  handleMessage,
+  handleVoice,
+  handleMemberUpdate
   // Export activeProblems and helper functions so other commands can
   // interact with the problem store.  closeProblem is included to
   // allow other modules to end problems.

@@ -36,6 +36,7 @@ const interactionRouter = require('./utils/interactionRouter');
 const { handleAdminApplicationInteraction } = require('./commands/admin-apply.js');
 const { restoreTopSchedules, restorePanelCleanups } = require('./commands/roles-settings.js');
 const { handleChannelDelete, handleRoleDelete } = require('./utils/protectionManager.js');
+const problemCommand = require('./commands/problem.js');
 let interactiveRolesManager;
 dotenv.config();
 
@@ -1014,6 +1015,14 @@ client.once(Events.ClientReady, async () => {
 
     // تتبع النشاط الصوتي باستخدام client.voiceSessions المحسّن
     client.on('voiceStateUpdate', async (oldState, newState) => {
+        try {
+            if (problemCommand && typeof problemCommand.handleVoice === 'function') {
+                await problemCommand.handleVoice(oldState, newState, client);
+            }
+        } catch (error) {
+            console.error('❌ خطأ في معالجة صوت البروبلم:', error);
+        }
+
         // تجاهل البوتات
         if (!newState.member || newState.member.user.bot) return;
 
@@ -1578,6 +1587,15 @@ client.on('messageCreate', async message => {
     }
   }
 
+  // 1.5 نظام البروبلم (حذف/تحذير الرسائل أثناء المشكلة)
+  if (problemCommand && typeof problemCommand.handleMessage === 'function') {
+    try {
+      await problemCommand.handleMessage(message, client);
+    } catch (e) {
+      console.error('Error in problem handleMessage:', e);
+    }
+  }
+
   // 2. نظام الاقتران (DM)
   if (message.channel.type === 1) { // DM
     const content = message.content.trim();
@@ -2048,6 +2066,10 @@ client.on('messageDelete', async message => {
 // نظام الحماية ضد إعادة الرولات المسحوبة (للداون والإجازات والمحظورين من الترقيات)
 client.on('guildMemberUpdate', async (oldMember, newMember) => {
     try {
+        if (problemCommand && typeof problemCommand.handleMemberUpdate === 'function') {
+            await problemCommand.handleMemberUpdate(oldMember, newMember, client);
+        }
+
         const userId = newMember.id;
         const oldRoles = oldMember.roles.cache;
         const newRoles = newMember.roles.cache;
