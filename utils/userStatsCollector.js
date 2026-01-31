@@ -74,6 +74,10 @@ async function calculateWeeklyVoiceTime(userId) {
 // دالة لتسجيل نشاط المستخدم باستخدام قاعدة البيانات
 async function trackUserActivity(userId, activityType, data = {}) {
     try {
+        if (!shouldTrackActivity(userId)) {
+            return false;
+        }
+
         const { getDatabase } = require('./database');
         const dbManager = getDatabase();
 
@@ -154,6 +158,18 @@ async function trackUserActivity(userId, activityType, data = {}) {
         console.error('خطأ في تسجيل نشاط المستخدم:', error);
         return false;
     }
+}
+
+function shouldTrackActivity(userId) {
+    const vacationStatus = getCustomVacationStatus(userId);
+    if (vacationStatus.hasVacation) {
+        return false;
+    }
+    const downStatus = getCustomDownStatus(userId);
+    if (downStatus.hasDown) {
+        return false;
+    }
+    return true;
 }
 
 // دالة للحصول على إحصائيات المستخدم الفعلية من قاعدة البيانات

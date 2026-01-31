@@ -3,6 +3,7 @@ const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
 const { isChannelBlocked } = require('./chatblock.js');
 const { getDatabase } = require('../utils/database.js');
+const { getVacationStatus, getDownStatus } = require('../utils/userStatsCollector');
 
 const name = 'تفاعلي';
 const aliases = ['تواجدي', 'me'];
@@ -24,6 +25,15 @@ function formatDuration(milliseconds) {
     if (minutes > 0) parts.push(`${minutes}m`);
 
     return parts.length > 0 ? parts.join(' and ') : 'أقل من دقيقة';
+}
+
+function isUserActivitySuspended(userId) {
+    const vacationStatus = getVacationStatus(userId);
+    if (vacationStatus.hasVacation) {
+        return true;
+    }
+    const downStatus = getDownStatus(userId);
+    return downStatus.hasDown;
 }
 
 async function execute(message, args, { client }) {
@@ -75,7 +85,7 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
             periodLabel = 'Daily Active';
             activeDays = stats.activeDays;
             // إضافة الوقت الحي لليومي
-            if (global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
+            if (!isUserActivitySuspended(user.id) && global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
                 const session = global.client.voiceSessions.get(user.id);
                 const liveDuration = Date.now() - (session.startTime || session.sessionStartTime);
                 stats.voiceTime = (stats.voiceTime || 0) + liveDuration;
@@ -91,7 +101,7 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
             stats.reactions = stats.weeklyReactions;
             stats.voiceJoins = stats.weeklyVoiceJoins;
             // إضافة الوقت الحي للأسبوعي
-            if (global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
+            if (!isUserActivitySuspended(user.id) && global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
                 const session = global.client.voiceSessions.get(user.id);
                 const liveDuration = Date.now() - (session.startTime || session.sessionStartTime);
                 stats.voiceTime = (stats.voiceTime || 0) + liveDuration;
@@ -106,7 +116,7 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
             stats.reactions = stats.reactions || 0;
             stats.voiceJoins = stats.voiceJoins || 0;
             // إضافة الوقت الحي للشهري
-            if (global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
+            if (!isUserActivitySuspended(user.id) && global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
                 const session = global.client.voiceSessions.get(user.id);
                 const liveDuration = Date.now() - (session.startTime || session.sessionStartTime);
                 stats.voiceTime = (stats.voiceTime || 0) + liveDuration;
@@ -124,7 +134,7 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
             // عدد أيام النشاط خلال السنة الماضية على الأقل
             activeDays = (await dbManager.getActiveDaysCount(user.id, 365)) || 0;
             // إضافة الوقت الحي للكلي
-            if (global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
+            if (!isUserActivitySuspended(user.id) && global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
                 const session = global.client.voiceSessions.get(user.id);
                 const liveDuration = Date.now() - (session.startTime || session.sessionStartTime);
                 stats.voiceTime = (stats.voiceTime || 0) + liveDuration;
@@ -200,7 +210,7 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
                     periodLabel = 'Daily Active';
                     activeDays = stats.activeDays;
                     // إضافة الوقت الحي
-                    if (global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
+                    if (!isUserActivitySuspended(user.id) && global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
                         const session = global.client.voiceSessions.get(user.id);
                         const liveDuration = Date.now() - (session.startTime || session.sessionStartTime);
                         stats.voiceTime = (stats.voiceTime || 0) + liveDuration;
@@ -215,7 +225,7 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
                     stats.reactions = stats.weeklyReactions;
                     stats.voiceJoins = stats.weeklyVoiceJoins;
                     // إضافة الوقت الحي
-                    if (global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
+                    if (!isUserActivitySuspended(user.id) && global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
                         const session = global.client.voiceSessions.get(user.id);
                         const liveDuration = Date.now() - (session.startTime || session.sessionStartTime);
                         stats.voiceTime = (stats.voiceTime || 0) + liveDuration;
@@ -229,7 +239,7 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
                     stats.reactions = stats.reactions || 0;
                     stats.voiceJoins = stats.voiceJoins || 0;
                     // إضافة الوقت الحي
-                    if (global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
+                    if (!isUserActivitySuspended(user.id) && global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
                         const session = global.client.voiceSessions.get(user.id);
                         const liveDuration = Date.now() - (session.startTime || session.sessionStartTime);
                         stats.voiceTime = (stats.voiceTime || 0) + liveDuration;
@@ -244,7 +254,7 @@ async function showActivityStats(message, user, member, period = 'weekly', clien
                     };
                     periodLabel = 'Total Active';
                     activeDays = (await dbManager.getActiveDaysCount(user.id, 365)) || 0;
-                    if (global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
+                    if (!isUserActivitySuspended(user.id) && global.client && global.client.voiceSessions && global.client.voiceSessions.has(user.id)) {
                         const session = global.client.voiceSessions.get(user.id);
                         const liveDuration = Date.now() - (session.startTime || session.sessionStartTime);
                         stats.voiceTime = (stats.voiceTime || 0) + liveDuration;
