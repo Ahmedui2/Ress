@@ -21,9 +21,7 @@ const path = require('path');
 const interactionRouter = require('../utils/interactionRouter.js');
 const colorManager = require('../utils/colorManager.js');
 
-// Default thumbnail URL for all log embeds.  This URL is used to visually
-// identify problem-related logs in the logs channel.  It will be applied to
-// all embeds that are sent to the logs channel (creation, closure, resets, violations).
+// Default thumbnail URL for interactive embeds (problem creation flows).
 const LOG_THUMBNAIL_URL = 'https://cdn.discordapp.com/attachments/1294840822780526633/1465458307329167360/problem-solving.png?ex=69792de7&is=6977dc67&hm=876028d8022c57e8258ee956d753608a9d247e1e5f774a62f149f29f1200a673&';
 
 // Load admin roles utility from the perm command.  We copy the helper here
@@ -295,8 +293,6 @@ setInterval(async () => {
         .setTitle('إعادة ضبط التحذيرات اليومية')
         .setDescription(desc)
         .addFields({ name: 'الحالة', value: 'بدأ يوم جديد' })
-        // Add the standard thumbnail to logs
-        .setThumbnail(LOG_THUMBNAIL_URL)
         .setTimestamp();
       const files = getSeparatorAttachments();
       // Send the reset embed first without the separator image.  Then send the image as
@@ -694,14 +690,16 @@ async function createProblems(interaction, session, context) {
       }
       // Post log to logs channel if defined
       if (logsChannel && !isMultiParty) {
+        const moderatorAvatar = interaction.user?.displayAvatarURL?.({ dynamic: true }) || null;
         const logEmbed = colorManager.createEmbed()
           .setTitle(' بروبلم جديد')
           .setDescription(
             `**المسؤول : <@${session.moderatorId}>\n الطرف الأول : <@${firstId}>\n الطرف الثاني : <@${secondId}>\n\n السبب : ${session.reason}**`
           )
-          // Add the standard thumbnail to logs
-          .setThumbnail(LOG_THUMBNAIL_URL)
           .setTimestamp();
+        if (moderatorAvatar) {
+          logEmbed.setThumbnail(moderatorAvatar);
+        }
         // Attach separator line image if enabled in config.  Send the log embed first.
         const files = getSeparatorAttachments();
         logsChannel.send({ content: '@here', embeds: [logEmbed] }).catch(() => {});
@@ -714,6 +712,7 @@ async function createProblems(interaction, session, context) {
   }
   // If multiple parties are involved, send one combined log embed instead of one per pair.
   if (logsChannel && isMultiParty) {
+    const moderatorAvatar = interaction.user?.displayAvatarURL?.({ dynamic: true }) || null;
     const firstPartiesText = session.firstParties.map((id) => `<@${id}>`).join('\n');
     const secondPartiesText = session.secondParties.map((id) => `<@${id}>`).join('\n');
     const logEmbed = colorManager.createEmbed()
@@ -721,9 +720,10 @@ async function createProblems(interaction, session, context) {
       .setDescription(
         `**المسؤول : <@${session.moderatorId}>\n الطرف الأول :\n${firstPartiesText}\n الطرف الثاني :\n${secondPartiesText}\n\n السبب : ${session.reason}**`
       )
-      // Add the standard thumbnail to logs
-      .setThumbnail(LOG_THUMBNAIL_URL)
       .setTimestamp();
+    if (moderatorAvatar) {
+      logEmbed.setThumbnail(moderatorAvatar);
+    }
     const files = getSeparatorAttachments();
     logsChannel.send({ content: '@here', embeds: [logEmbed] }).catch(() => {});
     if (files && files.length > 0) {
@@ -865,6 +865,10 @@ async function handleMessage(message, client) {
           .setDescription(desc)
           .addFields({ name: 'الحالة', value: status })
           .setTimestamp();
+        const authorAvatar = message.author.displayAvatarURL({ dynamic: true });
+        if (authorAvatar) {
+          logEmbed.setThumbnail(authorAvatar);
+        }
         const files = getSeparatorAttachments();
         // Update or send the problem log message
         await updateProblemLog(prob, logEmbed, files);
@@ -876,8 +880,7 @@ async function handleMessage(message, client) {
           // Only DM the author if they are not high-role, or if this is their first violation
           const shouldDmAuthor = !hasHighRole || nextWarningCount <= 1;
           if (shouldDmAuthor) {
-            const user = await client.users.fetch(message.author.id);
-            await user.send(
+            await message.author.send(
               "⚠️ **لا يُسمح لك بالرد على الطرف الآخر في الوقت الحالي.**\nإذا رديت مجددًا سيتم سحب رولك وإعطائك ميوت."
             );
           }
@@ -1081,8 +1084,11 @@ async function handleVoice(oldState, newState, client) {
                       `**العضو : <@${userId}> دخل روم صوتي مع الطرف الاخر : <@${otherId}>\nتم طرده تلقائيًا، لكن لم يتم منعه من الاتصال بسبب امتلاكه رتبة مساوية أو أعلى من البوت.**`
                     )
                     .addFields({ name: 'الحالة', value: 'تم الطرد (رتبة عالية)' })
-                    .setThumbnail(LOG_THUMBNAIL_URL)
                     .setTimestamp();
+                  const voiceAvatar = newState.member?.displayAvatarURL?.({ dynamic: true });
+                  if (voiceAvatar) {
+                    logEmbed.setThumbnail(voiceAvatar);
+                  }
                   const files = getSeparatorAttachments();
                   await updateProblemLog(prob, logEmbed, files);
                 }
@@ -1177,9 +1183,11 @@ async function handleVoice(oldState, newState, client) {
                   `**العضو : <@${userId}> دخل روم صوتي مع الطرف الاخر : <@${otherId}>\nتم منعه من الاتصال في هذا الروم لمدة ${duration / 60000} دقائق وتم طرده تلقائيًا.**`
                 )
                 .addFields({ name: 'الحالة', value: 'تم الطرد وغلق الروم' })
-                // Add the standard thumbnail to logs
-                .setThumbnail(LOG_THUMBNAIL_URL)
                 .setTimestamp();
+              const voiceAvatar = newState.member?.displayAvatarURL?.({ dynamic: true });
+              if (voiceAvatar) {
+                logEmbed.setThumbnail(voiceAvatar);
+              }
               const files = getSeparatorAttachments();
               // Update or send the problem log
               await updateProblemLog(prob, logEmbed, files);
@@ -1210,9 +1218,11 @@ async function handleVoice(oldState, newState, client) {
                       `**العضو : <@${userId}> دخل روم صوتي مع الطرف الاخر : <@${otherId}>\nتم سحب صلاحياته مؤقتًا لتكراره الدخول.**`
                     )
                     .addFields({ name: 'الحالة', value: 'تم سحب الصلاحيات مؤقتًا' })
-                    // Add the standard thumbnail to logs
-                    .setThumbnail(LOG_THUMBNAIL_URL)
                     .setTimestamp();
+                  const voiceAvatar = newState.member?.displayAvatarURL?.({ dynamic: true });
+                  if (voiceAvatar) {
+                    reentryEmbed.setThumbnail(voiceAvatar);
+                  }
                   const files = getSeparatorAttachments();
                   await updateProblemLog(prob, reentryEmbed, files);
                 }
@@ -1306,9 +1316,12 @@ async function handleMemberUpdate(oldMember, newMember, client) {
               const logEmbed = colorManager.createEmbed()
                 .setTitle('محاولة إزالة رول الميوت مرفوضة')
                 .setDescription(`**${executorMention} حاول إزالة رول الميوت من <@${newMember.id}> يدويًا وتمت إعادة تطبيقه.**`)
-                // Add the standard thumbnail to logs
-                .setThumbnail(LOG_THUMBNAIL_URL)
                 .setTimestamp();
+              const executorAvatar = executorMember?.displayAvatarURL?.({ dynamic: true });
+              const targetAvatar = newMember.user?.displayAvatarURL?.({ dynamic: true });
+              if (executorAvatar || targetAvatar) {
+                logEmbed.setThumbnail(executorAvatar || targetAvatar);
+              }
               const files = getSeparatorAttachments();
               // Send the main log embed first without the separator image
               logsChannel.send({ embeds: [logEmbed] }).catch(() => {});
@@ -1435,9 +1448,11 @@ async function handleMemberUpdate(oldMember, newMember, client) {
                     .setDescription(
                       `**تمت إعادة دور غير مسموح لـ <@${newMember.id}> (${roleMentions}) وتمت إزالته مرة أخرى تلقائيًا.**`
                     )
-                    // Add the standard thumbnail to logs
-                    .setThumbnail(LOG_THUMBNAIL_URL)
                     .setTimestamp();
+                  const memberAvatar = newMember.user?.displayAvatarURL?.({ dynamic: true });
+                  if (memberAvatar) {
+                    logEmbed.setThumbnail(memberAvatar);
+                  }
                   const files = getSeparatorAttachments();
                   // Send the main log embed first without the separator image
                   logsChannel.send({ embeds: [logEmbed] }).catch(() => {});
@@ -1970,15 +1985,18 @@ async function closeProblem(key, guild, context) {
   if (config.logsChannelId) {
     const logsChannel = guild.channels.cache.get(config.logsChannelId);
     if (logsChannel) {
+      const endedByUser = await client.users.fetch(endedById).catch(() => null);
       const logEmbed = colorManager.createEmbed()
         .setTitle('تم إنهاء مشكلة')
         .setDescription(
           `<@${endedById}> أنهى المشكلة بين <@${fId}> و <@${sId}>` +
             (reason ? `\nالسبب السابق: ${reason}` : '')
         )
-        // Add the standard thumbnail to logs
-        .setThumbnail(LOG_THUMBNAIL_URL)
         .setTimestamp();
+      const endedByAvatar = endedByUser?.displayAvatarURL?.({ dynamic: true });
+      if (endedByAvatar) {
+        logEmbed.setThumbnail(endedByAvatar);
+      }
       // Attach separator line if enabled
       const files = getSeparatorAttachments();
       // Send the main closure embed first without the separator image
