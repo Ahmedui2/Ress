@@ -1664,6 +1664,13 @@ client.on('messageCreate', async message => {
           await message.react('✅').catch(() => {});
         }
       } catch (e) {
+        console.error('❌ خطأ في إرسال رسالة الاقتران:', {
+          from: message.author.id,
+          to: targetId,
+          code: e?.code,
+          name: e?.name,
+          message: e?.message
+        });
         // يضع خطأ فقط للشخص الأساسي إذا فشل الإرسال
         if (message.author.id === ALLOWED_ID) {
           await message.react('❌').catch(() => {
