@@ -3,6 +3,7 @@ const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
 const { isChannelBlocked } = require('./chatblock.js');
 const { getDatabase } = require('../utils/database.js');
+const { getVacationStatus, getDownStatus } = require('../utils/userStatsCollector');
 const moment = require('moment-timezone');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
@@ -12,6 +13,15 @@ const name = 'توب';
 
 const streakDbPath = path.join(__dirname, '..', 'database', 'streak.db');
 let streakDb = null;
+
+function isUserActivitySuspended(userId) {
+    const vacationStatus = getVacationStatus(userId);
+    if (vacationStatus.hasVacation) {
+        return true;
+    }
+    const downStatus = getDownStatus(userId);
+    return downStatus.hasDown;
+}
 
 function initializeStreakDatabase() {
     return new Promise((resolve, reject) => {
@@ -269,13 +279,16 @@ async function getTopUsers(db, category, period, limit = 50) {
         }
 
         let results = await db.all(query, params);
-        results = results || [];
+        results = (results || []).filter(row => !isUserActivitySuspended(row.user_id));
 
         // إضافة الوقت الحي للفويس في الترتيب (اليومي والأسبوعي والشهري والكلي)
         if (category === 'voice' && client && client.voiceSessions) {
             const updatedResults = [...results];
             
             for (const [userId, session] of client.voiceSessions.entries()) {
+                if (isUserActivitySuspended(userId)) {
+                    continue;
+                }
                 let liveDuration = 0;
                 if (!session.isAFK) {
                     const liveStart = session.lastTrackedTime || session.startTime || session.sessionStartTime || nowMs;
