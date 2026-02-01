@@ -31,6 +31,7 @@ const { checkCooldown, startCooldown } = require('./commands/cooldown.js');
 const colorManager = require('./utils/colorManager.js');
 const vacationManager = require('./utils/vacationManager');
 const promoteManager = require('./utils/promoteManager');
+const { ticketManager } = require('./utils/ticketManager');
 const { getRoleEntry, addRoleEntry } = require('./utils/customRolesSystem.js');
 const interactionRouter = require('./utils/interactionRouter');
 const { handleAdminApplicationInteraction } = require('./commands/admin-apply.js');
@@ -398,6 +399,17 @@ try {
   }
 } catch (error) {
   console.error('❌ خطأ في تسجيل معالجات نظام التذاكر:', error);
+}
+
+// تسجيل معالجات نظام التكت الجديد
+try {
+  const ticketCommand = require('./commands/ticket.js');
+  if (ticketCommand.registerHandlers) {
+    ticketCommand.registerHandlers(client);
+    console.log('✅ تم تسجيل معالجات نظام التكت');
+  }
+} catch (error) {
+  console.error('❌ خطأ في تسجيل معالجات نظام التكت:', error);
 }
 
   // تسجيل معالج مودال الباكب
@@ -1984,7 +1996,7 @@ client.on('messageCreate', async message => {
       await command.execute(message, args, { responsibilities, points, scheduleSave, BOT_OWNERS, ADMIN_ROLES: CURRENT_ADMIN_ROLES, client, colorManager });
     }
     // Commands for admins and owners (user, مسؤول, اجازه, check, rooms)
-    else if (commandName === 'user' || commandName === 'list' || commandName === 'حذف' || commandName === 'settings' || commandName === 'problem' || commandName === 'مشكله' || commandName === 'settings' || commandName === 'انشاء' || commandName === 'اجازه' || commandName === 'مسؤولياتي' || commandName === 'اجازتي' || commandName === 'check' || commandName === 'rooms') {
+    else if (commandName === 'user' || commandName === 'list' || commandName === 'حذف' || commandName === 'settings' || commandName === 'problem' || commandName === 'مشكله' || commandName === 'settings' || commandName === 'انشاء' || commandName === 'اجازه' || commandName === 'مسؤولياتي' || commandName === 'اجازتي' || commandName === 'check' || commandName === 'rooms' || commandName === 'ticket') {
       if (commandName === 'مسؤول') {
         console.log(`🔍 التحقق من صلاحيات المستخدم ${message.author.id} لأمر مسؤول:`);
         console.log(`- isOwner: ${isOwner}`);
@@ -4821,6 +4833,7 @@ process.on('unhandledRejection', (reason, promise) => {
 
 async function startBot() {
     await dbManager.initialize();
+    await ticketManager.initialize();
     
     const respPath = path.join(__dirname, 'data', 'responsibilities.json');
     if (fs.existsSync(respPath) && fs.statSync(respPath).size > 2) {
