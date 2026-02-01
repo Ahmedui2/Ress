@@ -233,9 +233,9 @@ class TicketManager {
             await this.db.run(`
                 INSERT INTO ticket_reasons (
                     reason_id, reason_name, reason_emoji, reason_description,
-                    category_id, acceptance_channel_id, ticket_name_format,
-                    ticket_message, acceptance_message, role_to_give, display_roles
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    category_id, acceptance_channel_id, acceptance_mode, ticket_name_format,
+                    ticket_message, acceptance_message, inside_ticket_message, form_schema, role_to_give, display_roles
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `, [
                 reasonId,
                 reasonData.name,
@@ -243,9 +243,12 @@ class TicketManager {
                 reasonData.description || '',
                 reasonData.categoryId || null,
                 reasonData.acceptanceChannelId || null,
+                reasonData.acceptanceMode || null,
                 reasonData.ticketNameFormat || 't-user',
                 reasonData.ticketMessage || null,
                 reasonData.acceptanceMessage || null,
+                reasonData.insideTicketMessage || null,
+                reasonData.formSchema ? JSON.stringify(reasonData.formSchema) : null,
                 reasonData.roleToGive || null,
                 reasonData.displayRoles ? JSON.stringify(reasonData.displayRoles) : null
             ]);
@@ -282,6 +285,10 @@ class TicketManager {
                 fields.push('acceptance_channel_id = ?');
                 values.push(updates.acceptanceChannelId);
             }
+            if (updates.acceptanceMode !== undefined) {
+                fields.push('acceptance_mode = ?');
+                values.push(updates.acceptanceMode);
+            }
             if (updates.ticketNameFormat !== undefined) {
                 fields.push('ticket_name_format = ?');
                 values.push(updates.ticketNameFormat);
@@ -293,6 +300,14 @@ class TicketManager {
             if (updates.acceptanceMessage !== undefined) {
                 fields.push('acceptance_message = ?');
                 values.push(updates.acceptanceMessage);
+            }
+            if (updates.insideTicketMessage !== undefined) {
+                fields.push('inside_ticket_message = ?');
+                values.push(updates.insideTicketMessage);
+            }
+            if (updates.formSchema !== undefined) {
+                fields.push('form_schema = ?');
+                values.push(JSON.stringify(updates.formSchema));
             }
             if (updates.roleToGive !== undefined) {
                 fields.push('role_to_give = ?');
@@ -328,6 +343,13 @@ class TicketManager {
                 SELECT * FROM ticket_reasons WHERE reason_id = ?
             `, [reasonId]);
             
+            if (reason && reason.form_schema) {
+                try {
+                    reason.form_schema = JSON.parse(reason.form_schema);
+                } catch {
+                    reason.form_schema = null;
+                }
+            }
             if (reason && reason.display_roles) {
                 try {
                     reason.display_roles = JSON.parse(reason.display_roles);
@@ -350,6 +372,13 @@ class TicketManager {
             `);
             
             for (const reason of reasons) {
+                if (reason.form_schema) {
+                    try {
+                        reason.form_schema = JSON.parse(reason.form_schema);
+                    } catch {
+                        reason.form_schema = null;
+                    }
+                }
                 if (reason.display_roles) {
                     try {
                         reason.display_roles = JSON.parse(reason.display_roles);
@@ -558,14 +587,15 @@ class TicketManager {
         }
     }
 
-    async createTicket(guild, user, reason, staffId = null) {
+    async createTicket(guild, user, reason, staffId = null, options = {}) {
         try {
             this.ticketCounter++;
             const ticketId = `ticket_${Date.now()}_${user.id}`;
             const ticketNumber = this.ticketCounter;
             
             const ticketNumbering = await this.getSetting('ticket_numbering', false);
-            const channelName = ticketNumbering ? `t-${ticketNumber}` : `t-${user.username}`;
+            const rawFormat = reason?.ticket_name_format || (ticketNumbering ? 't-{number}' : 't-{user}');
+            const channelName = this.formatTicketChannelName(rawFormat, ticketNumber, user);
             
             const categoryId = reason?.category_id || await this.getSetting('default_category_id');
             
@@ -622,12 +652,21 @@ class TicketManager {
             
             await this.db.run(`
                 INSERT INTO tickets (
-                    ticket_id, ticket_number, channel_id, user_id, reason_id, 
-                    staff_id, status, category_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ticket_id, ticket_number, channel_id, user_id, reason_id,
+                    custom_reason, staff_id, status, category_id, responsibility, panel_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `, [
-                ticketId, ticketNumber, channel.id, user.id,
-                reason?.reason_id || null, staffId, 'open', categoryId
+                ticketId,
+                ticketNumber,
+                channel.id,
+                user.id,
+                reason?.reason_id || null,
+                options.customReason || null,
+                staffId,
+                'open',
+                categoryId,
+                options.responsibility || null,
+                options.panelId || null
             ]);
             
             return { ticketId, channel, ticketNumber };
@@ -635,6 +674,21 @@ class TicketManager {
             console.error('❌ خطأ في إنشاء التذكرة:', error);
             return null;
         }
+    }
+
+    formatTicketChannelName(format, ticketNumber, user) {
+        const safeFormat = (format || 't-{number}')
+            .replace(/\{number\}/gi, ticketNumber.toString())
+            .replace(/\{user\}/gi, user.username)
+            .replace(/\{username\}/gi, user.username)
+            .replace(/\{id\}/gi, user.id);
+
+        return safeFormat
+            .toLowerCase()
+            .replace(/\s+/g, '-')
+            .replace(/[^a-z0-9\-]/g, '')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/g, '') || `t-${ticketNumber}`;
     }
 
     async getTicket(channelId) {
@@ -718,6 +772,10 @@ class TicketManager {
                 fields.push('user_id = ?');
                 values.push(updates.user_id);
             }
+            if (updates.responsibility !== undefined) {
+                fields.push('responsibility = ?');
+                values.push(updates.responsibility);
+            }
             
             if (fields.length === 0) return false;
             
@@ -732,6 +790,34 @@ class TicketManager {
             return true;
         } catch (error) {
             console.error('❌ خطأ في تحديث التذكرة:', error);
+            return false;
+        }
+    }
+
+    async countClaimedTickets(userId) {
+        try {
+            const result = await this.db.get(`
+                SELECT COUNT(*) as total
+                FROM tickets
+                WHERE status = 'open' AND claimed_by = ?
+            `, [userId]);
+            return result?.total || 0;
+        } catch (error) {
+            console.error('❌ خطأ في حساب التكتات المستلمة:', error);
+            return 0;
+        }
+    }
+
+    async hasTicketRating(ticketId) {
+        try {
+            const result = await this.db.get(`
+                SELECT id FROM ticket_logs
+                WHERE ticket_id = ? AND action_type = 'rating'
+                LIMIT 1
+            `, [ticketId]);
+            return Boolean(result);
+        } catch (error) {
+            console.error('❌ خطأ في فحص تقييم التكت:', error);
             return false;
         }
     }

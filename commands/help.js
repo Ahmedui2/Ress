@@ -154,6 +154,12 @@ module.exports = {
         details: '**- ترشيح عضو للإدارة والموافقة عليها من المسؤولين**'
       },
       {
+        name: 'ticket',
+        description: '**Ticket System**',
+        usage: PREFIX === null ? 'ticket' : `${PREFIX}ticket`,
+        details: '**- إعداد نظام التكت المتقدم ولوحة التذاكر والإعدادات الكاملة**'
+      },
+      {
         name: 'مسؤول',
         description: '**Res help**',
         usage: PREFIX === null ? 'مسؤول' : `${PREFIX}مسؤول`,
