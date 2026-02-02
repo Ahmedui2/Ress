@@ -7,10 +7,20 @@ const { getCustomProfile } = require('./myprofile.js');
 const { isUserBlocked } = require('./block.js');
 const { isChannelBlocked } = require('./chatblock.js');
 const colorManager = require('../utils/colorManager.js');
+const { getVacationStatus, getDownStatus } = require('../utils/userStatsCollector');
 
 const name = 'profile';
 const aliases = ['id'];
 const { getUserLevel, updateUserLevel, updateLastNotified } = require('../utils/database.js');
+
+function isUserActivitySuspended(userId) {
+    const vacationStatus = getVacationStatus(userId);
+    if (vacationStatus.hasVacation) {
+        return true;
+    }
+    const downStatus = getDownStatus(userId);
+    return downStatus.hasDown;
+}
 
 // دالة لإرسال إشعار الترقية
 async function sendLevelUpNotification(client, userId, oldVoiceLevel, newVoiceLevel, oldChatLevel, newChatLevel, voiceXP, chatXP) {
@@ -107,7 +117,7 @@ function getMainDbData(userId) {
                     let stats = row || { total_messages: 0, total_voice_time: 0, total_reactions: 0 };
                     
                     // حساب الوقت الحي إذا كان العضو في روم صوتي حالياً
-                    if (client && client.voiceSessions && client.voiceSessions.has(userId)) {
+                    if (!isUserActivitySuspended(userId) && client && client.voiceSessions && client.voiceSessions.has(userId)) {
                         const session = client.voiceSessions.get(userId);
                         const liveDuration = Date.now() - (session.startTime || session.sessionStartTime);
                         stats.total_voice_time = (stats.total_voice_time || 0) + liveDuration;
