@@ -21,9 +21,7 @@ const path = require('path');
 const interactionRouter = require('../utils/interactionRouter.js');
 const colorManager = require('../utils/colorManager.js');
 
-// Default thumbnail URL for all log embeds.  This URL is used to visually
-// identify problem-related logs in the logs channel.  It will be applied to
-// all embeds that are sent to the logs channel (creation, closure, resets, violations).
+// Default thumbnail URL for interactive embeds (problem creation flows).
 const LOG_THUMBNAIL_URL = 'https://cdn.discordapp.com/attachments/1294840822780526633/1465458307329167360/problem-solving.png?ex=69792de7&is=6977dc67&hm=876028d8022c57e8258ee956d753608a9d247e1e5f774a62f149f29f1200a673&';
 
 // Load admin roles utility from the perm command.  We copy the helper here
@@ -268,6 +266,9 @@ setInterval(async () => {
       prob.warnings = {};
       prob.responses = {};
       prob.voiceWarned = {};
+      prob.voiceWarnedHigh = {};
+      prob.voiceOwnerNotified = {};
+      prob.voiceLoggedHigh = {};
       prob.lastWarningReset = now;
       // Persist the update
       saveActiveProblemsToDisk();
@@ -289,14 +290,12 @@ setInterval(async () => {
       const probs = resetsByGuild[guildId];
       // Build the description listing all problem pairs that were reset
       const pairs = probs.map((p) => `<@${p.firstId}> و <@${p.secondId}>`).join('\n');
-      const desc = `**تم إعادة ضبط التحذيرات للمشكلات التالية :**\n${pairs}`;
+      const desc = `**تم إعادة ضبط التحذيرات للمشكلات التالية :**\n*${pairs}*`;
       const resetEmbed = colorManager
         .createEmbed()
         .setTitle('إعادة ضبط التحذيرات اليومية')
         .setDescription(desc)
         .addFields({ name: 'الحالة', value: 'بدأ يوم جديد' })
-        // Add the standard thumbnail to logs
-        .setThumbnail(LOG_THUMBNAIL_URL)
         .setTimestamp();
       const files = getSeparatorAttachments();
       // Send the reset embed first without the separator image.  Then send the image as
@@ -401,6 +400,16 @@ function isOwnerOrResponsible(member, owners) {
 function isAdmin(member, adminRoles) {
   if (!member) return false;
   return adminRoles.some((roleId) => member.roles.cache.has(roleId));
+}
+
+function getProblemOwners(client) {
+  if (client && Array.isArray(client._problemOwners) && client._problemOwners.length > 0) {
+    return client._problemOwners;
+  }
+  if (global.BOT_OWNERS && Array.isArray(global.BOT_OWNERS)) {
+    return global.BOT_OWNERS;
+  }
+  return [];
 }
 
 // Command name and aliases
@@ -642,6 +651,7 @@ async function createProblems(interaction, session, context) {
   }
   const muteRoleId = config.muteRoleId;
   const timestamp = Date.now();
+  const isMultiParty = session.firstParties.length > 1 || session.secondParties.length > 1;
   // Iterate through each combination of selected first and second parties.
   for (const firstId of session.firstParties) {
     for (const secondId of session.secondParties) {
@@ -678,7 +688,7 @@ async function createProblems(interaction, session, context) {
       try {
         const firstUser = await client.users.fetch(firstId);
         await firstUser.send(
-          `⚠️ **تم تسجيل بروبلم\nالطرف الآخر : <@${secondId}>\nالسبب : ${session.reason}\nالمسؤول: <@${session.moderatorId}>\nيرجى عدم التواصل مع الطرف الآخر حتى انتهاء المشكلة.**`
+          `⚠️ **تم تسجيل بروبلم\nالطرف الآخر : <@${secondId}>\nالسبب : ${session.reason}\nالمسؤول : <@${session.moderatorId}>\nيرجى عدم التواصل مع الطرف الآخر حتى انتهاء المشكلة.**`
         );
       } catch (err) {
         console.error('Failed to DM first party:', err);
@@ -692,15 +702,17 @@ async function createProblems(interaction, session, context) {
         console.error('Failed to DM second party:', err);
       }
       // Post log to logs channel if defined
-      if (logsChannel) {
+      if (logsChannel && !isMultiParty) {
+        const moderatorAvatar = interaction.user?.displayAvatarURL?.({ dynamic: true }) || null;
         const logEmbed = colorManager.createEmbed()
-          .setTitle(' بروبلم جديد')
+          .setTitle('New problem')
           .setDescription(
             `**المسؤول : <@${session.moderatorId}>\n الطرف الأول : <@${firstId}>\n الطرف الثاني : <@${secondId}>\n\n السبب : ${session.reason}**`
           )
-          // Add the standard thumbnail to logs
-          .setThumbnail(LOG_THUMBNAIL_URL)
           .setTimestamp();
+        if (moderatorAvatar) {
+          logEmbed.setThumbnail(moderatorAvatar);
+        }
         // Attach separator line image if enabled in config.  Send the log embed first.
         const files = getSeparatorAttachments();
         logsChannel.send({ content: '@here', embeds: [logEmbed] }).catch(() => {});
@@ -709,6 +721,26 @@ async function createProblems(interaction, session, context) {
           logsChannel.send({ files }).catch(() => {});
         }
       }
+    }
+  }
+  // If multiple parties are involved, send one combined log embed instead of one per pair.
+  if (logsChannel && isMultiParty) {
+    const moderatorAvatar = interaction.user?.displayAvatarURL?.({ dynamic: true }) || null;
+    const firstPartiesText = session.firstParties.map((id) => `<@${id}>`).join('\n');
+    const secondPartiesText = session.secondParties.map((id) => `<@${id}>`).join('\n');
+    const logEmbed = colorManager.createEmbed()
+      .setTitle(' New problem ')
+      .setDescription(
+        `**المسؤول : <@${session.moderatorId}>\n الطرف الأول :\n${firstPartiesText}\n الطرف الثاني :\n${secondPartiesText}\n\n السبب : ${session.reason}**`
+      )
+      .setTimestamp();
+    if (moderatorAvatar) {
+      logEmbed.setThumbnail(moderatorAvatar);
+    }
+    const files = getSeparatorAttachments();
+    logsChannel.send({ content: '@here', embeds: [logEmbed] }).catch(() => {});
+    if (files && files.length > 0) {
+      logsChannel.send({ files }).catch(() => {});
     }
   }
   // Acknowledge to the moderator
@@ -846,6 +878,10 @@ async function handleMessage(message, client) {
           .setDescription(desc)
           .addFields({ name: 'الحالة', value: status })
           .setTimestamp();
+        const authorAvatar = message.author.displayAvatarURL({ dynamic: true });
+        if (authorAvatar) {
+          logEmbed.setThumbnail(authorAvatar);
+        }
         const files = getSeparatorAttachments();
         // Update or send the problem log message
         await updateProblemLog(prob, logEmbed, files);
@@ -857,9 +893,8 @@ async function handleMessage(message, client) {
           // Only DM the author if they are not high-role, or if this is their first violation
           const shouldDmAuthor = !hasHighRole || nextWarningCount <= 1;
           if (shouldDmAuthor) {
-            const user = await client.users.fetch(message.author.id);
-            await user.send(
-              "⚠️ **لا يُسمح لك بالرد على الطرف الآخر في الوقت الحالي.**\nإذا رديت مجددًا سيتم سحب رولك وإعطائك ميوت."
+            await message.author.send(
+              "⚠️ **لا يُسمح لك بالرد على الطرف الآخر في الوقت الحالي.**\n*إذا رديت مجددًا سيتم سحب رولك وإعطائك ميوت.*"
             );
           }
         } catch (_) {}
@@ -867,12 +902,12 @@ async function handleMessage(message, client) {
           // Always DM the other party to remind them not to respond
           const other = await client.users.fetch(otherId);
           await other.send(
-            "⚠️ **لا تقم بالرد على الطرف الآخر في الوقت الحالي.**\nإذا رديت مجددًا سيتم سحب رولك وإعطائك ميوت."
+            "⚠️ **لا تقم بالرد على الطرف الآخر في الوقت الحالي.**\n*إذا رديت مجددًا سيتم سحب رولك وإعطائك ميوت.*"
           );
         } catch (_) {}
         // If the user has a high role relative to the bot, notify bot owners about this interaction.
         if (hasHighRole) {
-          const owners = client && Array.isArray(client._problemOwners) ? client._problemOwners : [];
+          const owners = getProblemOwners(client);
           for (const ownerId of owners) {
             // Skip notifying the user themselves if they happen to be an owner
             if (ownerId === message.author.id) continue;
@@ -880,8 +915,8 @@ async function handleMessage(message, client) {
               const ownerUser = await client.users.fetch(ownerId).catch(() => null);
               if (ownerUser) {
                 await ownerUser.send(
-                  `⚠️ العضو <@${message.author.id}> رد على <@${otherId}> في مشكلة، ولكن لا يمكن إعطاؤه ميوت أو سحب رتبه لأنه يمتلك رتبة مساوية أو أعلى من البوت.\n` +
-                  `رابط الرسالة: ${message.url}`
+                  `**⚠️ العضو <@${message.author.id}> رد على <@${otherId}> في مشكلة، ولكن لا يمكن إعطاؤه ميوت أو سحب رتبه لأنه يمتلك رتبة مساوية أو أعلى من البوت.\n**` +
+                  `*رابط الرسالة : ${message.url}*`
                 );
               }
             } catch (_) {
@@ -929,8 +964,8 @@ async function handleMessage(message, client) {
                   const muteDurationMs = cfg2.muteDuration || (10 * 60 * 1000);
                   const muteDurationMinutes = Math.floor(muteDurationMs / 60000);
                   await dmUser.send(
-                    `🚫 تم إعطاؤك ميوت لمدة ${muteDurationMinutes} دقيقة بسبب ردك على الطرف الآخر فى البروبلم.\n` +
-                    `سيتم إعادة أى رتب تمت إزالتها تلقائيًا بعد انتهاء مدة الميوت. لا تقم بالرد مجددًا حتى ينتهى الميوت.`
+                    `**🚫 تم إعطاؤك ميوت لمدة ${muteDurationMinutes} دقيقة بسبب ردك على الطرف الآخر فى البروبلم.**\n` +
+                    `*سيتم إعادة أى رتب تمت إزالتها تلقائيًا بعد انتهاء مدة الميوت. لا تقم بالرد مجددًا حتى ينتهى الميوت.*`
                   );
                 } catch (err) {
                   console.error('Failed to DM user about applied mute:', err);
@@ -959,6 +994,7 @@ async function handleVoice(oldState, newState, client) {
   const guild = newState.guild;
   const newChannel = newState.channel;
   if (!newChannel) return; // user left or not joined
+  if (newChannel.type === ChannelType.GuildStageVoice) return;
   // Check if there is an active problem involving this user
   for (const [key, prob] of activeProblems.entries()) {
     const { firstId, secondId } = prob;
@@ -1009,11 +1045,11 @@ async function handleVoice(oldState, newState, client) {
               const dmUser = await client.users.fetch(userId);
               const problemTime = new Date(prob.timestamp).toLocaleString('en-US', { timeZone: 'Africa/Cairo' });
               await dmUser.send(
-                `⚠️ يوجد شخص في الروم بينك وبينه بروبلم.\n` +
+                `**⚠️ يوجد شخص في الروم بينك وبينه بروبلم.\n` +
                 `الشخص : <@${otherId}>\n` +
                 `وقت البروبلم كان : ${problemTime}\n` +
                 `المسؤول كان : <@${prob.moderatorId}>\n` +
-                `إذا دخلت مجددًا سيتم طردك تلقائيًا.`
+                `إذا دخلت مجددًا سيتم طردك تلقائيًا.**`
               );
               prob.voiceWarnedHigh[userId] = true;
               saveActiveProblemsToDisk();
@@ -1027,14 +1063,14 @@ async function handleVoice(oldState, newState, client) {
           try {
             if (!prob.voiceOwnerNotified) prob.voiceOwnerNotified = {};
             if (!prob.voiceOwnerNotified[userId]) {
-              const owners = client && Array.isArray(client._problemOwners) ? client._problemOwners : [];
+          const owners = getProblemOwners(client);
               for (const ownerId of owners) {
                 if (ownerId === userId) continue;
                 try {
                   const ownerUser = await client.users.fetch(ownerId).catch(() => null);
                   if (ownerUser) {
                     await ownerUser.send(
-                      `⚠️ العضو <@${userId}> دخل روم صوتي مع <@${otherId}> في مشكلة، ولكن لا يمكن سحب صلاحياته أو منعه بسبب امتلاكه رتبة مساوية أو أعلى من البوت.`
+                      `**⚠️ العضو <@${userId}> دخل روم صوتي مع <@${otherId}> في مشكلة، ولكن لا يمكن سحب صلاحياته أو منعه بسبب امتلاكه رتبة مساوية أو أعلى من البوت.**`
                     );
                   }
                 } catch (_) {}
@@ -1061,8 +1097,11 @@ async function handleVoice(oldState, newState, client) {
                       `**العضو : <@${userId}> دخل روم صوتي مع الطرف الاخر : <@${otherId}>\nتم طرده تلقائيًا، لكن لم يتم منعه من الاتصال بسبب امتلاكه رتبة مساوية أو أعلى من البوت.**`
                     )
                     .addFields({ name: 'الحالة', value: 'تم الطرد (رتبة عالية)' })
-                    .setThumbnail(LOG_THUMBNAIL_URL)
                     .setTimestamp();
+                  const voiceAvatar = newState.member?.displayAvatarURL?.({ dynamic: true });
+                  if (voiceAvatar) {
+                    logEmbed.setThumbnail(voiceAvatar);
+                  }
                   const files = getSeparatorAttachments();
                   await updateProblemLog(prob, logEmbed, files);
                 }
@@ -1103,11 +1142,11 @@ async function handleVoice(oldState, newState, client) {
               // server locale if specific locale is not available.
               const problemTime = new Date(prob.timestamp).toLocaleString('en-US', { timeZone: 'Africa/Cairo' });
               await dmUser.send(
-                `⚠️ يوجد شخص في الروم بينك وبينه بروبلم.\n` +
+                `**⚠️ يوجد شخص في الروم بينك وبينه بروبلم.\n` +
                 `الشخص : <@${otherId}>\n` +
                 `وقت البروبلم كان : ${problemTime}\n` +
                 `المسؤول كان : <@${prob.moderatorId}>\n` +
-                `إذا دخلت مجددًا سيتم سحب رولك مؤقتًا.`
+                `إذا دخلت مجددًا سيتم سحب رولك مؤقتًا.**`
               );
               prob.voiceWarned[userId] = true;
               // Persist the updated state to disk
@@ -1157,9 +1196,11 @@ async function handleVoice(oldState, newState, client) {
                   `**العضو : <@${userId}> دخل روم صوتي مع الطرف الاخر : <@${otherId}>\nتم منعه من الاتصال في هذا الروم لمدة ${duration / 60000} دقائق وتم طرده تلقائيًا.**`
                 )
                 .addFields({ name: 'الحالة', value: 'تم الطرد وغلق الروم' })
-                // Add the standard thumbnail to logs
-                .setThumbnail(LOG_THUMBNAIL_URL)
                 .setTimestamp();
+              const voiceAvatar = newState.member?.displayAvatarURL?.({ dynamic: true });
+              if (voiceAvatar) {
+                logEmbed.setThumbnail(voiceAvatar);
+              }
               const files = getSeparatorAttachments();
               // Update or send the problem log
               await updateProblemLog(prob, logEmbed, files);
@@ -1190,9 +1231,11 @@ async function handleVoice(oldState, newState, client) {
                       `**العضو : <@${userId}> دخل روم صوتي مع الطرف الاخر : <@${otherId}>\nتم سحب صلاحياته مؤقتًا لتكراره الدخول.**`
                     )
                     .addFields({ name: 'الحالة', value: 'تم سحب الصلاحيات مؤقتًا' })
-                    // Add the standard thumbnail to logs
-                    .setThumbnail(LOG_THUMBNAIL_URL)
                     .setTimestamp();
+                  const voiceAvatar = newState.member?.displayAvatarURL?.({ dynamic: true });
+                  if (voiceAvatar) {
+                    reentryEmbed.setThumbnail(voiceAvatar);
+                  }
                   const files = getSeparatorAttachments();
                   await updateProblemLog(prob, reentryEmbed, files);
                 }
@@ -1284,11 +1327,13 @@ async function handleMemberUpdate(oldMember, newMember, client) {
             if (logsChannel) {
               const executorMention = executorMember ? `<@${executorMember.id}>` : 'شخص مجهول';
               const logEmbed = colorManager.createEmbed()
-                .setTitle('محاولة إزالة رول الميوت مرفوضة')
-                .setDescription(`**${executorMention} حاول إزالة رول الميوت من <@${newMember.id}> يدويًا وتمت إعادة تطبيقه.**`)
-                // Add the standard thumbnail to logs
-                .setThumbnail(LOG_THUMBNAIL_URL)
+                .setTitle('Remove Mute')               .setDescription(`**${executorMention} حاول إزالة رول الميوت من <@${newMember.id}> يدويًا وتمت إعادة تطبيقه.**`)
                 .setTimestamp();
+              const executorAvatar = executorMember?.displayAvatarURL?.({ dynamic: true });
+              const targetAvatar = newMember.user?.displayAvatarURL?.({ dynamic: true });
+              if (executorAvatar || targetAvatar) {
+                logEmbed.setThumbnail(executorAvatar || targetAvatar);
+              }
               const files = getSeparatorAttachments();
               // Send the main log embed first without the separator image
               logsChannel.send({ embeds: [logEmbed] }).catch(() => {});
@@ -1415,9 +1460,11 @@ async function handleMemberUpdate(oldMember, newMember, client) {
                     .setDescription(
                       `**تمت إعادة دور غير مسموح لـ <@${newMember.id}> (${roleMentions}) وتمت إزالته مرة أخرى تلقائيًا.**`
                     )
-                    // Add the standard thumbnail to logs
-                    .setThumbnail(LOG_THUMBNAIL_URL)
                     .setTimestamp();
+                  const memberAvatar = newMember.user?.displayAvatarURL?.({ dynamic: true });
+                  if (memberAvatar) {
+                    logEmbed.setThumbnail(memberAvatar);
+                  }
                   const files = getSeparatorAttachments();
                   // Send the main log embed first without the separator image
                   logsChannel.send({ embeds: [logEmbed] }).catch(() => {});
@@ -1671,6 +1718,23 @@ function getEffectiveRoleNameLength(name) {
     // the given problem; otherwise it sends a new embed and stores the message ID on
     // the problem object.  The separator attachments are passed through to preserve
     // the horizontal line if enabled.  Errors are logged but do not throw.
+    async function findExistingLogMessage(logsChannel, prob, botId) {
+      const messages = await logsChannel.messages.fetch({ limit: 25 }).catch(() => null);
+      if (!messages) return null;
+      for (const msg of messages.values()) {
+        if (!msg.author || msg.author.id !== botId) continue;
+        const embed = msg.embeds?.[0];
+        const desc = embed?.description || '';
+        if (!desc) continue;
+        const hasFirst = desc.includes(`<@${prob.firstId}>`);
+        const hasSecond = desc.includes(`<@${prob.secondId}>`);
+        if (hasFirst && hasSecond) {
+          return msg;
+        }
+      }
+      return null;
+    }
+
     async function updateProblemLog(prob, logEmbed, files = []) {
       try {
         // Ensure we have a client reference and can look up the guild
@@ -1687,6 +1751,15 @@ function getEffectiveRoleNameLength(name) {
         if (prob.logMessageId) {
           const existingMsg = await logsChannel.messages.fetch(prob.logMessageId).catch(() => null);
           if (existingMsg) {
+            await existingMsg.edit({ embeds: [logEmbed] }).catch(() => {});
+            return;
+          }
+        }
+        if (!prob.logMessageId && lastClient?.user?.id) {
+          const existingMsg = await findExistingLogMessage(logsChannel, prob, lastClient.user.id);
+          if (existingMsg) {
+            prob.logMessageId = existingMsg.id;
+            saveActiveProblemsToDisk();
             await existingMsg.edit({ embeds: [logEmbed] }).catch(() => {});
             return;
           }
@@ -1950,15 +2023,18 @@ async function closeProblem(key, guild, context) {
   if (config.logsChannelId) {
     const logsChannel = guild.channels.cache.get(config.logsChannelId);
     if (logsChannel) {
+      const endedByUser = await client.users.fetch(endedById).catch(() => null);
       const logEmbed = colorManager.createEmbed()
         .setTitle('تم إنهاء مشكلة')
         .setDescription(
           `<@${endedById}> أنهى المشكلة بين <@${fId}> و <@${sId}>` +
             (reason ? `\nالسبب السابق: ${reason}` : '')
         )
-        // Add the standard thumbnail to logs
-        .setThumbnail(LOG_THUMBNAIL_URL)
         .setTimestamp();
+      const endedByAvatar = endedByUser?.displayAvatarURL?.({ dynamic: true });
+      if (endedByAvatar) {
+        logEmbed.setThumbnail(endedByAvatar);
+      }
       // Attach separator line if enabled
       const files = getSeparatorAttachments();
       // Send the main closure embed first without the separator image
@@ -2317,7 +2393,10 @@ module.exports = {
   name,
   execute,
   executeSetup,
-  handleInteraction
+  handleInteraction,
+  handleMessage,
+  handleVoice,
+  handleMemberUpdate
   // Export activeProblems and helper functions so other commands can
   // interact with the problem store.  closeProblem is included to
   // allow other modules to end problems.
