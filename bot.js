@@ -1574,7 +1574,7 @@ client.on('messageReactionRemove', async (reaction, user) => {
 let pairingsCache = {};
 const pairingsPath = path.join(__dirname, 'data', 'pairings.json');
 const pairingStatusPath = path.join(__dirname, 'data', 'pairingStatus.json');
-let pairingStatusCache = { off: false };
+let pairingStatusCache = { off: false, message: null };
 
 function normalizeUserId(input) {
   if (!input) return null;
@@ -1661,13 +1661,14 @@ function loadPairingStatus() {
       if (data && data.trim() !== '') {
         const parsed = JSON.parse(data);
         pairingStatusCache = {
-          off: Boolean(parsed?.off)
+          off: Boolean(parsed?.off),
+          message: typeof parsed?.message === 'string' ? parsed.message : null
         };
       }
     }
   } catch (error) {
     console.error('Error loading pairing status:', error);
-    pairingStatusCache = { off: false };
+    pairingStatusCache = { off: false, message: null };
   }
 }
 
@@ -1689,7 +1690,8 @@ client.on('messageCreate', async message => {
     const mentioned = message.mentions?.users?.has(ALLOWED_ID);
     const repliedUserId = message.mentions?.repliedUser?.id;
     if (mentioned || repliedUserId === ALLOWED_ID) {
-      await message.reply('احمد مب موجود الحين كلمه خاص').catch(() => {});
+      const replyMessage = pairingStatusCache.message || 'احمد مب موجود الحين كلمه خاص';
+      await message.reply(replyMessage).catch(() => {});
     }
   }
 
@@ -1765,10 +1767,16 @@ client.on('messageCreate', async message => {
       return;
     }
 
-    if (content.toLowerCase() === 'off' && message.author.id === ALLOWED_ID) {
+    if (content.toLowerCase().startsWith('off') && message.author.id === ALLOWED_ID) {
+      const customMessage = content.slice(3).trim();
+      if (!customMessage) {
+        await message.reply('❌ اكتب رسالة بعد الأمر. مثال: off مشغول حاليا، تواصل خاص');
+        return;
+      }
       pairingStatusCache.off = true;
+      pairingStatusCache.message = customMessage;
       savePairingStatus();
-      await message.reply('✅ تم تفعيل وضع عدم التوفر. أي منشن أو رد عليك سيتم الرد تلقائياً.');
+      await message.reply(`✅ تم تفعيل وضع عدم التوفر. سيتم الرد بالرسالة: ${customMessage}`);
       return;
     }
 
@@ -2241,6 +2249,16 @@ client.on('messageDelete', async message => {
     await handlePanelMessageDelete(message, client);
   } catch (error) {
     console.error('❌ خطأ في معالجة حذف رسالة:', error);
+  }
+});
+
+client.on('messageDeleteBulk', async messages => {
+  try {
+    for (const message of messages.values()) {
+      await handlePanelMessageDelete(message, client);
+    }
+  } catch (error) {
+    console.error('❌ خطأ في معالجة حذف الرسائل بالجملة:', error);
   }
 });
 
@@ -3608,6 +3626,7 @@ client.on('interactionCreate', async (interaction) => {
             interaction.customId === 'vac_set_approver' ||
             interaction.customId === 'vac_set_notification' ||
             interaction.customId === 'vac_back_main' ||
+            interaction.customId === 'vac_reject_cooldown_modal' ||
             interaction.customId.startsWith('vac_choice_') ||
             interaction.customId === 'vac_role_select' ||
             interaction.customId === 'vac_channel_select' ||
