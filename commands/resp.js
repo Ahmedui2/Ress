@@ -282,10 +282,12 @@ async function updateEmbedMessage(client) {
         const newText = createResponsibilitiesText(responsibilities);
         const components = createSuggestionComponents();
         
+        // فحص وجود صورة لنظام المسؤوليات في السيرفر
+        const config = readJSONFile(DATA_FILES.respConfig, { guilds: {} });
+
         for (const [guildId, embedData] of embedMessages.entries()) {
             try {
-                // جلب نوع الرسالة من الكونفيغ
-                const config = readJSONFile(DATA_FILES.respConfig, { guilds: {} });
+                const globalImageUrl = config.guilds?.[guildId]?.globalImageUrl;
                 const format = config.guilds[guildId]?.messageFormat || embedData.format || 'embed';
                 
                 let editOptions;
@@ -293,26 +295,38 @@ async function updateEmbedMessage(client) {
                     editOptions = {
                         content: newText,
                         embeds: [],
-                        components: components
+                        components: components,
+                        files: globalImageUrl ? [globalImageUrl] : []
                     };
                 } else {
                     editOptions = {
                         content: null,
                         embeds: [newEmbed],
-                        components: components
+                        components: components,
+                        files: globalImageUrl ? [globalImageUrl] : []
                     };
                 }
                 
-                if (embedData.message) {
-                    await embedData.message.edit(editOptions);
-                    console.log(`تم تحديث رسالة المسؤوليات في السيرفر ${guildId} (${format})`);
-                } else if (embedData.messageId && embedData.channelId) {
-                    // إعادة بناء مرجع الرسالة
-                    const channel = await client.channels.fetch(embedData.channelId);
-                    const message = await channel.messages.fetch(embedData.messageId);
-                    await message.edit(editOptions);
-                    embedData.message = message;
-                    console.log(`تم إعادة بناء وتحديث رسالة المسؤوليات في السيرفر ${guildId} (${format})`);
+                // جلب الرسالة إذا لم تكن موجودة في الذاكرة
+                let message = embedData.message;
+                if (!message && embedData.messageId && embedData.channelId) {
+                    const channel = await client.channels.fetch(embedData.channelId).catch(() => null);
+                    if (channel) {
+                        message = await channel.messages.fetch(embedData.messageId).catch(() => null);
+                    }
+                }
+
+                if (message) {
+                    try {
+                        await message.edit(editOptions);
+                        embedData.message = message;
+                        console.log(`✅ تم تحديث رسالة المسؤوليات في السيرفر ${guildId} (${format})`);
+                    } catch (editError) {
+                        console.error(`❌ فشل تعديل الرسالة في السيرفر ${guildId}:`, editError);
+                        // إذا كانت الرسالة محذوفة، يفضل إرسال واحدة جديدة أو تنبيه المالك
+                    }
+                } else {
+                    console.log(`⚠️ لم يتم العثور على رسالة المسؤوليات لتحديثها في السيرفر ${guildId}`);
                 }
             } catch (error) {
                 console.error(`خطأ في تحديث رسالة المسؤوليات للسيرفر ${guildId}:`, error);
@@ -430,9 +444,14 @@ async function handleResponsibilitySelect(interaction, client) {
         // إنشاء إيمبد منظم
         const embed = colorManager.createEmbed()
             .setTitle(`معلومات المسؤولية : ${selectedResp}`)
-            .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true, size: 256 }))
+            .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true, size: 128 }))
             .setTimestamp()
             .setFooter({ text: `طلب بواسطة : ${interaction.user.tag}`, iconURL: interaction.user.displayAvatarURL({ dynamic: true }) });
+
+        // إضافة الصورة للمسؤولية إذا وجدت
+        if (respData.image) {
+            embed.setImage(respData.image);
+        }
         
         // إضافة الحقول
         let fields = [];
@@ -1142,15 +1161,24 @@ if (subCommand === 'delete' && args[1] === 'all') {
             currentResps[name].image = imageUrl;
         }
 
+        // حفظ الصورة العامة لنظام التقديم التفاعلي
+        const configData = readJSONFile(DATA_FILES.respConfig, { guilds: {} });
+        if (!configData.guilds[guildId]) configData.guilds[guildId] = {};
+        configData.guilds[guildId].globalImageUrl = imageUrl;
+        writeJSONFile(DATA_FILES.respConfig, configData);
+
         writeJSONFile(DATA_FILES.responsibilities, currentResps);
         global.responsibilities = currentResps;
 
         // تحديث قاعدة البيانات (مرة وحدة فقط)
         try {
             if (dbManager?.run) {
-                await dbManager.run(
-                    'ALTER TABLE responsibilities ADD COLUMN image TEXT'
-                ).catch(() => {});
+                // التحقق من وجود العمود أولاً لمنع خطأ SQLITE_ERROR: duplicate column name
+                const tableInfo = await dbManager.all("PRAGMA table_info(responsibilities)");
+                const hasImage = tableInfo.some(col => col.name === 'image');
+                if (!hasImage) {
+                    await dbManager.run('ALTER TABLE responsibilities ADD COLUMN image TEXT').catch(() => {});
+                }
                 await dbManager.run(
                     'UPDATE responsibilities SET image = ?',
                     [imageUrl]
@@ -1177,9 +1205,12 @@ if (subCommand === 'delete' && args[1] === 'all') {
 
     try {
         if (dbManager?.run) {
-            await dbManager.run(
-                'ALTER TABLE responsibilities ADD COLUMN image TEXT'
-            ).catch(() => {});
+            // التحقق من وجود العمود أولاً لمنع خطأ SQLITE_ERROR: duplicate column name
+            const tableInfo = await dbManager.all("PRAGMA table_info(responsibilities)");
+            const hasImage = tableInfo.some(col => col.name === 'image');
+            if (!hasImage) {
+                await dbManager.run('ALTER TABLE responsibilities ADD COLUMN image TEXT').catch(() => {});
+            }
             await dbManager.run(
                 'UPDATE responsibilities SET image = ? WHERE name = ?',
                 [imageUrl, respName]
