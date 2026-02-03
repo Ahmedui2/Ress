@@ -473,8 +473,9 @@ async function execute(message, args, context) {
   // interaction handler.
   if (!client._problemRouterRegistered) {
     const ownersList = context.BOT_OWNERS || [];
-    interactionRouter.register('problem_', async (interaction, client) => {
-      await handleInteraction(interaction, { client, BOT_OWNERS: ownersList });
+    interactionRouter.register('problem_', async (interaction, context = {}) => {
+      const resolvedClient = context.client || context;
+      await handleInteraction(interaction, { client: resolvedClient, BOT_OWNERS: ownersList });
     });
     // Also ensure the router's route function is invoked on every
     // interactionCreate event.  We guard with another flag to avoid
@@ -2330,8 +2331,9 @@ async function executeSetup(message, args, context) {
   // Register router for problem setup interactions if not already registered
   if (!client._problemSetupRouterRegistered) {
     const ownersList = context.BOT_OWNERS || [];
-    interactionRouter.register('problem_setup_', async (interaction, client) => {
-      await handleSetupInteraction(interaction, { client, BOT_OWNERS: ownersList });
+    interactionRouter.register('problem_setup_', async (interaction, context = {}) => {
+      const resolvedClient = context.client || context;
+      await handleSetupInteraction(interaction, { client: resolvedClient, BOT_OWNERS: ownersList });
     });
     if (!client._interactionRouterListenerAdded) {
       client.on('interactionCreate', async (interaction) => {

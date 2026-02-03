@@ -1,7 +1,7 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, UserSelectMenuBuilder, PermissionsBitField } = require('discord.js');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
-const { addRoleEntry, findRoleByOwner, getGuildConfig, isManager, isCustomRolesChannelAllowed } = require('../utils/customRolesSystem.js');
+const { addRoleEntry, findRoleByOwner, getGuildConfig, getGuildRoles, isManager, isCustomRolesChannelAllowed } = require('../utils/customRolesSystem.js');
 const { resolveIconBuffer, applyRoleIcon } = require('../utils/roleIconUtils.js');
 
 const name = 'انشاء';
@@ -89,12 +89,30 @@ function buildStateEmbed(state) {
     `#color : ${state.color || 'N/A'}\n`,
     `#icon : ${state.iconLabel || 'N/A'}\n**`  ].join('\n');
 
+  const thumbnail = state.ownerAvatarUrl || state.creatorAvatarUrl || 'https://cdn.discordapp.com/attachments/1465209977378439262/1465210868395544689/add.png?ex=69784775&is=6976f5f5&hm=884c58ec4864821f1bd7370aa3e95a7436570e103dd66e7fe010cac52cb33396&';
+
   return new EmbedBuilder()
     .setTitle('إنشاء رول خاص')
     .setDescription(description)
     .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
-    .setThumbnail('https://cdn.discordapp.com/attachments/1465209977378439262/1465210868395544689/add.png?ex=69784775&is=6976f5f5&hm=884c58ec4864821f1bd7370aa3e95a7436570e103dd66e7fe010cac52cb33396&')
+    .setThumbnail(thumbnail)
 .setFooter({ text: 'Roles sys;' });
+}
+
+function buildOwnerPromptEmbed(message) {
+  const guild = message.guild;
+  const guildRoles = getGuildRoles(guild.id);
+  const ownersCount = new Set(guildRoles.map(entry => entry.ownerId)).size;
+  const avatarUrl = message.author.displayAvatarURL({ size: 128 });
+  return new EmbedBuilder()
+    .setTitle('اختيار أونر الرول')
+    .setDescription(
+      `**السيرفر : ${guild.name}\n` +
+      `عدد الاعضاء : ${guild.memberCount}\n` +
+      `عدد اللي معهم رولات خاصه : ${ownersCount}**`
+    )
+    .setThumbnail(avatarUrl)
+    .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136');
 }
 function buildButtons(state) {
   const row = new ActionRowBuilder().addComponents(
@@ -134,24 +152,27 @@ async function promptForMessage(channel, userId, promptText, interaction) {
   return response;
 }
 
-async function promptForOwnerSelection(channel, userId, interaction) {
+async function promptForOwnerSelection(message, userId, interaction) {
   const menu = new UserSelectMenuBuilder()
     .setCustomId(`srole_owner_select_${Date.now()}`)
     .setPlaceholder('اختر أونر الرول...')
     .setMinValues(1)
     .setMaxValues(1);
   const row = new ActionRowBuilder().addComponents(menu);
+  const promptEmbed = buildOwnerPromptEmbed(message);
 
   if (interaction) {
     let selectMessage = null;
     if (interaction.deferred || interaction.replied) {
       selectMessage = await interaction.editReply({
         content: 'اختر العضو المالك للرول :',
+        embeds: [promptEmbed],
         components: [row]
       }).catch(() => null);
     } else {
       const response = await interaction.reply({
         content: 'اختر العضو المالك للرول :',
+        embeds: [promptEmbed],
         components: [row],
         ephemeral: true,
         withResponse: true
@@ -168,8 +189,9 @@ async function promptForOwnerSelection(channel, userId, interaction) {
     return selection.values[0];
   }
 
-  const selectMessage = await channel.send({
+  const selectMessage = await message.channel.send({
     content: 'اختر العضو المالك للرول :',
+    embeds: [promptEmbed],
     components: [row]
   });
   scheduleDelete(selectMessage);
@@ -208,7 +230,7 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
   const mentionId = message.mentions?.users?.first()?.id || args.find(arg => /^\d{17,19}$/.test(arg));
   let ownerId = ownerIdOverride || mentionId;
   if (!ownerId) {
-    ownerId = await promptForOwnerSelection(message.channel, message.author.id, interaction);
+    ownerId = await promptForOwnerSelection(message, message.author.id, interaction);
     if (!ownerId) return;
   }
 
@@ -242,6 +264,8 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
     return;
   }
 
+  const ownerMember = message.guild.members.cache.get(ownerId)
+    || await message.guild.members.fetch(ownerId).catch(() => null);
   const sessionId = `${message.author.id}_${Date.now()}`;
   const state = {
     sessionId,
@@ -252,7 +276,9 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
     maxMembers: null,
     iconBuffer: null,
     iconLabel: null,
-    clientAvatar: message.client.user.displayAvatarURL({ size: 128 })
+    clientAvatar: message.client.user.displayAvatarURL({ size: 128 }),
+    ownerAvatarUrl: ownerMember?.user.displayAvatarURL({ size: 128 }) || null,
+    creatorAvatarUrl: message.author.displayAvatarURL({ size: 128 })
   };
 
   activeCreates.set(sessionId, state);
