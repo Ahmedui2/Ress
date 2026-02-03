@@ -2374,20 +2374,45 @@ function restoreTopSchedules(client) {
   }
 }
 
-function restorePanelCleanups(client) {
+async function restorePanelCleanups(client) {
   const configData = getConfigData();
   for (const [guildId, config] of Object.entries(configData)) {
     const guild = client.guilds.cache.get(guildId);
     if (!guild) continue;
     const panelConfigs = [
-      { channelId: config.memberControlChannelId, messageId: config.memberPanelMessageId },
-      { channelId: config.adminControlChannelId, messageId: config.adminPanelMessageId },
-      { channelId: config.topChannelId, messageId: config.topMessageId }
+      { type: 'member', channelId: config.memberControlChannelId, messageId: config.memberPanelMessageId },
+      { type: 'admin', channelId: config.adminControlChannelId, messageId: config.adminPanelMessageId },
+      { type: 'request', channelId: config.requestsChannelId, messageId: config.requestPanelMessageId },
+      { type: 'top', channelId: config.topChannelId, messageId: config.topMessageId }
     ];
 
-    for (const { channelId, messageId } of panelConfigs) {
-      if (channelId && messageId) {
-        startPanelCleanup(guild, channelId, messageId);
+    for (const { type, channelId, messageId } of panelConfigs) {
+      if (!channelId) continue;
+      const channel = await guild.channels.fetch(channelId).catch(() => null);
+      if (!channel || !channel.isTextBased()) continue;
+
+      if (messageId) {
+        const existingMessage = await channel.messages.fetch(messageId).catch(() => null);
+        if (existingMessage) {
+          startPanelCleanup(guild, channelId, messageId);
+          continue;
+        }
+      }
+
+      if (type === 'top' && !config.topEnabled) continue;
+
+      try {
+        if (type === 'member') {
+          await sendMemberPanel(guild, channel, config);
+        } else if (type === 'admin') {
+          await sendAdminPanel(guild, channel, config);
+        } else if (type === 'request') {
+          await sendRequestPanel(guild, channel, config);
+        } else if (type === 'top') {
+          await sendTopRolesPanel(guild, channel, config);
+        }
+      } catch (error) {
+        console.error('❌ فشل استعادة لوحة الرولات الخاصة:', error);
       }
     }
   }
