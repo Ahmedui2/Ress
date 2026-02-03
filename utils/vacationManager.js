@@ -275,14 +275,14 @@ async function notifyAdminsVacationEnded(client, guild, vacation, userId, reason
                 { name: 'البدء', value: `<t:${Math.floor(new Date(vacation.startDate).getTime() / 1000)}:f>`, inline: true },
                 { name: 'الانتهاء', value: `<t:${Math.floor(actualEndDate.getTime() / 1000)}:f>`, inline: true }
             )
-            .setThumbnail(user ? user.displayAvatarURL() : null)
+            .setThumbnail(user ? user.displayAvatarURL({ size: 128 }) : null)
             .setFooter({ text: 'Space' })
             .setTimestamp();
 
         if (user) {
             embed.setAuthor({
                 name: user.tag,
-                iconURL: user.displayAvatarURL()
+                iconURL: user.displayAvatarURL({ size: 128 })
             });
         }
 

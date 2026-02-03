@@ -96,7 +96,7 @@ async function execute(message, args, { client, BOT_OWNERS }) {
     const statusEmbed = new EmbedBuilder().setColor(colorManager.getColor() || '#0099ff')
         .setTitle(`حالة إجازة ${targetUser.username}`)
         .setColor(colorManager.getColor('active') || '#2ECC71')
-        .setThumbnail(targetUser.displayAvatarURL())
+        .setThumbnail(targetUser.displayAvatarURL({ size: 128 }))
         .addFields(
             { name: "الحالة", value: "in vacation", inline: true },
             { name: "وقتها", value: remainingTime > 0 ? ms(remainingTime, { long: true }) : "Ended", inline: true },
@@ -280,7 +280,8 @@ async function handleInteraction(interaction, context) {
             const embed = new EmbedBuilder()
                 .setTitle("Request for end")
                 .setColor(colorManager.getColor('pending') || '#E67E22')
-                .setAuthor({ name: user.tag, iconURL: user.displayAvatarURL() })
+                .setAuthor({ name: user.tag, iconURL: user.displayAvatarURL({ size: 128 }) })
+                .setThumbnail(user.displayAvatarURL({ size: 128 }))
                 .addFields(
                     { name: "العضو", value: `${member}`, inline: true },
                     { name: "السبب", value: activeVacation.reason || 'غير محدد', inline: false },
@@ -526,6 +527,7 @@ async function handleInteraction(interaction, context) {
                         .setTitle('✅ تم قبول إنهاء الإجازة')
                         .setColor(colorManager.getColor('approved') || '#2ECC71')
                         .setDescription(`**تمت الموافقة على طلب إنهاء إجازة <@${userId}> مبكراً بنجاح.**`)
+                        .setThumbnail(requestedUser?.displayAvatarURL({ size: 128 }) || null)
                         .addFields([
                             { name: 'العضو', value: `<@${userId}>`, inline: true },
                             { name: 'المسؤول', value: `<@${interaction.user.id}>`, inline: true },
@@ -583,6 +585,7 @@ async function handleInteraction(interaction, context) {
             .setColor(colorManager.getColor('rejected') || '#E74C3C')
             .setTitle('❌ Request Rejected (Early Termination)')
             .setDescription(`**تم رفض طلب إنهاء إجازتك مبكراً.**`)
+            .setThumbnail(interaction.user.displayAvatarURL({ size: 128 }))
             .addFields([
                 { name: 'العضو', value: `<@${userId}>`, inline: true },
                 { name: 'المسؤول', value: `<@${interaction.user.id}>`, inline: true },
@@ -602,6 +605,7 @@ async function handleInteraction(interaction, context) {
                 .setColor(colorManager.getColor('rejected') || '#E74C3C')
                 .setTitle('❌ تم رفض طلب إنهاء إجازتك المبكر')
                 .setDescription(`نعتذر، لقد تم رفض طلب إنهاء الإجازة الخاص بك في **${interaction.guild.name}**`)
+                .setThumbnail(interaction.user.displayAvatarURL({ size: 128 }))
                 .addFields(
                     { name: "المسؤول", value: `${interaction.user.tag}`, inline: true },
                     { name: "سبب الرفض", value: reason, inline: false },
