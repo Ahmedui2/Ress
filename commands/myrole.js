@@ -784,6 +784,23 @@ async function handleTransfer({ channel, userId, role, roleEntry, interaction, p
     }
     return;
   }
+  if (mentionId === roleEntry.ownerId) {
+    if (interaction) {
+      await respondEphemeral(interaction, { content: '**❌ هذا العضو هو المالك الحالي بالفعل.**' });
+    } else {
+      await sendTemp(channel, '**❌ هذا العضو هو المالك الحالي بالفعل.**');
+    }
+    return;
+  }
+  const existingOwnerRole = findRoleByOwner(role.guild.id, mentionId);
+  if (existingOwnerRole && existingOwnerRole.roleId !== role.id) {
+    if (interaction) {
+      await respondEphemeral(interaction, { content: '**❌ هذا العضو يملك رول خاص بالفعل.**' });
+    } else {
+      await sendTemp(channel, '**❌ هذا العضو يملك رول خاص بالفعل.**');
+    }
+    return;
+  }
 
   const previousOwnerId = roleEntry.ownerId;
   roleEntry.ownerId = mentionId;
@@ -825,7 +842,8 @@ async function startMyRoleFlow({ member, channel, client }) {
 
   const role = member.guild.roles.cache.get(roleEntry.roleId);
   if (!role) {
-    await sendTemp(channel, '**❌ لم يتم العثور على الرول في السيرفر.**');
+    deleteRoleEntry(roleEntry.roleId, member.id);
+    await sendTemp(channel, '**❌ لم يتم العثور على الرول في السيرفر وتم حذف بياناته.**');
     return;
   }
 

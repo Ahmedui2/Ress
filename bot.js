@@ -31,10 +31,10 @@ const { checkCooldown, startCooldown } = require('./commands/cooldown.js');
 const colorManager = require('./utils/colorManager.js');
 const vacationManager = require('./utils/vacationManager');
 const promoteManager = require('./utils/promoteManager');
-const { getRoleEntry, addRoleEntry } = require('./utils/customRolesSystem.js');
+const { getRoleEntry, addRoleEntry, getGuildRoles, findRoleByOwner, deleteRoleEntry } = require('./utils/customRolesSystem.js');
 const interactionRouter = require('./utils/interactionRouter');
 const { handleAdminApplicationInteraction } = require('./commands/admin-apply.js');
-const { restoreTopSchedules, restorePanelCleanups } = require('./commands/roles-settings.js');
+const { restoreTopSchedules, restorePanelCleanups, handlePanelMessageDelete } = require('./commands/roles-settings.js');
 const { handleChannelDelete, handleRoleDelete } = require('./utils/protectionManager.js');
 const problemCommand = require('./commands/problem.js');
 let interactiveRolesManager;
@@ -1437,6 +1437,11 @@ client.on('roleDelete', role => {
   try {
 
     handleRoleDelete(role);
+    const roleEntry = getRoleEntry(role.id);
+    if (roleEntry) {
+      deleteRoleEntry(role.id, role.client?.user?.id || 'system');
+      console.log(`🧹 تم حذف بيانات الرول الخاص المحذوف: ${role.name} (${role.id})`);
+    }
 
   } catch (error) {
 
@@ -2129,6 +2134,7 @@ client.on('messageDelete', async message => {
     if (streakCommand && streakCommand.handleMessageDelete) {
       await streakCommand.handleMessageDelete(message, client);
     }
+    await handlePanelMessageDelete(message, client);
   } catch (error) {
     console.error('❌ خطأ في معالجة حذف رسالة:', error);
   }
@@ -2591,6 +2597,26 @@ client.on('guildMemberRemove', async (member) => {
 
         // Handle vacation system member leave
         await vacationManager.handleMemberLeave(member);
+
+        // تحديث بيانات الرولات الخاصة عند المغادرة
+        const customRoles = getGuildRoles(member.guild.id);
+        for (const roleEntry of customRoles) {
+            if (roleEntry.memberMeta && roleEntry.memberMeta[member.id]) {
+                delete roleEntry.memberMeta[member.id];
+                roleEntry.updatedAt = Date.now();
+                addRoleEntry(roleEntry.roleId, roleEntry);
+            }
+        }
+
+        const ownedRoleEntry = findRoleByOwner(member.guild.id, member.id);
+        if (ownedRoleEntry) {
+            const role = member.guild.roles.cache.get(ownedRoleEntry.roleId) || await member.guild.roles.fetch(ownedRoleEntry.roleId).catch(() => null);
+            if (role && role.editable) {
+                await role.delete(`حذف رول خاص بعد مغادرة المالك ${member.id}`).catch(() => {});
+            }
+            deleteRoleEntry(ownedRoleEntry.roleId, member.id);
+            console.log(`🗑️ تم حذف رول خاص بعد مغادرة المالك: ${ownedRoleEntry.roleId}`);
+        }
 
     } catch (error) {
         console.error('خطأ في معالج الانسحاب:', error);
