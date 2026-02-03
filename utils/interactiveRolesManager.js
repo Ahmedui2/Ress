@@ -26,10 +26,10 @@ function loadSettings() {
                     return entry;
                 }).filter(entry => entry && entry.roleId && Array.isArray(entry.keywords));
             }
-            if (!data.exceptionCooldowns) {
+            if (!data.exceptionCooldowns || typeof data.exceptionCooldowns !== 'object') {
                 data.exceptionCooldowns = {};
             }
-            if (!data.pendingExceptionRequests) {
+            if (!data.pendingExceptionRequests || typeof data.pendingExceptionRequests !== 'object' || Array.isArray(data.pendingExceptionRequests)) {
                 data.pendingExceptionRequests = {};
             }
             return data;
@@ -142,17 +142,22 @@ async function handleMessage(message) {
                 return;
             }
 
-            const hasPendingException = Object.values(settings.pendingExceptionRequests || {}).some((req) => req.targetId === targetId);
+            if (!settings.pendingExceptionRequests || typeof settings.pendingExceptionRequests !== 'object' || Array.isArray(settings.pendingExceptionRequests)) {
+                settings.pendingExceptionRequests = {};
+            }
+
+            const hasPendingException = Object.values(settings.pendingExceptionRequests).some((req) => req.targetId === targetId);
             if (hasPendingException) {
                 const reply = await message.channel.send(`⚠️ <@${targetId}> لديه طلب مستثنى معلق بالفعل.`);
                 setTimeout(() => reply.delete().catch(() => {}), 5000);
                 return;
             }
 
+            let sentMessage = null;
             const userStats = await collectUserStats(targetMember);
             const statsEmbed = await createUserStatsEmbed(userStats, colorManager, true, message.member?.displayName ?? null, `<@${message.author.id}>`);
-            statsEmbed.setTitle('🎭 طلب رول تفاعلي (استثناء)')
-                .setDescription(`**Admin :** <@${message.author.id}>\n**Member :** <@${targetId}>\n**الرول المستثنى:** <@&${matchedException.roleId}>\n**الكلمة:** ${matchedException.keyword}\n\n${message.content}`);
+            statsEmbed.setTitle(' طلب رول تفاعلي (استثناء)')
+                .setDescription(`**Admin :** <@${message.author.id}>\n**Member :** <@${targetId}>\n** الرول المستثنى :** <@&${matchedException.roleId}>\n**الكلمه:** ${matchedException.keyword}\n\n${message.content}`);
 
             const respConfigPath = path.join(__dirname, '..', 'data', 'respConfig.json');
             let globalImageUrl = null;
@@ -199,12 +204,17 @@ async function handleMessage(message) {
                 messageOptions.files = [globalImageUrl];
             }
 
-            const sentMessage = await message.channel.send(messageOptions);
+            try {
+                sentMessage = await message.channel.send(messageOptions);
+            } catch (error) {
+                console.error('Error sending exception request message:', error);
+                return;
+            }
 
             settings.pendingExceptionRequests = settings.pendingExceptionRequests || {};
             settings.pendingExceptionRequests[applicationId] = {
                 applicationId,
-                messageId: sentMessage.id,
+                messageId: sentMessage?.id,
                 requesterId: message.author.id,
                 targetId,
                 originalContent: message.content,
@@ -212,7 +222,7 @@ async function handleMessage(message) {
                 roleId: matchedException.roleId,
                 keyword: matchedException.keyword,
                 timestamp: Date.now()
-            });
+            }
             saveSettings(settings);
 
             return;
@@ -369,11 +379,11 @@ async function handleInteraction(interaction) {
         try {
             if (value === 'simple_view') {
                 updatedEmbed = await createUserStatsEmbed(userStats, colorManager, true, null, `<@${request.requesterId}>`);
-                updatedEmbed.setTitle('🎭 طلب رول تفاعلي (استثناء)').setDescription(`**Admin :** <@${request.requesterId}>\n**Member :** <@${request.targetId}>\n**الرول المستثنى:** <@&${request.roleId}>\n**الكلمة:** ${request.keyword}\n\n${request.originalContent}`);
+                updatedEmbed.setTitle('🎭 طلب رول تفاعلي (استثناء)').setDescription(`**Admin :** <@${request.requesterId}>\n**Member :** <@${request.targetId}>\n**الرول المستثنى :** <@&${request.roleId}>\n**الكلمة :** ${request.keyword}\n\n${request.originalContent}`);
             } else {
                 updatedEmbed = await createUserStatsEmbed(userStats, colorManager, false, null, `<@${request.requesterId}>`, value);
                 const targetMember = await interaction.guild.members.fetch(request.targetId).catch(() => null);
-                updatedEmbed.setTitle(`🎭 تفاصيل العضو: ${targetMember ? targetMember.user.username : request.targetId}`);
+                updatedEmbed.setTitle(` تفاصيل العضو: ${targetMember ? targetMember.user.username : request.targetId}`);
 
                 if (updatedEmbed.data && updatedEmbed.data.fields && !updatedEmbed.data.fields.some(f => f.name && f.name.includes('بواسطة'))) {
                     updatedEmbed.addFields({ name: 'بواسطة', value: `<@${request.requesterId}>`, inline: true });
@@ -414,11 +424,11 @@ async function handleInteraction(interaction) {
 
         await targetMember.roles.add(role).catch(() => {});
         try {
-            await targetMember.send(`✅ **تهانينا!** تم قبول طلبك للرول التفاعلي (استثناء) وحصلت على رول: **${role.name}** في سيرفر **${interaction.guild.name}**.`);
+            await targetMember.send(`✅ ** تم قبول طلبك للرول التفاعلي  وحصلت على رول : ${role.name}في سيرفر ${interaction.guild.name}**.`);
         } catch (e) {}
 
         const channel = interaction.guild.channels.cache.get(settings.settings.requestChannel);
-        if (channel) {
+        if (channel && request.messageId) {
             const msg = await channel.messages.fetch(request.messageId).catch(() => null);
             if (msg) {
                 const embed = EmbedBuilder.from(msg.embeds[0])
@@ -474,12 +484,12 @@ async function handleInteraction(interaction) {
         const targetMember = await interaction.guild.members.fetch(request.targetId).catch(() => null);
         if (targetMember) {
             try {
-                await targetMember.send(`❌ **للأسف!** تم رفض طلبك للرول التفاعلي (استثناء) في سيرفر **${interaction.guild.name}**.\n**السبب:** ${reason}`);
+                await targetMember.send(`❌ **للأسف!** تم رفض طلبك للرول التفاعلي  في سيرفر **${interaction.guild.name}**.\n**السبب:** ${reason}`);
             } catch (e) {}
         }
 
         const channel = interaction.guild.channels.cache.get(settings.settings.requestChannel);
-        if (channel) {
+        if (channel && request.messageId) {
             const msg = await channel.messages.fetch(request.messageId).catch(() => null);
             if (msg) {
                 const embed = EmbedBuilder.from(msg.embeds[0])
@@ -536,7 +546,7 @@ async function handleInteraction(interaction) {
                 
                 // Re-apply title and correct styling after createUserStatsEmbed
                 const targetMember = await interaction.guild.members.fetch(targetId).catch(() => null);
-                updatedEmbed.setTitle(`🎭 تفاصيل العضو: ${targetMember ? targetMember.user.username : targetId}`);
+                updatedEmbed.setTitle(` تفاصيل العضو: ${targetMember ? targetMember.user.username : targetId}`);
                 
                 // Add requester field if it's missing in some views
                 if (updatedEmbed.data && updatedEmbed.data.fields && !updatedEmbed.data.fields.some(f => f.name && f.name.includes('بواسطة'))) {
@@ -593,7 +603,7 @@ async function handleInteraction(interaction) {
             // Assign the role to the member
             await targetMember.roles.add(role).catch(() => {});
             try {
-                await targetMember.send(`✅ **تهانينا!** تم قبول طلبك للرول التفاعلي وحصلت على رول: **${role.name}** في سيرفر **${interaction.guild.name}**.`);
+                await targetMember.send(`✅ ** تم قبول طلبك للرول التفاعلي وحصلت على رول : ${role.name} في سيرفر ${interaction.guild.name}**.`);
             } catch (e) {}
 
             // Update the original request message to reflect approval
