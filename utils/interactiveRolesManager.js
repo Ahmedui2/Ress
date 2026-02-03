@@ -422,6 +422,9 @@ async function handleInteraction(interaction) {
             return interaction.reply({ content: `⚠️ <@${request.targetId}> لديه بالفعل الرول المستثنى.`, ephemeral: true }).catch(() => {});
         }
 
+        if (typeof global.markInteractiveRoleGrant === 'function') {
+            global.markInteractiveRoleGrant(interaction.guild.id, targetMember.id, role.id);
+        }
         await targetMember.roles.add(role).catch(() => {});
         try {
             await targetMember.send(`✅ ** تم قبول طلبك للرول التفاعلي  وحصلت على رول : ${role.name}في سيرفر ${interaction.guild.name}**.`);
@@ -601,6 +604,9 @@ async function handleInteraction(interaction) {
 
         if (targetMember && role) {
             // Assign the role to the member
+            if (typeof global.markInteractiveRoleGrant === 'function') {
+                global.markInteractiveRoleGrant(interaction.guild.id, targetMember.id, role.id);
+            }
             await targetMember.roles.add(role).catch(() => {});
             try {
                 await targetMember.send(`✅ ** تم قبول طلبك للرول التفاعلي وحصلت على رول : ${role.name} في سيرفر ${interaction.guild.name}**.`);

@@ -846,6 +846,10 @@ async function handleAdminApplicationInteraction(interaction) {
                     addedRoles.push({ id: roleId, name: role.name });
                     console.log(`✅ تم إضافة الدور ${role.name} للمرشح ${candidate.displayName}`);
 
+                    if (typeof global.markAdminRoleGrant === 'function') {
+                        global.markAdminRoleGrant(interaction.guild.id, candidate.id, roleId);
+                    }
+
                     // إزالة التقييد عند القبول (في حال كان مرفوضاً سابقاً)
                     if (settings.rejectedCooldowns && settings.rejectedCooldowns[application.candidateId]) {
                         delete settings.rejectedCooldowns[application.candidateId];

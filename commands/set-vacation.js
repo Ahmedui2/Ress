@@ -1,4 +1,4 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionsBitField, RoleSelectMenuBuilder, ChannelSelectMenuBuilder, ChannelType, StringSelectMenuBuilder } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionsBitField, RoleSelectMenuBuilder, ChannelSelectMenuBuilder, ChannelType, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const colorManager = require('../utils/colorManager.js');
@@ -31,7 +31,14 @@ function saveVacations(data) {
 }
 
 // Helper to create the main status embed
+function ensureSettingsDefaults(settings = {}) {
+    if (!settings) settings = {};
+    if (!Number.isFinite(settings.rejectCooldownHours)) settings.rejectCooldownHours = 12;
+    return settings;
+}
+
 function createStatusEmbed(settings = {}) {
+    settings = ensureSettingsDefaults(settings);
     let approverDisplay = 'Not Set';
     if (settings.approverType === 'owners') {
         approverDisplay = 'Bot Owners';
@@ -55,7 +62,8 @@ function createStatusEmbed(settings = {}) {
         .addFields(
             { name: 'Approver Type', value: `\`${settings.approverType || 'Not Set'}\``, inline: false },
             { name: 'Approvers', value: approverDisplay, inline: false },
-            { name: 'Notification Method', value: notificationDisplay, inline: false }
+            { name: 'Notification Method', value: notificationDisplay, inline: false },
+            { name: 'Reject Cooldown', value: `${settings.rejectCooldownHours} hours`, inline: false }
         );
 }
 
@@ -68,6 +76,8 @@ module.exports = {
         }
 
         const vacations = readJsonFile(vacationsPath, { settings: {}, pending: {}, active: {}, pendingTermination: {} });
+        vacations.settings = ensureSettingsDefaults(vacations.settings);
+        saveVacations(vacations);
         const mainEmbed = createStatusEmbed(vacations.settings);
 
         const mainButtons = new ActionRowBuilder()
@@ -82,7 +92,46 @@ module.exports = {
                     .setStyle(ButtonStyle.Secondary)
             );
 
-        await message.channel.send({ embeds: [mainEmbed], components: [mainButtons] });
+        const cooldownButtons = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('vac_set_reject_cooldown')
+                    .setLabel('Set Reject Cooldown')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+
+        const sentMessage = await message.channel.send({ embeds: [mainEmbed], components: [mainButtons, cooldownButtons] });
+
+        setTimeout(async () => {
+            try {
+                const latestVacations = readJsonFile(vacationsPath, { settings: {} });
+                const refreshedEmbed = createStatusEmbed(latestVacations.settings || {});
+                const disabledMain = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId('vac_set_approver')
+                            .setLabel('Configure Approvers')
+                            .setStyle(ButtonStyle.Primary)
+                            .setDisabled(true),
+                        new ButtonBuilder()
+                            .setCustomId('vac_set_notification')
+                            .setLabel('Configure Notifications')
+                            .setStyle(ButtonStyle.Secondary)
+                            .setDisabled(true)
+                    );
+                const disabledCooldown = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId('vac_set_reject_cooldown')
+                            .setLabel('Set Reject Cooldown')
+                            .setStyle(ButtonStyle.Secondary)
+                            .setDisabled(true)
+                    );
+                await sentMessage.edit({ embeds: [refreshedEmbed], components: [disabledMain, disabledCooldown] });
+            } catch (error) {
+                console.error('خطأ في إنهاء مكونات set-vacation:', error);
+            }
+        }, 5 * 60 * 1000);
     },
 
     async handleInteraction(interaction, context) {
@@ -102,6 +151,18 @@ module.exports = {
             console.log(`معالجة تفاعل set-vacation: ${customId}`);
             
             let vacations = readJsonFile(vacationsPath, { settings: {}, pending: {}, active: {}, pendingTermination: {} });
+            vacations.settings = ensureSettingsDefaults(vacations.settings);
+
+        const mainEmbed = createStatusEmbed(vacations.settings);
+        const mainButtons = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder().setCustomId('vac_set_approver').setLabel('Configure Approvers').setStyle(ButtonStyle.Primary),
+                new ButtonBuilder().setCustomId('vac_set_notification').setLabel('Configure Notifications').setStyle(ButtonStyle.Secondary)
+            );
+        const cooldownButtons = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder().setCustomId('vac_set_reject_cooldown').setLabel('Set Reject Cooldown').setStyle(ButtonStyle.Secondary)
+            );
 
         // Main Menu Button Handlers
         if (customId === 'vac_set_approver') {
@@ -129,13 +190,8 @@ module.exports = {
 
         // Back Button
         if (customId === 'vac_back_main') {
-            const mainEmbed = createStatusEmbed(vacations.settings);
-            const mainButtons = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder().setCustomId('vac_set_approver').setLabel('Configure Approvers').setStyle(ButtonStyle.Primary),
-                    new ButtonBuilder().setCustomId('vac_set_notification').setLabel('Configure Notifications').setStyle(ButtonStyle.Secondary)
-                );
-            await interaction.update({ content: null, embeds: [mainEmbed], components: [mainButtons] });
+            const updatedEmbed = createStatusEmbed(vacations.settings);
+            await interaction.update({ content: null, embeds: [updatedEmbed], components: [mainButtons, cooldownButtons] });
             return;
         }
 
@@ -145,8 +201,8 @@ module.exports = {
             vacations.settings.approverType = 'owners';
             vacations.settings.approverTargets = [];
             saveVacations(vacations);
-            const mainEmbed = createStatusEmbed(vacations.settings);
-            await interaction.update({ content: '✅ Approvers set to **Bot Owners**.', embeds: [mainEmbed], components: [] });
+            const updatedEmbed = createStatusEmbed(vacations.settings);
+            await interaction.update({ content: '✅ Approvers set to **Bot Owners**.', embeds: [updatedEmbed], components: [mainButtons, cooldownButtons] });
             return;
         }
 
@@ -157,7 +213,10 @@ module.exports = {
                 .setMinValues(1)
                 .setMaxValues(10);
             const row = new ActionRowBuilder().addComponents(roleMenu);
-            await interaction.update({ content: 'Select the roles:', components: [row] });
+            const backRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId('vac_back_main').setLabel('Back').setStyle(ButtonStyle.Secondary)
+            );
+            await interaction.update({ content: 'Select the roles:', components: [row, backRow] });
             return;
         }
 
@@ -165,7 +224,7 @@ module.exports = {
             const responsibilitiesData = readJsonFile(responsibilitiesPath, {});
             const respNames = Object.keys(responsibilitiesData);
             if (respNames.length === 0) {
-                 await interaction.update({ content: 'There are no responsibilities configured.', components: [] });
+                 await interaction.update({ content: 'There are no responsibilities configured.', components: [mainButtons, cooldownButtons] });
                  return;
             }
             
@@ -202,8 +261,8 @@ module.exports = {
             vacations.settings.notificationMethod = 'dm';
             vacations.settings.notificationChannel = null;
             saveVacations(vacations);
-            const mainEmbed = createStatusEmbed(vacations.settings);
-            await interaction.update({ content: '✅ Notifications will now be sent via **DM**.', embeds: [mainEmbed], components: [] });
+            const updatedEmbed = createStatusEmbed(vacations.settings);
+            await interaction.update({ content: '✅ Notifications will now be sent via **DM**.', embeds: [updatedEmbed], components: [mainButtons, cooldownButtons] });
             return;
         }
 
@@ -213,7 +272,27 @@ module.exports = {
                 .setPlaceholder('Select a notification channel')
                 .addChannelTypes(ChannelType.GuildText);
             const row = new ActionRowBuilder().addComponents(channelMenu);
-            await interaction.update({ content: 'Select the channel:', components: [row] });
+            const backRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId('vac_back_main').setLabel('Back').setStyle(ButtonStyle.Secondary)
+            );
+            await interaction.update({ content: 'Select the channel:', components: [row, backRow] });
+            return;
+        }
+
+        if (customId === 'vac_set_reject_cooldown') {
+            const modal = new ModalBuilder()
+                .setCustomId('vac_reject_cooldown_modal')
+                .setTitle('Reject Cooldown');
+
+            const input = new TextInputBuilder()
+                .setCustomId('vac_reject_cooldown_value')
+                .setLabel('Cooldown in hours (1-168)')
+                .setStyle(TextInputStyle.Short)
+                .setRequired(true)
+                .setValue(String(vacations.settings.rejectCooldownHours || 12));
+
+            modal.addComponents(new ActionRowBuilder().addComponents(input));
+            await interaction.showModal(modal);
             return;
         }
 
@@ -223,8 +302,8 @@ module.exports = {
             vacations.settings.approverType = 'role';
             vacations.settings.approverTargets = interaction.values;
             saveVacations(vacations);
-            const mainEmbed = createStatusEmbed(vacations.settings);
-            await interaction.update({ content: '✅ Approver roles have been updated.', embeds: [mainEmbed], components: [] });
+            const updatedEmbed = createStatusEmbed(vacations.settings);
+            await interaction.update({ content: '✅ Approver roles have been updated.', embeds: [updatedEmbed], components: [mainButtons, cooldownButtons] });
             return;
         }
 
@@ -233,8 +312,8 @@ module.exports = {
             vacations.settings.notificationMethod = 'channel';
             vacations.settings.notificationChannel = interaction.values[0];
             saveVacations(vacations);
-            const mainEmbed = createStatusEmbed(vacations.settings);
-            await interaction.update({ content: '✅ Notification channel has been updated.', embeds: [mainEmbed], components: [] });
+            const updatedEmbed = createStatusEmbed(vacations.settings);
+            await interaction.update({ content: '✅ Notification channel has been updated.', embeds: [updatedEmbed], components: [mainButtons, cooldownButtons] });
             return;
         }
 
@@ -261,12 +340,29 @@ module.exports = {
             vacations.settings.approverType = 'responsibility';
             vacations.settings.approverTargets = interaction.values;
             saveVacations(vacations);
-            const mainEmbed = createStatusEmbed(vacations.settings);
+            const updatedEmbed = createStatusEmbed(vacations.settings);
             await interaction.update({ 
                 content: `✅ تم تعيين المسؤولية "${selectedResp}" كمعتمد للإجازات (${responsibilitiesData[selectedResp].responsibles.length} مسؤول).`, 
-                embeds: [mainEmbed], 
-                components: [] 
+                embeds: [updatedEmbed], 
+                components: [mainButtons, cooldownButtons] 
             });
+            return;
+        }
+
+        if (interaction.isModalSubmit() && customId === 'vac_reject_cooldown_modal') {
+            const inputValue = interaction.fields.getTextInputValue('vac_reject_cooldown_value');
+            const parsed = Number(inputValue.replace(/[^\d.]/g, ''));
+            if (!Number.isFinite(parsed) || parsed < 1 || parsed > 168) {
+                await interaction.reply({ content: '❌ الرجاء إدخال رقم صحيح بين 1 و 168 ساعة.', ephemeral: true });
+                return;
+            }
+            vacations.settings.rejectCooldownHours = Math.round(parsed);
+            saveVacations(vacations);
+            const updatedEmbed = createStatusEmbed(vacations.settings);
+            await interaction.reply({ content: `✅ تم تحديث كولداون الرفض إلى ${vacations.settings.rejectCooldownHours} ساعة.`, ephemeral: true });
+            if (interaction.message) {
+                await interaction.message.edit({ embeds: [updatedEmbed], components: [mainButtons, cooldownButtons] }).catch(() => {});
+            }
             return;
         }
         

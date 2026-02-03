@@ -409,9 +409,12 @@ async function handleInteraction(interaction, context) {
         const member = await interaction.guild.members.fetch(userId).catch(() => null);
         const approverMember = interaction.member;
 
-        // Add 12h cooldown
+        const settings = vacationManager.getSettings();
+        const rejectCooldownHours = Number.isFinite(settings.rejectCooldownHours) ? settings.rejectCooldownHours : 12;
+
+        // Add cooldown
         if (!vacationsData.cooldowns) vacationsData.cooldowns = {};
-        vacationsData.cooldowns[userId] = Date.now() + (12 * 60 * 60 * 1000);
+        vacationsData.cooldowns[userId] = Date.now() + (rejectCooldownHours * 60 * 60 * 1000);
 
         if (!vacationsData.rejected) vacationsData.rejected = {};
         vacationsData.rejected[userId] = {
@@ -435,7 +438,7 @@ async function handleInteraction(interaction, context) {
                 { name: " المسؤول", value: `${approverMember}`, inline: true },
                 { name: " سبب الرفض", value: rejectReason, inline: false },
                 { name: " السبب الأصلي", value: pendingRequest.reason, inline: false },
-                { name: " الكولداون", value: "12 ساعة", inline: true }
+                { name: " الكولداون", value: `${rejectCooldownHours} ساعة`, inline: true }
             )
             .setFooter({ text: '🔴' })
             .setTimestamp();
@@ -453,7 +456,7 @@ async function handleInteraction(interaction, context) {
                     .addFields(
                         { name: " المسؤول", value: `${approverMember.user.tag}`, inline: true },
                         { name: " سبب الرفض", value: rejectReason, inline: false },
-                        { name: " الكولداون", value: '12 ساعة (لا يمكنك التقديم مجدداً خلال هذه الفترة)', inline: false }
+                        { name: " الكولداون", value: `${rejectCooldownHours} ساعة (لا يمكنك التقديم مجدداً خلال هذه الفترة)`, inline: false }
                     )
                     .setTimestamp();
                 await member.user.send({ embeds: [dmEmbed] });

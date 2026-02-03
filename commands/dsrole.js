@@ -1,7 +1,7 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, RoleSelectMenuBuilder } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
 const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
-const { getGuildConfig, getRoleEntry, deleteRoleEntry, findRoleByOwner, isManager } = require('../utils/customRolesSystem.js');
+const { getGuildConfig, getRoleEntry, deleteRoleEntry, findRoleByOwner, isManager, getGuildRoles } = require('../utils/customRolesSystem.js');
 
 const name = 'حذف';
 const aliases = ['dsrole'];
@@ -16,65 +16,62 @@ async function execute(message, args, { client, BOT_OWNERS }) {
     return;
   }
 
-  const roleMention = message.mentions.roles.first();
-  const userMention = message.mentions.users.first();
-  const roleIdFromArgs = args.find(arg => /^\d{17,19}$/.test(arg));
-  const hasExplicitTarget = Boolean(roleMention || userMention || roleIdFromArgs);
-  let targetRoleId = null;
-  let roleEntry = null;
+  const mentionedRoles = message.mentions.roles.map(role => role.id);
+  const mentionedUsers = message.mentions.users.map(user => user.id);
+  const idArgs = args.filter(arg => /^\d{17,19}$/.test(arg));
+  const hasExplicitTarget = mentionedRoles.length > 0 || mentionedUsers.length > 0 || idArgs.length > 0;
 
-  if (roleMention) {
-    roleEntry = getRoleEntry(roleMention.id);
-    if (roleEntry && roleEntry.guildId === message.guild.id) {
-      targetRoleId = roleMention.id;
-    }
-  }
+  const explicitRoleIds = new Set(mentionedRoles);
+  const ownerCandidates = new Set(mentionedUsers);
 
-  if (!targetRoleId && userMention) {
-    roleEntry = findRoleByOwner(message.guild.id, userMention.id);
-    if (roleEntry) {
-      targetRoleId = roleEntry.roleId;
-    }
-  }
-
-  if (!targetRoleId && roleIdFromArgs) {
-    const entryByRoleId = getRoleEntry(roleIdFromArgs);
-    if (entryByRoleId && entryByRoleId.guildId === message.guild.id) {
-      roleEntry = entryByRoleId;
-      targetRoleId = roleIdFromArgs;
+  for (const id of idArgs) {
+    if (message.guild.roles.cache.has(id)) {
+      explicitRoleIds.add(id);
     } else {
-      const entryByOwnerId = findRoleByOwner(message.guild.id, roleIdFromArgs);
-      if (entryByOwnerId) {
-        roleEntry = entryByOwnerId;
-        targetRoleId = entryByOwnerId.roleId;
-      }
+      ownerCandidates.add(id);
     }
   }
 
-  if (targetRoleId) {
-    if (!roleEntry || roleEntry.guildId !== message.guild.id) {
-      await message.reply('**❌ هذا الرول ليس ضمن الرولات الخاصة.**');
-      return;
-    }
+  const resolvedRoleIds = new Set();
+  const roleEntries = new Map();
 
-    if (roleEntry.ownerId !== message.author.id && !canManage) {
-      await message.reply('**❌ لا تملك صلاحية حذف هذا الرول.**');
-      return;
+  for (const roleId of explicitRoleIds) {
+    const entry = getRoleEntry(roleId);
+    if (entry && entry.guildId === message.guild.id) {
+      resolvedRoleIds.add(roleId);
+      roleEntries.set(roleId, entry);
     }
+  }
 
-    const role = message.guild.roles.cache.get(targetRoleId);
+  for (const ownerId of ownerCandidates) {
+    const entry = findRoleByOwner(message.guild.id, ownerId);
+    if (entry) {
+      resolvedRoleIds.add(entry.roleId);
+      roleEntries.set(entry.roleId, entry);
+    }
+  }
+
+  if (resolvedRoleIds.size > 0) {
+    const confirmRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`dsrole_confirm_${message.author.id}`).setLabel('تأكيد الحذف').setEmoji('<:emoji_7:1465221394966253768>').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId(`dsrole_cancel_${message.author.id}`).setLabel('إلغاء').setEmoji('<:emoji_7:1465221361839505622>').setStyle(ButtonStyle.Secondary)
+    );
+
+    const roleLines = [...resolvedRoleIds].slice(0, 20).map(roleId => {
+      const role = message.guild.roles.cache.get(roleId);
+      const entry = roleEntries.get(roleId);
+      return `• ${role ? `<@&${roleId}>` : roleId} - <@${entry?.ownerId || 'غير معروف'}>`;
+    });
+    const extraCount = Math.max(0, resolvedRoleIds.size - roleLines.length);
+    const extraText = extraCount > 0 ? `\n**...وعدد ${extraCount} رول أخرى.**` : '';
+
     const embed = new EmbedBuilder()
-      .setTitle('تأكيد حذف الرول')
-      .setDescription(`**الرول : ${role ? `<@&${targetRoleId}>` : targetRoleId}\n الأونر : <@${roleEntry.ownerId}>**`)
+      .setTitle('تأكيد حذف الرولات')
+      .setDescription(`**سيتم حذف ${resolvedRoleIds.size} رول:**\n${roleLines.join('\n')}${extraText}`)
       .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
       .setThumbnail('https://cdn.discordapp.com/attachments/1465209977378439262/1465221268692275251/delete_5.png?ex=69785124&is=6976ffa4&hm=84c2e9633637ab34f90545a3196a5243cebb0f5272247f03ff430ea0fbbf089e&');
 
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`dsrole_confirm_${targetRoleId}_${message.author.id}`).setLabel('تأكيد الحذف').setEmoji('<:emoji_7:1465221394966253768>').setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId(`dsrole_cancel_${targetRoleId}_${message.author.id}`).setLabel('إلغاء').setEmoji('<:emoji_7:1465221361839505622>').setStyle(ButtonStyle.Secondary)
-    );
-
-    const sentMessage = await message.channel.send({ embeds: [embed], components: [row] });
+    const sentMessage = await message.channel.send({ embeds: [embed], components: [confirmRow] });
 
     const collector = sentMessage.createMessageComponentCollector({
       filter: interaction => interaction.user.id === message.author.id,
@@ -89,17 +86,17 @@ async function execute(message, args, { client, BOT_OWNERS }) {
       }
 
       await interaction.deferUpdate();
-      const targetRole = message.guild.roles.cache.get(targetRoleId);
-      if (targetRole) {
-        if (!targetRole.editable) {
-          await sentMessage.edit({ content: '**❌ لا يمكن حذف هذا الرول بسبب صلاحيات البوت.**', embeds: [], components: [] });
-          collector.stop('forbidden');
-          return;
+      for (const roleId of resolvedRoleIds) {
+        const targetRole = message.guild.roles.cache.get(roleId);
+        if (targetRole) {
+          if (!targetRole.editable) {
+            continue;
+          }
+          await targetRole.delete(`حذف رول خاص بواسطة ${message.author.tag}`).catch(() => {});
         }
-        await targetRole.delete(`حذف رول خاص بواسطة ${message.author.tag}`).catch(() => {});
+        deleteRoleEntry(roleId, message.author.id);
       }
-      deleteRoleEntry(targetRoleId, message.author.id);
-      await sentMessage.edit({ content: '**✅ تم حذف الرول الخاص بنجاح.**', embeds: [], components: [] });
+      await sentMessage.edit({ content: '**✅ تم حذف الرولات الخاصة بنجاح.**', embeds: [], components: [] });
       collector.stop('deleted');
     });
 
@@ -107,21 +104,40 @@ async function execute(message, args, { client, BOT_OWNERS }) {
   }
 
   if (hasExplicitTarget) {
-    await message.reply('**❌ هذا الرول ليس ضمن الرولات الخاصة.**');
+    await message.reply('**❌ لا يوجد رولات خاصة مطابقة للمنشن أو الـ ID.**');
     return;
   }
 
-  const roleMenu = new RoleSelectMenuBuilder()
+  const customRoleEntries = getGuildRoles(message.guild.id);
+  const customRoleOptions = customRoleEntries
+    .map(entry => {
+      const role = message.guild.roles.cache.get(entry.roleId);
+      if (!role) return null;
+      return { label: role.name || `Role ${entry.roleId}`, value: entry.roleId };
+    })
+    .filter(Boolean)
+    .slice(0, 25);
+
+  if (customRoleOptions.length === 0) {
+    await message.reply('**❌ لا توجد رولات خاصة مسجلة للحذف.**');
+    return;
+  }
+
+  const roleMenu = new StringSelectMenuBuilder()
     .setCustomId(`dsrole_bulk_${message.author.id}`)
     .setPlaceholder('ابحث عن الرولات للحذف...')
     .setMinValues(1)
-    .setMaxValues(25);
+    .setMaxValues(customRoleOptions.length)
+    .addOptions(customRoleOptions);
 
   const row = new ActionRowBuilder().addComponents(roleMenu);
 
+  const extraNotice = customRoleEntries.length > 25
+    ? '\n**⚠️ القائمة تعرض أول 25 رول فقط. استخدم منشن/ID لحذف باقي الرولات.**'
+    : '';
   const embed = new EmbedBuilder()
     .setTitle('Delete roles')
-    .setDescription('**ابحث واختر الرولات المراد حذفها :**')
+    .setDescription(`**ابحث واختر الرولات المراد حذفها :**${extraNotice}`)
     .setColor(colorManager.getColor ? colorManager.getColor() : '#2f3136')
     .setThumbnail('https://cdn.discordapp.com/attachments/1465209977378439262/1465221268692275251/delete_5.png?ex=69785124&is=6976ffa4&hm=84c2e9633637ab34f90545a3196a5243cebb0f5272247f03ff430ea0fbbf089e&')
     .setFooter({ text: 'Roles sys;' });
@@ -134,7 +150,7 @@ async function execute(message, args, { client, BOT_OWNERS }) {
   });
 
   collector.on('collect', async interaction => {
-    if (!interaction.isRoleSelectMenu()) return;
+    if (!interaction.isStringSelectMenu()) return;
 
     const selectedRoles = interaction.values;
     const validRoleIds = selectedRoles.filter(roleId => {

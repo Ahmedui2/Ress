@@ -621,8 +621,9 @@ async function rejectVacation(interaction, userId) {
 
         if (!pendingRequest) return { success: false };
 
-        // إضافة كولداون 12 ساعة
-        const COOLDOWN_TIME = 12 * 60 * 60 * 1000;
+        const settings = vacationManager.getSettings();
+        const rejectCooldownHours = Number.isFinite(settings.rejectCooldownHours) ? settings.rejectCooldownHours : 12;
+        const COOLDOWN_TIME = rejectCooldownHours * 60 * 60 * 1000;
         if (!vacationsData.cooldowns) vacationsData.cooldowns = {};
         vacationsData.cooldowns[userId] = Date.now() + COOLDOWN_TIME;
 
@@ -646,7 +647,7 @@ async function rejectVacation(interaction, userId) {
             const dmEmbed = colorManager.createEmbed()
                 .setTitle('❌ تحديث بشأن طلب إجازتك')
                 .setColor('#E74C3C')
-                .setDescription(`**نأسف لإبلاغك بأنه تم رفض طلب إجازتك.**\n\n**السبب المذكور:** \`${pendingRequest.reason}\`\n**ملاحظة:** يمكنك التقديم مرة أخرى بعد مرور 12 ساعة.`)
+                .setDescription(`**نأسف لإبلاغك بأنه تم رفض طلب إجازتك.**\n\n**السبب المذكور:** \`${pendingRequest.reason}\`\n**ملاحظة:** يمكنك التقديم مرة أخرى بعد مرور ${rejectCooldownHours} ساعة.`)
                 .setTimestamp();
             await member.user.send({ embeds: [dmEmbed] }).catch(() => {});
         }
@@ -668,8 +669,9 @@ async function rejectTermination(interaction, userId) {
 
         if (!pendingRequest) return { success: false };
 
-        // إضافة كولداون 12 ساعة
-        const COOLDOWN_TIME = 12 * 60 * 60 * 1000;
+        const settings = vacationManager.getSettings();
+        const rejectCooldownHours = Number.isFinite(settings.rejectCooldownHours) ? settings.rejectCooldownHours : 12;
+        const COOLDOWN_TIME = rejectCooldownHours * 60 * 60 * 1000;
         if (!vacationsData.cooldowns) vacationsData.cooldowns = {};
         vacationsData.cooldowns[userId] = Date.now() + COOLDOWN_TIME;
 
@@ -685,7 +687,7 @@ async function rejectTermination(interaction, userId) {
             const dmEmbed = colorManager.createEmbed()
                 .setTitle('❌ تم رفض طلب إنهاء إجازتك المبكر')
                 .setColor('#E74C3C')
-                .setDescription(`نعتذر، لقد تم رفض طلب إنهاء الإجازة الخاص بك في **${interaction.guild.name}**.\n\n**ملاحظة:** يمكنك المحاولة مرة أخرى بعد مرور 12 ساعة.`)
+                .setDescription(`نعتذر، لقد تم رفض طلب إنهاء الإجازة الخاص بك في **${interaction.guild.name}**.\n\n**ملاحظة:** يمكنك المحاولة مرة أخرى بعد مرور ${rejectCooldownHours} ساعة.`)
                 .setTimestamp();
             await member.user.send({ embeds: [dmEmbed] }).catch(() => {});
         }
