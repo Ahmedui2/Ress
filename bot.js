@@ -31,10 +31,10 @@ const { checkCooldown, startCooldown } = require('./commands/cooldown.js');
 const colorManager = require('./utils/colorManager.js');
 const vacationManager = require('./utils/vacationManager');
 const promoteManager = require('./utils/promoteManager');
-const { getRoleEntry, addRoleEntry } = require('./utils/customRolesSystem.js');
+const { getRoleEntry, addRoleEntry, getGuildRoles, findRoleByOwner, deleteRoleEntry } = require('./utils/customRolesSystem.js');
 const interactionRouter = require('./utils/interactionRouter');
 const { handleAdminApplicationInteraction } = require('./commands/admin-apply.js');
-const { restoreTopSchedules, restorePanelCleanups } = require('./commands/roles-settings.js');
+const { restoreTopSchedules, restorePanelCleanups, handlePanelMessageDelete } = require('./commands/roles-settings.js');
 const { handleChannelDelete, handleRoleDelete } = require('./utils/protectionManager.js');
 const problemCommand = require('./commands/problem.js');
 let interactiveRolesManager;
@@ -79,6 +79,27 @@ function ensureDataFiles() {
     }
 }
 ensureDataFiles();
+
+if (!global.adminRoleGrantBypass) {
+    global.adminRoleGrantBypass = new Set();
+}
+if (!global.interactiveRoleGrantBypass) {
+    global.interactiveRoleGrantBypass = new Set();
+}
+
+global.markAdminRoleGrant = function markAdminRoleGrant(guildId, userId, roleId) {
+    if (!guildId || !userId || !roleId) return;
+    const key = `${guildId}_${userId}_${roleId}`;
+    global.adminRoleGrantBypass.add(key);
+    setTimeout(() => global.adminRoleGrantBypass.delete(key), 15000);
+};
+
+global.markInteractiveRoleGrant = function markInteractiveRoleGrant(guildId, userId, roleId) {
+    if (!guildId || !userId || !roleId) return;
+    const key = `${guildId}_${userId}_${roleId}`;
+    global.interactiveRoleGrantBypass.add(key);
+    setTimeout(() => global.interactiveRoleGrantBypass.delete(key), 15000);
+};
 
 // دالة لقراءة ملف JSON
 function readJSONFile(filePath, defaultValue = {}) {
@@ -1437,6 +1458,11 @@ client.on('roleDelete', role => {
   try {
 
     handleRoleDelete(role);
+    const roleEntry = getRoleEntry(role.id);
+    if (roleEntry) {
+      deleteRoleEntry(role.id, role.client?.user?.id || 'system');
+      console.log(`🧹 تم حذف بيانات الرول الخاص المحذوف: ${role.name} (${role.id})`);
+    }
 
   } catch (error) {
 
@@ -1547,6 +1573,8 @@ client.on('messageReactionRemove', async (reaction, user) => {
 // Pairings memory cache
 let pairingsCache = {};
 const pairingsPath = path.join(__dirname, 'data', 'pairings.json');
+const pairingStatusPath = path.join(__dirname, 'data', 'pairingStatus.json');
+let pairingStatusCache = { off: false };
 
 function normalizeUserId(input) {
   if (!input) return null;
@@ -1626,8 +1654,44 @@ function savePairings() {
 
 loadPairingsToCache();
 
+function loadPairingStatus() {
+  try {
+    if (fs.existsSync(pairingStatusPath)) {
+      const data = fs.readFileSync(pairingStatusPath, 'utf8');
+      if (data && data.trim() !== '') {
+        const parsed = JSON.parse(data);
+        pairingStatusCache = {
+          off: Boolean(parsed?.off)
+        };
+      }
+    }
+  } catch (error) {
+    console.error('Error loading pairing status:', error);
+    pairingStatusCache = { off: false };
+  }
+}
+
+function savePairingStatus() {
+  try {
+    fs.writeFileSync(pairingStatusPath, JSON.stringify(pairingStatusCache, null, 2));
+  } catch (error) {
+    console.error('Error saving pairing status:', error);
+  }
+}
+
+loadPairingStatus();
+
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
+  const ALLOWED_ID = '636930315503534110';
+
+  if (message.guild && pairingStatusCache.off) {
+    const mentioned = message.mentions?.users?.has(ALLOWED_ID);
+    const repliedUserId = message.mentions?.repliedUser?.id;
+    if (mentioned || repliedUserId === ALLOWED_ID) {
+      await message.reply('احمد مب موجود الحين كلمه خاص').catch(() => {});
+    }
+  }
 
   // 1. نظام الرولات التفاعلية
   if (typeof interactiveRolesManager !== 'undefined' && interactiveRolesManager.handleMessage) {
@@ -1650,7 +1714,35 @@ client.on('messageCreate', async message => {
   // 2. نظام الاقتران (DM)
   if (message.channel.type === 1) { // DM
     const content = message.content.trim();
-    const ALLOWED_ID = '636930315503534110';
+    let forwardedToAllowed = false;
+
+    if (message.author.id !== ALLOWED_ID) {
+      try {
+        const allowedUser = await fetchUserForDm(client, ALLOWED_ID);
+        if (allowedUser) {
+          const embed = new EmbedBuilder()
+            .setColor(colorManager.getColor() || '#0099ff')
+            .setAuthor({ name: message.author.tag, iconURL: message.author.displayAvatarURL() })
+            .setDescription(message.content ? message.content : '*(بدون نص)*')
+            .addFields({ name: 'المرسل', value: `<@${message.author.id}> (\`${message.author.id}\`)`, inline: false })
+            .setTimestamp();
+
+          const messageOptions = {
+            content: `رسالة جديدة من <@${message.author.id}>`,
+            embeds: [embed]
+          };
+
+          if (message.attachments.size > 0) {
+            messageOptions.files = message.attachments.map(a => a.url);
+          }
+
+          await allowedUser.send(messageOptions);
+          forwardedToAllowed = true;
+        }
+      } catch (e) {
+        console.error('❌ خطأ في تحويل رسالة DM إلى الأونر:', e);
+      }
+    }
 
     if (content.startsWith('اقتران ')) {
       if (message.author.id !== ALLOWED_ID) {
@@ -1670,6 +1762,20 @@ client.on('messageCreate', async message => {
 
       message.reply('✅ **تم الاتصال بنجاح. أي رسالة ترسلها الآن ستصل للطرف الآخر.**');
       // Removed target notification
+      return;
+    }
+
+    if (content.toLowerCase() === 'off' && message.author.id === ALLOWED_ID) {
+      pairingStatusCache.off = true;
+      savePairingStatus();
+      await message.reply('✅ تم تفعيل وضع عدم التوفر. أي منشن أو رد عليك سيتم الرد تلقائياً.');
+      return;
+    }
+
+    if (content.toLowerCase() === 'on' && message.author.id === ALLOWED_ID) {
+      pairingStatusCache.off = false;
+      savePairingStatus();
+      await message.reply('✅ تم إلغاء وضع عدم التوفر.');
       return;
     }
 
@@ -1695,12 +1801,15 @@ client.on('messageCreate', async message => {
     // Forward messages
     if (pairingsCache[message.author.id]) {
       const targetId = normalizeUserId(pairingsCache[message.author.id].targetId);
-      const ALLOWED_ID = '636930315503534110';
 
       if (!targetId) {
         delete pairingsCache[message.author.id];
         savePairings();
         return message.reply('❌ **تم حذف الاقتران بسبب آيدي غير صالح.**');
+      }
+
+      if (forwardedToAllowed && targetId === ALLOWED_ID) {
+        return;
       }
       
       try {
@@ -2129,6 +2238,7 @@ client.on('messageDelete', async message => {
     if (streakCommand && streakCommand.handleMessageDelete) {
       await streakCommand.handleMessageDelete(message, client);
     }
+    await handlePanelMessageDelete(message, client);
   } catch (error) {
     console.error('❌ خطأ في معالجة حذف رسالة:', error);
   }
@@ -2314,6 +2424,12 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
                 
                 for (const [roleId, role] of addedRoles) {
                     if (adminRoles.includes(roleId)) {
+                        const bypassKey = `${newMember.guild.id}_${userId}_${roleId}`;
+                        if (global.adminRoleGrantBypass?.has(bypassKey)) {
+                            console.log(`✅ تجاوز حماية التقديم الإداري للرول ${role.name} (موافقة رسمية)`);
+                            continue;
+                        }
+
                         // فحص إذا كان العضو لديه طلب معلق
                         const hasPending = adminApps.pendingApplications && Object.values(adminApps.pendingApplications).some(app => app.candidateId === userId);
                         
@@ -2344,6 +2460,49 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
                 }
             } catch (err) {
                 console.error('خطأ في فحص حماية التقديم الإداري:', err);
+            }
+        }
+
+        // 4. حماية نظام الرولات التفاعلية (setactive)
+        const interactiveRolesPath = path.join(__dirname, 'data', 'interactiveRoles.json');
+        if (fs.existsSync(interactiveRolesPath)) {
+            try {
+                const interactiveData = JSON.parse(fs.readFileSync(interactiveRolesPath, 'utf8'));
+                const interactiveRoles = interactiveData?.settings?.interactiveRoles || [];
+                const pendingRequests = interactiveData?.pendingRequests || {};
+                const pendingExceptionRequests = interactiveData?.pendingExceptionRequests || {};
+                const hasPendingInteractive = Boolean(pendingRequests[userId])
+                    || Object.values(pendingExceptionRequests).some(req => req?.targetId === userId);
+
+                if (interactiveRoles.length > 0 && hasPendingInteractive) {
+                    for (const [roleId, role] of addedRoles) {
+                        if (!interactiveRoles.includes(roleId)) continue;
+                        const bypassKey = `${newMember.guild.id}_${userId}_${roleId}`;
+                        if (global.interactiveRoleGrantBypass?.has(bypassKey)) {
+                            console.log(`✅ تجاوز حماية الرولات التفاعلية للرول ${role.name} (موافقة رسمية)`);
+                            continue;
+                        }
+
+                        console.log(`🚨 منع رول تفاعلي أثناء وجود طلب معلق: ${role.name} للعضو ${newMember.displayName}`);
+                        try {
+                            await newMember.roles.remove(role, 'منع رول تفاعلي - العضو لديه طلب تقديم معلق');
+                            logEvent(client, newMember.guild, {
+                                type: 'SECURITY_ACTIONS',
+                                title: 'منع رول تفاعلي أثناء تقديم',
+                                description: `تم منع إعطاء رول تفاعلي للعضو <@${userId}> أثناء وجود طلب معلق`,
+                                user: newMember.user,
+                                fields: [
+                                    { name: 'الرول', value: `<@&${roleId}>`, inline: true },
+                                    { name: 'السبب', value: 'لديه طلب تفاعلي قيد الدراسة', inline: true }
+                                ]
+                            });
+                        } catch (err) {
+                            console.error('خطأ في منع الرول التفاعلي:', err);
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error('خطأ في فحص حماية الرولات التفاعلية:', err);
             }
         }
 
@@ -2591,6 +2750,26 @@ client.on('guildMemberRemove', async (member) => {
 
         // Handle vacation system member leave
         await vacationManager.handleMemberLeave(member);
+
+        // تحديث بيانات الرولات الخاصة عند المغادرة
+        const customRoles = getGuildRoles(member.guild.id);
+        for (const roleEntry of customRoles) {
+            if (roleEntry.memberMeta && roleEntry.memberMeta[member.id]) {
+                delete roleEntry.memberMeta[member.id];
+                roleEntry.updatedAt = Date.now();
+                addRoleEntry(roleEntry.roleId, roleEntry);
+            }
+        }
+
+        const ownedRoleEntry = findRoleByOwner(member.guild.id, member.id);
+        if (ownedRoleEntry) {
+            const role = member.guild.roles.cache.get(ownedRoleEntry.roleId) || await member.guild.roles.fetch(ownedRoleEntry.roleId).catch(() => null);
+            if (role && role.editable) {
+                await role.delete(`حذف رول خاص بعد مغادرة المالك ${member.id}`).catch(() => {});
+            }
+            deleteRoleEntry(ownedRoleEntry.roleId, member.id);
+            console.log(`🗑️ تم حذف رول خاص بعد مغادرة المالك: ${ownedRoleEntry.roleId}`);
+        }
 
     } catch (error) {
         console.error('خطأ في معالج الانسحاب:', error);
@@ -4936,18 +5115,27 @@ setInterval(async () => {
   try {
     const now = Date.now();
     let changed = false;
+    const notifiedPairs = new Set();
+    const ALLOWED_ID = '636930315503534110';
 
     for (const [userId, data] of Object.entries(pairingsCache)) {
       if (now - data.timestamp > 24 * 60 * 60 * 1000) {
         const targetId = data.targetId;
+        const pairKey = [userId, targetId].sort().join('_');
+        if (notifiedPairs.has(pairKey)) {
+          continue;
+        }
+        notifiedPairs.add(pairKey);
         delete pairingsCache[userId];
         if (pairingsCache[targetId]) delete pairingsCache[targetId];
         changed = true;
         
         try {
-          const user = await client.users.fetch(userId);
-          await user.send('⏳ **انتهى وقت الاقتران التلقائي (24 ساعة).**');
-          // Removed target notification for expiration
+          if (userId === ALLOWED_ID || targetId === ALLOWED_ID) {
+            const allowedUser = await client.users.fetch(ALLOWED_ID);
+            const otherId = userId === ALLOWED_ID ? targetId : userId;
+            await allowedUser.send(`⏳ **انتهى وقت الاقتران التلقائي (24 ساعة) مع <@${otherId}>.**`);
+          }
         } catch (e) {}
       }
     }

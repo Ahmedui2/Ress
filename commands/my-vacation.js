@@ -567,13 +567,15 @@ async function handleInteraction(interaction, context) {
         const reason = interaction.fields.getTextInputValue('reject_reason');
 
         const vacations = readJson(path.join(__dirname, '..', 'data', 'vacations.json'));
+        const settings = vacationManager.getSettings();
+        const rejectCooldownHours = Number.isFinite(settings.rejectCooldownHours) ? settings.rejectCooldownHours : 12;
         
         // إزالة طلب الإنهاء وإضافة كولداون
         if (vacations.pendingTermination) {
             delete vacations.pendingTermination[userId];
         }
         if (!vacations.cooldowns) vacations.cooldowns = {};
-        vacations.cooldowns[userId] = Date.now() + (12 * 60 * 60 * 1000);
+        vacations.cooldowns[userId] = Date.now() + (rejectCooldownHours * 60 * 60 * 1000);
         
         vacationManager.saveVacations(vacations);
 
@@ -585,7 +587,7 @@ async function handleInteraction(interaction, context) {
                 { name: 'العضو', value: `<@${userId}>`, inline: true },
                 { name: 'المسؤول', value: `<@${interaction.user.id}>`, inline: true },
                 { name: 'سبب الرفض', value: reason, inline: false },
-                { name: 'الكولداون', value: '12 ساعة', inline: true }
+                { name: 'الكولداون', value: `${rejectCooldownHours} ساعة`, inline: true }
             ])
             .setFooter({ text: 'Space' })
             .setTimestamp();
@@ -603,7 +605,7 @@ async function handleInteraction(interaction, context) {
                 .addFields(
                     { name: "المسؤول", value: `${interaction.user.tag}`, inline: true },
                     { name: "سبب الرفض", value: reason, inline: false },
-                    { name: "الكولداون", value: '12 ساعة', inline: true }
+                    { name: "الكولداون", value: `${rejectCooldownHours} ساعة`, inline: true }
                 )
                 .setTimestamp();
             await user.send({ embeds: [dmEmbed] }).catch(() => {});
