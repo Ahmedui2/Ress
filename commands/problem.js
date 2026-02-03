@@ -426,6 +426,7 @@ const name = 'problem';
 async function execute(message, args, context) {
   const { client } = context;
   const adminRoles = loadAdminRoles();
+  const owners = context.BOT_OWNERS || [];
 
   // Store bot owner IDs on the client so that message handlers can notify owners
   // when a privileged user responds in a problem.  We update this on every
@@ -880,7 +881,7 @@ async function handleMessage(message, client) {
         const isOwnerResponsible = member ? isOwnerOrResponsible(member, owners) : false;
         const isAdminRole = member ? isAdmin(member, adminRoles) : false;
         // Build the log embed.  Use a different title depending on whether the
-        // message will be deleted or kept.  Always include the message link.
+        // message will be deleted or kept.  Include the link only when it still exists.
         const title = hasRespondedBefore ? 'تم حذف رسالة بسبب بروبلم' : 'تم رصد رسالة أثناء بروبلم';
         const messageContent = message.content || '—';
         const messageUrl = message.url;
@@ -907,7 +908,7 @@ async function handleMessage(message, client) {
         if (hasHighRole) {
           // For high role users, always treat as a warning; second violation still results
           // in message deletion but not a mute.  Reflect deletion status.
-          status = hasRespondedBefore ? 'تم حذف الرسالة (رتبة عالية)' : 'تحذير';
+          status = hasRespondedBefore ? 'تم حذف الرسالة (رول ستريشن)' : 'تحذير';
         } else {
           status = nextWarningCount > 1 ? 'تم إعطاء ميوت' : 'تحذير';
         }
@@ -957,15 +958,12 @@ async function handleMessage(message, client) {
             }
           }
         } catch (_) {}
-        try {
-          // Always DM the other party, but respect cooldowns for high-role users to avoid spam.
-          const other = await client.users.fetch(otherId);
-          const shouldDmOther = !hasHighRole || canSendHighRoleWarning(prob.highRoleWarningAt, otherId);
-          if (shouldDmOther) {
-            const description = [
-              '**لا تقم بالرد على الطرف الآخر في الوقت الحالي.**',
-              '*إذا رديت مجددًا سيتم سحب رولك وإعطائك ميوت.*'
-            ].join('\n');
+        const shouldDelayOtherMuteNotice = !hasHighRole && nextWarningCount > 1;
+        const sendOtherWarning = async (description) => {
+          try {
+            const other = await client.users.fetch(otherId);
+            const shouldDmOther = !hasHighRole || canSendHighRoleWarning(prob.highRoleWarningAt, otherId);
+            if (!shouldDmOther) return;
             await other.send({
               embeds: [buildProblemEmbed('Problem Warning', description, other.displayAvatarURL({ dynamic: true }))]
             });
@@ -973,8 +971,15 @@ async function handleMessage(message, client) {
               markHighRoleWarning(prob.highRoleWarningAt, otherId);
               saveActiveProblemsToDisk();
             }
-          }
-        } catch (_) {}
+          } catch (_) {}
+        };
+        if (!shouldDelayOtherMuteNotice) {
+          await sendOtherWarning([
+            `**الطرف الذي رد : <@${message.author.id}>**`,
+            '**لا تقم بالرد على الطرف الآخر في الوقت الحالي.**',
+            '*إذا رديت مجددًا سيتم سحب رولك وإعطائك ميوت.*'
+          ].join('\n'));
+        }
         // If the user has a high role relative to the bot, notify bot owners about this interaction.
         if (hasHighRole) {
           if (!prob.ownerHighRoleNotified) prob.ownerHighRoleNotified = {};
@@ -1046,6 +1051,7 @@ async function handleMessage(message, client) {
             // Only apply mute and role removal for users without high roles
             if (!hasHighRole) {
               const member = await message.guild.members.fetch(message.author.id).catch(() => null);
+              let muteApplied = false;
               if (member) {
                 // Determine whether this is a repeated violation (third or further) and thus warrant strict role removal.
                 // We treat warnings > 1 as repeated violation; the first violation sets warning count to 1,
@@ -1056,7 +1062,8 @@ async function handleMessage(message, client) {
                 const strictMode = (prob.warnings[message.author.id] || 0) > 2;
                 // Apply the mute.  When strictMode is true, all roles granting SendMessages will be removed
                 // regardless of their name length.  In non-strict mode only very short roles are removed.
-                await applyMute(member, prob, message.author.id, message.channel, strictMode);
+                const applied = await applyMute(member, prob, message.author.id, message.channel, strictMode);
+                muteApplied = !!applied;
                 // After applying mute, send the user a DM explaining that they have been muted for replying to the other party.
                 try {
                   const dmUser = await client.users.fetch(message.author.id);
@@ -1073,6 +1080,20 @@ async function handleMessage(message, client) {
                 } catch (err) {
                   console.error('Failed to DM user about applied mute:', err);
                 }
+              }
+              if (shouldDelayOtherMuteNotice) {
+                const otherDescription = muteApplied
+                  ? [
+                      `**الطرف الذي رد : <@${message.author.id}>**`,
+                      '**تم إعطاء الطرف الآخر ميوت بسبب البروبلم.**',
+                      '*لا تحتاج ترد عليه، وإذا رديت بتاخذ ميوت معه.*'
+                    ].join('\n')
+                  : [
+                      `**الطرف الذي رد : <@${message.author.id}>**`,
+                      '**لا تقم بالرد على الطرف الآخر في الوقت الحالي.**',
+                      '*إذا رديت مجددًا سيتم سحب رولك وإعطائك ميوت.*'
+                    ].join('\n');
+                await sendOtherWarning(otherDescription);
               }
             }
           }
@@ -1199,7 +1220,7 @@ async function handleVoice(oldState, newState, client) {
                     .setDescription(
                       `**العضو : <@${userId}> دخل روم صوتي مع الطرف الاخر : <@${otherId}>\nتم طرده تلقائيًا، لكن لم يتم منعه من الاتصال بسبب امتلاكه رتبة مساوية أو أعلى من البوت.**`
                     )
-                    .addFields({ name: 'الحالة', value: 'تم الطرد (رتبة عالية)' })
+                    .addFields({ name: 'الحالة', value: 'تم الطرد (رول ستريشن)' })
                     .setTimestamp();
                   const voiceAvatar = newState.member?.displayAvatarURL?.({ dynamic: true });
                   if (voiceAvatar) {
@@ -1842,6 +1863,7 @@ function getEffectiveRoleNameLength(name) {
           console.error('Error restoring roles after mute:', err);
         }
       }, muteDuration);
+      return muteApplied;
     }
 
     // Update or create a log message in the logs channel for a problem.
@@ -1849,11 +1871,18 @@ function getEffectiveRoleNameLength(name) {
     // the given problem; otherwise it sends a new embed and stores the message ID on
     // the problem object.  The separator attachments are passed through to preserve
     // the horizontal line if enabled.  Errors are logged but do not throw.
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    const isRecentLogMessage = (msg) => {
+      if (!msg?.createdTimestamp) return false;
+      return (Date.now() - msg.createdTimestamp) < oneDayMs;
+    };
+
     async function findExistingLogMessage(logsChannel, prob, botId) {
-      const messages = await logsChannel.messages.fetch({ limit: 25 }).catch(() => null);
+      const messages = await logsChannel.messages.fetch({ limit: 20 }).catch(() => null);
       if (!messages) return null;
       for (const msg of messages.values()) {
         if (!msg.author || msg.author.id !== botId) continue;
+        if (!isRecentLogMessage(msg)) continue;
         const embed = msg.embeds?.[0];
         const desc = embed?.description || '';
         if (!desc) continue;
@@ -1881,12 +1910,16 @@ function getEffectiveRoleNameLength(name) {
         // sent only when the log is first created.
         if (prob.logMessageId) {
           const existingMsg = await logsChannel.messages.fetch(prob.logMessageId).catch(() => null);
-          if (existingMsg) {
+          if (existingMsg && isRecentLogMessage(existingMsg)) {
             await existingMsg.edit({ embeds: [logEmbed] }).catch(() => {});
             return;
           }
+          if (existingMsg && !isRecentLogMessage(existingMsg)) {
+            prob.logMessageId = null;
+            saveActiveProblemsToDisk();
+          }
         }
-        if (!prob.logMessageId && lastClient?.user?.id) {
+        if (lastClient?.user?.id) {
           const existingMsg = await findExistingLogMessage(logsChannel, prob, lastClient.user.id);
           if (existingMsg) {
             prob.logMessageId = existingMsg.id;
@@ -1896,7 +1929,17 @@ function getEffectiveRoleNameLength(name) {
           }
         }
         // Otherwise send a new embed message and store its ID
-        const sentMsg = await logsChannel.send({ embeds: [logEmbed] }).catch(() => null);
+        let sentMsg = await logsChannel.send({ embeds: [logEmbed] }).catch(() => null);
+        if (!sentMsg && lastClient?.user?.id) {
+          const fallbackMsg = await findExistingLogMessage(logsChannel, prob, lastClient.user.id);
+          if (fallbackMsg) {
+            prob.logMessageId = fallbackMsg.id;
+            saveActiveProblemsToDisk();
+            await fallbackMsg.edit({ embeds: [logEmbed] }).catch(() => {});
+            return;
+          }
+          sentMsg = await logsChannel.send({ embeds: [logEmbed] }).catch(() => null);
+        }
         if (sentMsg) {
           prob.logMessageId = sentMsg.id;
           saveActiveProblemsToDisk();
