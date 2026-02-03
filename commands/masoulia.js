@@ -34,7 +34,7 @@ module.exports = {
             const embed = colorManager.createEmbed()
                 .setTitle('**إدارة مسؤوليات العضو**')
                 .setDescription(`**العضو المستهدف:** ${target}\n **الأيدي :** \`${target.id}\`\n\n**الرجاء اختيار الإجراء المطلوب  :**`)
-                .setThumbnail(target.user.displayAvatarURL())
+                .setThumbnail(target.user.displayAvatarURL({ size: 128 }))
                 .setTimestamp();
 
             const row = new ActionRowBuilder()
@@ -245,6 +245,7 @@ module.exports = {
                                 const addEmbed = colorManager.createEmbed()
                                     .setTitle(' Added')
                                     .setDescription(`تم منحك المسؤوليات التالية : ${addedResps.join(' , ')}\nمن المسؤول : <@${i.user.id}>`)
+                                    .setThumbnail(i.user.displayAvatarURL({ size: 128 }))
                                     .setFooter({ text: i.guild.name })
                                     .setTimestamp();
                                 await member.send({ embeds: [addEmbed] }).catch(() => {});
@@ -260,6 +261,7 @@ module.exports = {
                                 const removeEmbed = colorManager.createEmbed()
                                     .setTitle('⚠️Removed')
                                     .setDescription(`تم ازالتك من المسؤوليات : ${removedResps.join(' , ')}\nمن المسؤول : <@${i.user.id}>`)
+                                    .setThumbnail(i.user.displayAvatarURL({ size: 128 }))
                                     .setFooter({ text: i.guild.name })
                                     .setTimestamp();
                                 await member.send({ embeds: [removeEmbed] }).catch(() => {});
@@ -271,10 +273,47 @@ module.exports = {
                         responseContent += `\n\n⚠️ **تنبيهات:**\n- ${errors.join('\n- ')}`;
                     }
 
+                    try {
+                        const respCommand = i.client?.commands?.get('resp');
+                        if (respCommand?.updateEmbedMessage) {
+                            await respCommand.updateEmbedMessage(i.client);
+                        }
+                    } catch (updateError) {
+                        console.error('Error updating resp setup embed:', updateError);
+                    }
+
+                    const resultEmbed = colorManager.createEmbed()
+                        .setTitle(type === 'add' ? '✅ تم منح المسؤوليات' : '✅ تم سحب المسؤوليات')
+                        .setDescription(`**العضو:** <@${targetId}>\n**المسؤول:** <@${i.user.id}>`)
+                        .setThumbnail(member.user.displayAvatarURL({ size: 128 }))
+                        .setTimestamp();
+
+                    if (type === 'add') {
+                        resultEmbed.addFields({
+                            name: 'المسؤوليات المضافة',
+                            value: addedResps.length > 0 ? addedResps.join(' , ') : 'لا توجد إضافات',
+                            inline: false
+                        });
+                    } else {
+                        resultEmbed.addFields({
+                            name: 'المسؤوليات المسحوبة',
+                            value: removedResps.length > 0 ? removedResps.join(' , ') : 'لا توجد عمليات سحب',
+                            inline: false
+                        });
+                    }
+
+                    if (errors.length > 0) {
+                        resultEmbed.addFields({
+                            name: 'تنبيهات',
+                            value: errors.map(err => `- ${err}`).join('\n'),
+                            inline: false
+                        });
+                    }
+
                     await i.editReply({
-                        content: `${responseContent}\n **العضو :** <@${targetId}>`,
+                        content: responseContent,
                         components: [],
-                        embeds: []
+                        embeds: [resultEmbed]
                     });
                     interactionCollector.stop();
                 } catch (error) {

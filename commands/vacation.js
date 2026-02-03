@@ -225,7 +225,8 @@ async function handleInteraction(interaction, context) {
             const embed = new EmbedBuilder()
                 .setTitle("طلب إجازة جديد")
                 .setColor(colorManager.getColor('pending') || '#E67E22')
-                .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
+                .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL({ size: 128 }) })
+                .setThumbnail(member.user.displayAvatarURL({ size: 128 }))
                 .addFields(
                     { name: "*العضو*", value: `${member}`, inline: true },
                     { name: "*المدة*", value: `___${ms(durationMs, { long: true })}___`, inline: true },
@@ -339,7 +340,8 @@ async function handleInteraction(interaction, context) {
             const successEmbed = new EmbedBuilder()
                 .setColor(colorManager.getColor('approved') || '#2ECC71')
                 .setTitle('✅ Accepted ')
-                .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
+                .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL({ size: 128 }) })
+                .setThumbnail(member.user.displayAvatarURL({ size: 128 }))
                 .addFields(
                     { name: " العضو", value: `${member}`, inline: true },
                     { name: " المسؤول", value: `${approverMember}`, inline: true },
@@ -357,7 +359,7 @@ async function handleInteraction(interaction, context) {
                 const dmEmbed = new EmbedBuilder()
                     .setTitle('Vacation Accepted')
                     .setColor(colorManager.getColor('approved') || '#2ECC71')
-                .setThumbnail('https://cdn.discordapp.com/attachments/1418630684368437402/1464004613358354602/accept_1.png?ex=6973e40b&is=6972928b&hm=a3f08eef0d2e935d2ac79e7ec2abac142118666f007cc9834f11573983f658dc&')
+                .setThumbnail(approverMember.user.displayAvatarURL({ size: 128 }))
                     .setDescription(`** ياهلا، تم الموافقه على اجازتك\n سيرفر : ${interaction.guild.name}**`)
                     .addFields(
                         { name: " المسؤول", value: `${approverMember.user.tag}`, inline: true },
@@ -432,7 +434,8 @@ async function handleInteraction(interaction, context) {
         const rejectEmbed = new EmbedBuilder()
             .setColor(colorManager.getColor('rejected') || '#E74C3C')
             .setTitle('❌ Vacation Rejected')
-            .setAuthor({ name: member?.user.tag || 'User', iconURL: member?.user.displayAvatarURL() })
+            .setAuthor({ name: member?.user.tag || 'User', iconURL: member?.user.displayAvatarURL({ size: 128 }) })
+            .setThumbnail(member?.user.displayAvatarURL({ size: 128 }) || null)
             .addFields(
                 { name: " العضو", value: `<@${userId}>`, inline: true },
                 { name: " المسؤول", value: `${approverMember}`, inline: true },
@@ -451,7 +454,7 @@ async function handleInteraction(interaction, context) {
                 const dmEmbed = new EmbedBuilder()
                     .setTitle('Vacation Denied')
                     .setColor(colorManager.getColor('rejected') || '#E74C3C')
-                .setThumbnail('https://cdn.discordapp.com/attachments/1418630684368437402/1464004608954339328/error.png?ex=6973e40a&is=6972928a&hm=cb04087e1992141dba1178f94cbaabd7a5b056fef0699964c66a40102c2dade5&')
+                .setThumbnail(approverMember.user.displayAvatarURL({ size: 128 }))
                     .setDescription(`** لقد تم رفض طلب اجازتك\n سيرفر : ${interaction.guild.name}**`)
                     .addFields(
                         { name: " المسؤول", value: `${approverMember.user.tag}`, inline: true },

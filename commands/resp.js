@@ -277,6 +277,9 @@ async function updateEmbedMessage(client) {
     try {
         const { dbManager } = require('../utils/database.js');
         const responsibilities = await dbManager.getResponsibilities();
+        if (responsibilities && Object.keys(responsibilities).length > 0) {
+            global.responsibilities = responsibilities;
+        }
         
         const newEmbed = createResponsibilitiesEmbed(responsibilities);
         const newText = createResponsibilitiesText(responsibilities);
@@ -870,9 +873,15 @@ async function handleApplyAction(interaction, client) {
                     global.client.emit('responsibilityUpdate');
                 }
                 
+                const approvalEmbed = colorManager.createEmbed()
+                    .setTitle('✅ تم قبول طلب المسؤولية')
+                    .setDescription(`**العضو:** <@${userId}>\n**المسؤولية:** ال${respName}\n**المسؤول:** <@${interaction.user.id}>`)
+                    .setThumbnail(targetMember?.user.displayAvatarURL({ size: 128 }) || null)
+                    .setTimestamp();
+
                 await interaction.editReply({ 
-                    content: `**✅ تم قبول المسؤول الجديد : <@${userId}>**\n\n ليكون مسؤول** لمسؤولية ال${respName}**\n\n** قبلة مسؤول المسؤوليات : ** <@${interaction.user.id}>`, 
-                    embeds: [],
+                    content: '',
+                    embeds: [approvalEmbed],
                     files: [],
                     components: [] 
                 });
@@ -946,16 +955,28 @@ async function handleRejectReasonModal(interaction, client) {
             await targetMember.send({ embeds: [rejectEmbed] }).catch(() => {});
         }
         
+        const rejectResponseEmbed = colorManager.createEmbed()
+            .setTitle('❌ تم رفض طلب المسؤولية')
+            .setDescription(`**العضو:** <@${userId}>\n**المسؤولية:** ال${respName}\n**المسؤول:** <@${interaction.user.id}>\n**السبب:** ${reason}`)
+            .setThumbnail(targetMember?.user.displayAvatarURL({ size: 128 }) || null)
+            .setTimestamp();
+
         await interaction.editReply({ 
-            content: `❌** تم رفض الإداري <@${userId}>**\n\n** لتقديمة في مسؤولية ال${respName}** مع ذكر السبب.`,
-            embeds: [],
+            content: '',
+            embeds: [rejectResponseEmbed],
             files: []
         });
         // محاولة تعديل الرسالة الأصلية في قناة الطلبات
         if (interaction.message) {
+            const rejectPublicEmbed = colorManager.createEmbed()
+                .setTitle('❌ تم رفض طلب المسؤولية')
+                .setDescription(`**العضو:** <@${userId}>\n**المسؤولية:** ال${respName}\n**المسؤول:** <@${interaction.user.id}>\n**السبب:** ${reason}`)
+                .setThumbnail(targetMember?.user.displayAvatarURL({ size: 128 }) || null)
+                .setTimestamp();
+
             await interaction.message.edit({ 
-                content: `** ❌ تم رفض الاداري <@${userId}>**\n\n **لمسؤولية ال${respName}**\n\n** بواسطة مسؤول المسؤوليات **:<@${interaction.user.id}>\n**السبب :** ${reason}`,
-                embeds: [],
+                content: '',
+                embeds: [rejectPublicEmbed],
                 files: [],
                 components: [] 
             }).catch(() => {});
