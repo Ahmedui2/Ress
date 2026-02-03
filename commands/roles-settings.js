@@ -139,29 +139,78 @@ function buildAdminSummaryEmbed(title, fields = [], description = null) {
   return embed;
 }
 
-function buildRoleOptions(guild) {
-  return getGuildRoles(guild.id)
-    .map(entry => guild.roles.cache.get(entry.roleId))
+function normalizeSearchText(text = '') {
+  return text
+    .toLowerCase()
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ى/g, 'ي')
+    .replace(/ؤ/g, 'و')
+    .replace(/ئ/g, 'ي')
+    .replace(/\s+/g, '');
+}
+
+function getLevenshteinDistance(a, b) {
+  const matrix = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
+  for (let i = 0; i <= a.length; i++) matrix[i][0] = i;
+  for (let j = 0; j <= b.length; j++) matrix[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,
+        matrix[i][j - 1] + 1,
+        matrix[i - 1][j - 1] + cost
+      );
+    }
+  }
+  return matrix[a.length][b.length];
+}
+
+function isApproximateMatch(query, target) {
+  if (!query || !target) return false;
+  if (target.includes(query)) return true;
+  if (query.length < 3) return false;
+  const distance = getLevenshteinDistance(query, target);
+  const threshold = Math.max(2, Math.floor(query.length / 3));
+  return distance <= threshold;
+}
+
+function buildRoleOptions(guild, query = '') {
+  const normalizedQuery = normalizeSearchText(query || '');
+  const entries = getGuildRoles(guild.id);
+  const needsSearchOption = !normalizedQuery && entries.length > 25;
+  const options = entries
+    .map(entry => {
+      const role = guild.roles.cache.get(entry.roleId);
+      if (!role) return null;
+      return { entry, role };
+    })
     .filter(Boolean)
-    .map(role => ({
+    .filter(({ entry, role }) => {
+      if (!normalizedQuery) return true;
+      const roleName = normalizeSearchText(role.name || '');
+      const roleId = role.id;
+      const ownerId = entry.ownerId || '';
+      if (roleId === normalizedQuery || ownerId === normalizedQuery) return true;
+      return isApproximateMatch(normalizedQuery, roleName);
+    })
+    .map(({ role }) => ({
       label: (role.name && role.name.trim() ? role.name : `Role ${role.id}`).slice(0, 100),
       value: role.id
     }))
-    .filter(option => option.label && option.value)
-    .slice(0, 25);
-}
+    .filter(option => option.label && option.value);
 
-function buildAdminRoleMenu(action, userId, guild) {
-  if (action === 'add') {
-    const menu = new RoleSelectMenuBuilder()
-      .setCustomId(`customroles_admin_rolepicker_add_${userId}`)
-      .setPlaceholder('اختر رولاً لإضافته...')
-      .setMinValues(1)
-      .setMaxValues(5);
-    return new ActionRowBuilder().addComponents(menu);
+  if (needsSearchOption) {
+    const trimmedOptions = options.slice(0, 24);
+    trimmedOptions.push({ label: '🔎 بحث', value: 'search' });
+    return trimmedOptions;
   }
 
-  const roleOptions = buildRoleOptions(guild);
+  return options.slice(0, 25);
+}
+
+function buildAdminRoleMenu(action, userId, guild, query = '') {
+  const roleOptions = buildRoleOptions(guild, query);
   if (roleOptions.length === 0) return null;
   const menu = new StringSelectMenuBuilder()
     .setCustomId(`customroles_admin_panel_select_${action}_${userId}`)
@@ -171,6 +220,22 @@ function buildAdminRoleMenu(action, userId, guild) {
     .addOptions(roleOptions);
 
   return new ActionRowBuilder().addComponents(menu);
+}
+
+async function showCustomRoleSearchModal(interaction, action) {
+  const modal = new ModalBuilder()
+    .setCustomId(`customroles_search_modal_${action}_${interaction.user.id}`)
+    .setTitle('بحث عن رول خاص');
+
+  const queryInput = new TextInputBuilder()
+    .setCustomId('customroles_search_query')
+    .setLabel('ابحث بالاسم أو ID أو Owner ID')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setPlaceholder('مثال: اسم الرول أو 123456...');
+
+  modal.addComponents(new ActionRowBuilder().addComponents(queryInput));
+  await interaction.showModal(modal);
 }
 
 function buildAdminBulkDeleteMenu(userId, guild) {
@@ -1158,16 +1223,21 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       return;
     }
 
-    const roleMenu = buildAdminRoleMenu(action, interaction.user.id, interaction.guild);
-    if (!roleMenu) {
-      await interaction.reply({ content: '❌ لا توجد رولات خاصة مسجلة حالياً.', ephemeral: true });
+    if (action === 'add') {
+      const roleMenu = new RoleSelectMenuBuilder()
+        .setCustomId(`customroles_admin_rolepicker_add_${interaction.user.id}`)
+        .setPlaceholder('اختر رولاً لإضافته...')
+        .setMinValues(1)
+        .setMaxValues(5);
+      await interaction.reply({
+        content: 'اختر الرول المطلوب إضافته:',
+        components: [new ActionRowBuilder().addComponents(roleMenu)],
+        ephemeral: true
+      });
       return;
     }
-    await interaction.reply({
-      content: 'اختر الرول المطلوب:',
-      components: [roleMenu],
-      ephemeral: true
-    });
+
+    await showCustomRoleSearchModal(interaction, action);
     return;
   }
 
@@ -1253,6 +1323,10 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       return;
     }
     const roleId = interaction.values[0];
+    if (roleId === 'search') {
+      await showCustomRoleSearchModal(interaction, action);
+      return;
+    }
     await interaction.deferReply({ ephemeral: true });
 
     if (action === 'add') {
@@ -1880,13 +1954,35 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     return;
   }
 
+  if (interaction.customId.startsWith('customroles_add_cancel_')) {
+    if (!isAdminUser) {
+      await interaction.reply({ content: '❌ لا تملك صلاحية.', ephemeral: true });
+      return;
+    }
+    const parts = interaction.customId.split('_');
+    const requesterId = parts[4];
+    if (requesterId && requesterId !== interaction.user.id) {
+      await interaction.reply({ content: '❌ هذا الزر ليس لك.', ephemeral: true });
+      return;
+    }
+    await interaction.deferUpdate();
+    await interaction.message.edit({ content: 'تم إلغاء الإضافة.', components: [] }).catch(() => {});
+    return;
+  }
+
   if (interaction.customId.startsWith('customroles_add_')) {
     if (!isAdminUser) {
       await interaction.reply({ content: '❌ لا تملك صلاحية.', ephemeral: true });
       return;
     }
-    await interaction.deferUpdate();
     const parts = interaction.customId.split('_');
+    if (parts[2] === 'cancel') return;
+    const requesterId = parts[3];
+    if (requesterId && requesterId !== interaction.user.id) {
+      await interaction.reply({ content: '❌ هذا الزر ليس لك.', ephemeral: true });
+      return;
+    }
+    await interaction.deferUpdate();
     const roleId = parts[2];
     const guildConfig = getGuildConfig(interaction.guild.id);
     const hasPermission = isManager(interaction.member, guildConfig, BOT_OWNERS);
@@ -1935,6 +2031,7 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       ])],
       ephemeral: true
     });
+    await interaction.message.edit({ content: '✅ تم إضافة الرول للقاعدة.', components: [] }).catch(() => {});
     await logRoleAction(interaction.guild, getGuildConfig(interaction.guild.id), 'تم إضافة رول خاص للقاعدة.', [
       { name: 'الرول', value: `<@&${role.id}>`, inline: true },
       { name: 'المالك', value: `<@${ownerId}>`, inline: true },
@@ -2020,16 +2117,6 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
         { name: 'النتائج', value: results.join('\n').slice(0, 1024) || 'لا توجد نتائج.' }
       ])]
     });
-    return;
-  }
-
-  if (interaction.customId.startsWith('customroles_add_cancel_')) {
-    if (!isAdminUser) {
-      await interaction.reply({ content: '❌ لا تملك صلاحية.', ephemeral: true });
-      return;
-    }
-    await interaction.deferUpdate();
-    await interaction.message.edit({ content: 'تم إلغاء الإضافة.', components: [] }).catch(() => {});
     return;
   }
 

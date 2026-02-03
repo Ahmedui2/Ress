@@ -538,7 +538,7 @@ async function handleIconChange({ channel, userId, role, roleEntry, interaction,
     }
     return;
   }
-  const response = await promptForMessage(channel, userId, '**أرسل إيموجي أو رابط صورة أو أرفق صورة لتعيين ايكون الرول :**', interaction);
+  const response = await promptForMessage(channel, userId, '**أرسل إيموجي أو  رابط صورة أو أرفق صورة لتعيين ايكون الرول او حط ___0___ لازالته :**', interaction);
   if (!response) return;
 
   try {
