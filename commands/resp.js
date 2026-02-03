@@ -277,6 +277,9 @@ async function updateEmbedMessage(client) {
     try {
         const { dbManager } = require('../utils/database.js');
         const responsibilities = await dbManager.getResponsibilities();
+        if (responsibilities && Object.keys(responsibilities).length > 0) {
+            global.responsibilities = responsibilities;
+        }
         
         const newEmbed = createResponsibilitiesEmbed(responsibilities);
         const newText = createResponsibilitiesText(responsibilities);
@@ -870,12 +873,24 @@ async function handleApplyAction(interaction, client) {
                     global.client.emit('responsibilityUpdate');
                 }
                 
-                await interaction.editReply({ 
-                    content: `**✅ تم قبول المسؤول الجديد : <@${userId}>**\n\n ليكون مسؤول** لمسؤولية ال${respName}**\n\n** قبلة مسؤول المسؤوليات : ** <@${interaction.user.id}>`, 
-                    embeds: [],
-                    files: [],
-                    components: [] 
-                });
+                const acceptedEmbed = colorManager.createEmbed()
+                    .setTitle('✅ Accepted')
+                    .setDescription(`**المسؤول الجديد : <@${userId}>\nعلى مسؤولية : ال${respName}\n من مسؤول المسؤوليات : <@${interaction.user.id}>**`)
+                    .setTimestamp();
+
+                const acceptedButtonRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`resp_request_accepted_${userId}_${respName}`)
+                        .setLabel('Accepted')
+                        .setStyle(ButtonStyle.Success)
+                        .setDisabled(true)
+                );
+
+                await interaction.message.edit({ 
+                    embeds: [acceptedEmbed],
+                    components: [acceptedButtonRow],
+                    files: [] 
+                }).catch(() => {});
 
                 // تحديث رسالة المسؤوليات (resp setup) بجميع الأحوال
                 try {
@@ -891,7 +906,7 @@ async function handleApplyAction(interaction, client) {
             }
         } else if (action === 'reject') {
             const modal = new ModalBuilder()
-                .setCustomId(`reject_reason_modal_${userId}_${respName}`)
+                .setCustomId(`reject_reason_modal_${userId}_${respName}_${interaction.message?.id || 'unknown'}`)
                 .setTitle('سبب الرفض');
             
             const reasonInput = new TextInputBuilder()
@@ -922,7 +937,7 @@ async function handleRejectReasonModal(interaction, client) {
             });
         }
 
-        const [, , , userId, respName] = interaction.customId.split('_');
+        const [, , , userId, respName, sourceMessageId] = interaction.customId.split('_');
         const reason = interaction.fields.getTextInputValue('reject_reason');
         
         if (interaction.replied || interaction.deferred) return;
@@ -947,18 +962,37 @@ async function handleRejectReasonModal(interaction, client) {
         }
         
         await interaction.editReply({ 
-            content: `❌** تم رفض الإداري <@${userId}>**\n\n** لتقديمة في مسؤولية ال${respName}** مع ذكر السبب.`,
+            content: '✅ تم تحديث الطلب.',
             embeds: [],
             files: []
         });
-        // محاولة تعديل الرسالة الأصلية في قناة الطلبات
-        if (interaction.message) {
-            await interaction.message.edit({ 
-                content: `** ❌ تم رفض الاداري <@${userId}>**\n\n **لمسؤولية ال${respName}**\n\n** بواسطة مسؤول المسؤوليات **:<@${interaction.user.id}>\n**السبب :** ${reason}`,
-                embeds: [],
-                files: [],
-                components: [] 
-            }).catch(() => {});
+        // تعديل الرسالة الأصلية في قناة الطلبات
+        if (sourceMessageId && sourceMessageId !== 'unknown') {
+            const rejectPublicEmbed = colorManager.createEmbed()
+                .setTitle('❌ Rejected')
+                .setDescription(`**الإداري المقدم : <@${userId}>\n المسؤوليه :  ال${respName}\n من مسؤول المسؤوليات : <@${interaction.user.id}>\nالسبب : ${reason}**`)
+                .setTimestamp();
+
+            const rejectedButtonRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`resp_request_rejected_${userId}_${respName}`)
+                    .setLabel('Rejected')
+                    .setStyle(ButtonStyle.Danger)
+                    .setDisabled(true)
+            );
+
+            const channel = interaction.channel;
+            if (channel) {
+                const sourceMessage = await channel.messages.fetch(sourceMessageId).catch(() => null);
+                if (sourceMessage) {
+                    await sourceMessage.edit({ 
+                        content: '',
+                        embeds: [rejectPublicEmbed],
+                        files: [],
+                        components: [rejectedButtonRow] 
+                    }).catch(() => {});
+                }
+            }
         }
     } catch (error) {
         console.error('Error in handleRejectReasonModal:', error);
