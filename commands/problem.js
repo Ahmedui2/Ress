@@ -24,6 +24,14 @@ const colorManager = require('../utils/colorManager.js');
 // Default thumbnail URL for interactive embeds (problem creation flows).
 const LOG_THUMBNAIL_URL = 'https://cdn.discordapp.com/attachments/1294840822780526633/1465458307329167360/problem-solving.png?ex=69792de7&is=6977dc67&hm=876028d8022c57e8258ee956d753608a9d247e1e5f774a62f149f29f1200a673&';
 
+function buildProblemEmbed(title, description, thumbnailUrl) {
+  const embed = colorManager.createEmbed().setTitle(title).setDescription(description).setTimestamp();
+  if (thumbnailUrl) {
+    embed.setThumbnail(thumbnailUrl);
+  }
+  return embed;
+}
+
 // Load admin roles utility from the perm command.  We copy the helper here
 // to avoid importing the entire perm module which would create a circular
 // dependency.  This helper reads the data/adminRoles.json file and returns
@@ -418,7 +426,6 @@ const name = 'problem';
 async function execute(message, args, context) {
   const { client } = context;
   const adminRoles = loadAdminRoles();
-  const owners = context.BOT_OWNERS || [];
 
   // Store bot owner IDs on the client so that message handlers can notify owners
   // when a privileged user responds in a problem.  We update this on every
@@ -445,6 +452,9 @@ async function execute(message, args, context) {
     if (sub === 'setup') {
       // Remove the 'setup' token and forward remaining args
       return executeSetup(message, args.slice(1), context);
+    }
+    if (sub === 'test') {
+      return sendSeparatorTest(message);
     }
     // Remove handling of the legacy inline `problem end`/`finish`/`close` subcommand.
     // Previously this branch delegated to executeEnd(), but the separate `end` command
@@ -639,6 +649,7 @@ async function handleInteraction(interaction, context) {
 // problem entry stores metadata and sets up DM notifications and logs.
 async function createProblems(interaction, session, context) {
   const { client } = context;
+  const owners = context.BOT_OWNERS || [];
   const guild = client.guilds.cache.get(session.guildId);
   if (!guild) {
     await interaction.reply({ content: '❌ **حدث خطأ: لا يمكن العثور على السيرفر.**', ephemeral: true });
@@ -687,17 +698,31 @@ async function createProblems(interaction, session, context) {
       // Send DM notifications
       try {
         const firstUser = await client.users.fetch(firstId);
-        await firstUser.send(
-          `⚠️ **تم تسجيل بروبلم\nالطرف الآخر : <@${secondId}>\nالسبب : ${session.reason}\nالمسؤول : <@${session.moderatorId}>\nيرجى عدم التواصل مع الطرف الآخر حتى انتهاء المشكلة.**`
-        );
+        const description = [
+          '**تم تسجيل بروبلم**',
+          `**الطرف الآخر : <@${secondId}>**`,
+          `**السبب : ${session.reason}**`,
+          `**المسؤول : <@${session.moderatorId}>**`,
+          '**يرجى عدم التواصل مع الطرف الآخر حتى انتهاء المشكلة.**'
+        ].join('\n');
+        await firstUser.send({
+          embeds: [buildProblemEmbed('Problem Notice', description, firstUser.displayAvatarURL?.({ dynamic: true }))]
+        });
       } catch (err) {
         console.error('Failed to DM first party:', err);
       }
       try {
         const secondUser = await client.users.fetch(secondId);
-        await secondUser.send(
-          `⚠️ **تم تسجيل بروبلم\nالطرف الآخر : <@${firstId}>\nالسبب : ${session.reason}\nالمسؤول : <@${session.moderatorId}>\nيرجى عدم التواصل مع الطرف الآخر حتى انتهاء المشكلة.**`
-        );
+        const description = [
+          '**تم تسجيل بروبلم**',
+          `**الطرف الآخر : <@${firstId}>**`,
+          `**السبب : ${session.reason}**`,
+          `**المسؤول : <@${session.moderatorId}>**`,
+          '**يرجى عدم التواصل مع الطرف الآخر حتى انتهاء المشكلة.**'
+        ].join('\n');
+        await secondUser.send({
+          embeds: [buildProblemEmbed('Problem Notice', description, secondUser.displayAvatarURL?.({ dynamic: true }))]
+        });
       } catch (err) {
         console.error('Failed to DM second party:', err);
       }
@@ -833,8 +858,9 @@ async function handleMessage(message, client) {
         }
         // Determine if the message author has a role that is higher or equal to the bot's highest role.
         let hasHighRole = false;
+        let member = null;
         try {
-          const member = await message.guild.members.fetch(message.author.id).catch(() => null);
+          member = await message.guild.members.fetch(message.author.id).catch(() => null);
           const botMember = message.guild.members.me || (client.user ? await message.guild.members.fetch(client.user.id).catch(() => null) : null);
           if (member && botMember) {
             try {
@@ -854,6 +880,10 @@ async function handleMessage(message, client) {
         } catch (_) {
           hasHighRole = false;
         }
+        const adminRoles = loadAdminRoles();
+        const owners = getProblemOwners(client);
+        const isOwnerResponsible = member ? isOwnerOrResponsible(member, owners) : false;
+        const isAdminRole = member ? isAdmin(member, adminRoles) : false;
         // Build the log embed.  Use a different title depending on whether the
         // message will be deleted or kept.  Always include the message link.
         const title = hasRespondedBefore ? 'تم حذف رسالة بسبب بروبلم' : 'تم رصد رسالة أثناء بروبلم';
@@ -893,21 +923,28 @@ async function handleMessage(message, client) {
           // Only DM the author if they are not high-role, or if this is their first violation
           const shouldDmAuthor = !hasHighRole || nextWarningCount <= 1;
           if (shouldDmAuthor) {
-            await message.author.send(
-              "⚠️ **لا يُسمح لك بالرد على الطرف الآخر في الوقت الحالي.**\n*إذا رديت مجددًا سيتم سحب رولك وإعطائك ميوت.*"
-            );
+            const description = [
+              '**لا يُسمح لك بالرد على الطرف الآخر في الوقت الحالي.**',
+              '*إذا رديت مجددًا سيتم سحب رولك وإعطائك ميوت.*'
+            ].join('\n');
+            await message.author.send({
+              embeds: [buildProblemEmbed('Problem Warning', description, message.author.displayAvatarURL({ dynamic: true }))]
+            });
           }
         } catch (_) {}
         try {
           // Always DM the other party to remind them not to respond
           const other = await client.users.fetch(otherId);
-          await other.send(
-            "⚠️ **لا تقم بالرد على الطرف الآخر في الوقت الحالي.**\n*إذا رديت مجددًا سيتم سحب رولك وإعطائك ميوت.*"
-          );
+          const description = [
+            '**لا تقم بالرد على الطرف الآخر في الوقت الحالي.**',
+            '*إذا رديت مجددًا سيتم سحب رولك وإعطائك ميوت.*'
+          ].join('\n');
+          await other.send({
+            embeds: [buildProblemEmbed('Problem Warning', description, other.displayAvatarURL({ dynamic: true }))]
+          });
         } catch (_) {}
         // If the user has a high role relative to the bot, notify bot owners about this interaction.
         if (hasHighRole) {
-          const owners = getProblemOwners(client);
           for (const ownerId of owners) {
             // Skip notifying the user themselves if they happen to be an owner
             if (ownerId === message.author.id) continue;
@@ -923,6 +960,28 @@ async function handleMessage(message, client) {
               // Ignore DM errors
             }
           }
+        }
+        // Notify bot owners when an admin-role member (not owner/responsible) responds in a problem.
+        if (!hasHighRole && isAdminRole && !isOwnerResponsible) {
+          try {
+            if (!prob.adminOwnerNotified) prob.adminOwnerNotified = {};
+            if (!prob.adminOwnerNotified[message.author.id]) {
+              for (const ownerId of owners) {
+                if (ownerId === message.author.id) continue;
+                try {
+                  const ownerUser = await client.users.fetch(ownerId).catch(() => null);
+                  if (ownerUser) {
+                    await ownerUser.send(
+                      `**⚠️ العضو <@${message.author.id}> (رتبة إدارية) رد على <@${otherId}> في بروبلم.**\n` +
+                      `*رابط الرسالة : ${message.url}*`
+                    );
+                  }
+                } catch (_) {}
+              }
+              prob.adminOwnerNotified[message.author.id] = true;
+              saveActiveProblemsToDisk();
+            }
+          } catch (_) {}
         }
         // Update response tracking and warnings
         if (!hasRespondedBefore) {
@@ -963,10 +1022,13 @@ async function handleMessage(message, client) {
                   const cfg2 = loadProblemConfig();
                   const muteDurationMs = cfg2.muteDuration || (10 * 60 * 1000);
                   const muteDurationMinutes = Math.floor(muteDurationMs / 60000);
-                  await dmUser.send(
-                    `**🚫 تم إعطاؤك ميوت لمدة ${muteDurationMinutes} دقيقة بسبب ردك على الطرف الآخر فى البروبلم.**\n` +
-                    `*سيتم إعادة أى رتب تمت إزالتها تلقائيًا بعد انتهاء مدة الميوت. لا تقم بالرد مجددًا حتى ينتهى الميوت.*`
-                  );
+                  const description = [
+                    `**🚫 تم إعطاؤك ميوت لمدة ${muteDurationMinutes} دقيقة بسبب ردك على الطرف الآخر فى البروبلم.**`,
+                    '*سيتم إعادة أى رتب تمت إزالتها تلقائيًا بعد انتهاء مدة الميوت. لا تقم بالرد مجددًا حتى ينتهى الميوت.*'
+                  ].join('\n');
+                  await dmUser.send({
+                    embeds: [buildProblemEmbed('Problem Mute', description, dmUser.displayAvatarURL({ dynamic: true }))]
+                  });
                 } catch (err) {
                   console.error('Failed to DM user about applied mute:', err);
                 }
@@ -1044,13 +1106,16 @@ async function handleVoice(oldState, newState, client) {
             if (!prob.voiceWarnedHigh[userId]) {
               const dmUser = await client.users.fetch(userId);
               const problemTime = new Date(prob.timestamp).toLocaleString('en-US', { timeZone: 'Africa/Cairo' });
-              await dmUser.send(
-                `**⚠️ يوجد شخص في الروم بينك وبينه بروبلم.\n` +
-                `الشخص : <@${otherId}>\n` +
-                `وقت البروبلم كان : ${problemTime}\n` +
-                `المسؤول كان : <@${prob.moderatorId}>\n` +
-                `إذا دخلت مجددًا سيتم طردك تلقائيًا.**`
-              );
+              const description = [
+                '**⚠️ يوجد شخص في الروم بينك وبينه بروبلم.**',
+                `**الشخص : <@${otherId}>**`,
+                `**وقت البروبلم كان : ${problemTime}**`,
+                `**المسؤول كان : <@${prob.moderatorId}>**`,
+                '**إذا دخلت مجددًا سيتم طردك تلقائيًا.**'
+              ].join('\n');
+              await dmUser.send({
+                embeds: [buildProblemEmbed('Voice Problem Warning', description, dmUser.displayAvatarURL({ dynamic: true }))]
+              });
               prob.voiceWarnedHigh[userId] = true;
               saveActiveProblemsToDisk();
             }
@@ -1141,13 +1206,16 @@ async function handleVoice(oldState, newState, client) {
               // Format the problem timestamp for Cairo timezone (24h).  Fallback to
               // server locale if specific locale is not available.
               const problemTime = new Date(prob.timestamp).toLocaleString('en-US', { timeZone: 'Africa/Cairo' });
-              await dmUser.send(
-                `**⚠️ يوجد شخص في الروم بينك وبينه بروبلم.\n` +
-                `الشخص : <@${otherId}>\n` +
-                `وقت البروبلم كان : ${problemTime}\n` +
-                `المسؤول كان : <@${prob.moderatorId}>\n` +
-                `إذا دخلت مجددًا سيتم سحب رولك مؤقتًا.**`
-              );
+              const description = [
+                '**⚠️ يوجد شخص في الروم بينك وبينه بروبلم.**',
+                `**الشخص : <@${otherId}>**`,
+                `**وقت البروبلم كان : ${problemTime}**`,
+                `**المسؤول كان : <@${prob.moderatorId}>**`,
+                '**إذا دخلت مجددًا سيتم سحب رولك مؤقتًا.**'
+              ].join('\n');
+              await dmUser.send({
+                embeds: [buildProblemEmbed('Voice Problem Warning', description, dmUser.displayAvatarURL({ dynamic: true }))]
+              });
               prob.voiceWarned[userId] = true;
               // Persist the updated state to disk
               saveActiveProblemsToDisk();
@@ -1155,6 +1223,31 @@ async function handleVoice(oldState, newState, client) {
           } catch (err) {
             console.error('Failed to DM user about voice violation:', err);
           }
+          // Notify bot owners if an admin-role member (not owner/responsible) violates voice rules.
+          try {
+            const adminRoles = loadAdminRoles();
+            const owners = getProblemOwners(client);
+            const isOwnerResponsible = isOwnerOrResponsible(newState.member, owners);
+            const isAdminRole = isAdmin(newState.member, adminRoles);
+            if (isAdminRole && !isOwnerResponsible) {
+              if (!prob.adminVoiceOwnerNotified) prob.adminVoiceOwnerNotified = {};
+              if (!prob.adminVoiceOwnerNotified[userId]) {
+                for (const ownerId of owners) {
+                  if (ownerId === userId) continue;
+                  try {
+                    const ownerUser = await client.users.fetch(ownerId).catch(() => null);
+                    if (ownerUser) {
+                      await ownerUser.send(
+                        `**⚠️ العضو <@${userId}> (رتبة إدارية) دخل روم صوتي مع <@${otherId}> أثناء بروبلم.**`
+                      );
+                    }
+                  } catch (_) {}
+                }
+                prob.adminVoiceOwnerNotified[userId] = true;
+                saveActiveProblemsToDisk();
+              }
+            }
+          } catch (_) {}
           // Schedule removal of the Connect restriction and restoration of admin roles when the lock expires
           setTimeout(async () => {
             try {
@@ -1879,6 +1972,15 @@ function getSeparatorAttachments() {
   }
 }
 
+async function sendSeparatorTest(message) {
+  const files = getSeparatorAttachments();
+  const description = files.length > 0
+    ? '**تم تجهيز الخط الفاصل الحالي. إذا ظهر كصورة فالإعداد صحيح.**'
+    : '**الخط الفاصل غير مُفعّل حاليًا. فعّله أولًا من إعدادات البروبلم.**';
+  const embed = buildProblemEmbed('Problem Separator Test', description, LOG_THUMBNAIL_URL);
+  return message.channel.send({ embeds: [embed], files });
+}
+
 // End a problem manually.  This function is invoked via the `problem end`
 // subcommand.  It parses two user identifiers from args, finds the
 // corresponding problem, restores roles and mutes, sends notifications
@@ -2008,15 +2110,23 @@ async function closeProblem(key, guild, context) {
   const client = context.client;
   try {
     const u1 = await client.users.fetch(fId);
-    await u1.send(
-      `✅ **تم إنهاء المشكلة**\nالبروبلم بينك انت والطرف الآخر: <@${sId}> انتهت عن طريق المسؤول: <@${endedById}>`
-    );
+    const description = [
+      '**تم إنهاء المشكلة**',
+      `**البروبلم بينك انت والطرف الآخر: <@${sId}> انتهت عن طريق المسؤول: <@${endedById}>**`
+    ].join('\n');
+    await u1.send({
+      embeds: [buildProblemEmbed('Problem Resolved', description, u1.displayAvatarURL({ dynamic: true }))]
+    });
   } catch (_) {}
   try {
     const u2 = await client.users.fetch(sId);
-    await u2.send(
-      `✅ **تم إنهاء المشكلة**\nالبروبلم بينك انت والطرف الآخر: <@${fId}> انتهت عن طريق المسؤول: <@${endedById}>`
-    );
+    const description = [
+      '**تم إنهاء المشكلة**',
+      `**البروبلم بينك انت والطرف الآخر: <@${fId}> انتهت عن طريق المسؤول: <@${endedById}>**`
+    ].join('\n');
+    await u2.send({
+      embeds: [buildProblemEmbed('Problem Resolved', description, u2.displayAvatarURL({ dynamic: true }))]
+    });
   } catch (_) {}
   // Log closure in logs channel.  Identify the moderator who ended the problem and
   // include the previous reason if available.
@@ -2171,9 +2281,51 @@ async function handleSetupInteraction(interaction, context) {
     // Session expired or not found
     return interaction.reply({ content: '❌ **لا يوجد إعداد نشط لهذا المستخدم أو انتهت مدة الجلسة.**', ephemeral: true });
   }
-  // Verify interaction is for the same message
-  if (interaction.message.id !== session.messageId) {
+  // Verify interaction is for the same message (skip for modal submissions)
+  if (!interaction.isModalSubmit() && interaction.message.id !== session.messageId) {
     return interaction.reply({ content: '❌ **هذا التفاعل لا ينتمي لجلسة الإعداد الخاصة بك.**', ephemeral: true });
+  }
+  if (interaction.isModalSubmit() && id === 'problem_setup_separator_modal') {
+    const input = interaction.fields.getTextInputValue('separator_url').trim();
+    const lowerInput = input.toLowerCase();
+    const cfg = loadProblemConfig();
+    if (lowerInput === 'off') {
+      cfg.separatorEnabled = false;
+      cfg.separatorImage = null;
+      saveProblemConfig(cfg);
+      await interaction.reply({ content: '✅ **تم تعطيل الخط الفاصل.**', ephemeral: true });
+      await refreshEmbed();
+      return;
+    }
+    if (/^https?:\/\//i.test(input)) {
+      try {
+        const filePath = await downloadSeparatorImage(input);
+        cfg.separatorEnabled = true;
+        cfg.separatorImage = filePath;
+        saveProblemConfig(cfg);
+        await interaction.reply({ content: '✅ **تم تعيين الخط الفاصل بنجاح.**', ephemeral: true });
+        await refreshEmbed();
+      } catch (err) {
+        console.error('Error downloading separator image:', err);
+        await interaction.reply({ content: '❌ **حدث خطأ أثناء تحميل الصورة. يرجى التأكد من صحة الرابط والمحاولة مرة أخرى.**', ephemeral: true });
+      }
+      return;
+    }
+    await interaction.reply({ content: '❌ **يرجى إدخال رابط صورة صحيح أو كتابة "off".**', ephemeral: true });
+    return;
+  }
+  if (id === 'problem_setup_set_separator') {
+    const modal = new ModalBuilder()
+      .setCustomId('problem_setup_separator_modal')
+      .setTitle('تعيين الخط الفاصل');
+    const urlInput = new TextInputBuilder()
+      .setCustomId('separator_url')
+      .setLabel('رابط صورة الخط الفاصل أو off للتعطيل')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true)
+      .setPlaceholder('https://example.com/line.png أو off');
+    modal.addComponents(new ActionRowBuilder().addComponents(urlInput));
+    return interaction.showModal(modal);
   }
   // Defer update to show loading state
   if (!interaction.replied && !interaction.deferred) {
@@ -2319,71 +2471,6 @@ async function handleSetupInteraction(interaction, context) {
     collector.on('end', (collected) => {
       if (collected.size === 0) {
         interaction.followUp({ content: '⚠️ **انتهى الوقت ولم يتم استلام أي قيمة.**', ephemeral: true }).catch(() => {});
-      }
-    });
-  } else if (id === 'problem_setup_set_separator') {
-    // Prompt the user to upload a separator image, provide a URL, or type 'off' to disable the separator.
-    await interaction.followUp({ content: '🔧 **أرفق صورة للخط الفاصل، ضع رابط صورة أو اكتب `off` لتعطيل الخط.**', ephemeral: true });
-    const filter = (m) => m.author.id === interaction.user.id;
-    const collector = interaction.channel.createMessageCollector({ filter, max: 1, time: 60 * 1000 });
-    collector.on('collect', async (m) => {
-      const input = m.content.trim();
-      const lowerInput = input.toLowerCase();
-      const cfg = loadProblemConfig();
-      if (lowerInput === 'off') {
-        // Disable the separator entirely
-        cfg.separatorEnabled = false;
-        cfg.separatorImage = null;
-        saveProblemConfig(cfg);
-        await interaction.followUp({ content: '✅ **تم تعطيل الخط الفاصل.**', ephemeral: true });
-        await refreshEmbed();
-      } else if (m.attachments && m.attachments.size > 0) {
-        // The user attached an image. Download it locally so the bot can reliably reuse it.
-        const attachment = m.attachments.first();
-        try {
-          const filePath = await downloadSeparatorImage(attachment.url);
-          cfg.separatorEnabled = true;
-          cfg.separatorImage = filePath;
-          saveProblemConfig(cfg);
-          await interaction.followUp({ content: '✅ **تم تعيين الخط الفاصل بنجاح.**', ephemeral: true });
-          await refreshEmbed();
-        } catch (err) {
-          console.error('Error downloading separator image:', err);
-          await interaction.followUp({ content: '❌ **حدث خطأ أثناء تحميل الصورة. يرجى المحاولة مرة أخرى.**', ephemeral: true });
-        }
-      } else if (/^https?:\/\//i.test(input)) {
-        // The user provided a URL directly. Download it locally so the bot can reliably reuse it.
-        try {
-          const filePath = await downloadSeparatorImage(input);
-          cfg.separatorEnabled = true;
-          cfg.separatorImage = filePath;
-          saveProblemConfig(cfg);
-          await interaction.followUp({ content: '✅ **تم تعيين الخط الفاصل بنجاح.**',
-            // Use the correct property to hide the response
-            ephemeral: true
-          });
-          await refreshEmbed();
-        } catch (err) {
-          console.error('Error downloading separator image:', err);
-          await interaction.followUp({ content: '❌ **حدث خطأ أثناء تحميل الصورة. يرجى التأكد من صحة الرابط والمحاولة مرة أخرى.**',
-            // Use the correct property to hide the response
-            ephemeral: true
-          });
-        }
-      } else {
-        await interaction.followUp({ content: '❌ **لم يتم العثور على صورة أو رابط أو كلمة "off". يرجى المحاولة مرة أخرى.**', 
-          // Correct the spelling of the property
-          ephemeral: true
-        });
-      }
-      // Clean up the user's message
-      try {
-        await m.delete();
-      } catch (_) {}
-    });
-    collector.on('end', (collected) => {
-      if (collected.size === 0) {
-        interaction.followUp({ content: '⚠️ **انتهى الوقت ولم يتم استلام أي صورة أو "off".**', ephemeral: true }).catch(() => {});
       }
     });
   }

@@ -281,6 +281,11 @@ async function getTopUsers(db, category, period, limit = 50) {
                     const liveStart = session.lastTrackedTime || session.startTime || session.sessionStartTime || nowMs;
                     const effectiveStart = periodStartMs ? Math.max(liveStart, periodStartMs) : liveStart;
                     liveDuration = Math.max(0, nowMs - effectiveStart);
+                } else if (session.lastTrackedTime) {
+                    const afkEnd = session.afkSince || session.lastTrackedTime;
+                    const effectiveStart = periodStartMs ? Math.max(session.lastTrackedTime, periodStartMs) : session.lastTrackedTime;
+                    const effectiveEnd = periodStartMs ? Math.max(afkEnd, periodStartMs) : afkEnd;
+                    liveDuration = Math.max(0, effectiveEnd - effectiveStart);
                 }
                 const existingUser = updatedResults.find(r => r.user_id === userId);
                 
@@ -373,7 +378,8 @@ async function execute(message, args, { client }) {
         const periodNames = {
             daily: 'Daily',
             weekly: 'Weekly',
-            monthly: 'Monthly'
+            monthly: 'Monthly',
+            total: 'All'
         };
 
         const embed = colorManager.createEmbed()
@@ -477,7 +483,8 @@ async function execute(message, args, { client }) {
         const periodNames = {
             daily: 'Daily',
             weekly: 'Weekly',
-            monthly: 'Monthly'
+            monthly: 'Monthly',
+            total: 'All'
         };
 
         const embed = colorManager.createEmbed()
@@ -567,6 +574,12 @@ async function execute(message, args, { client }) {
                 .setLabel('Month')
                 .setEmoji('<:emoji_50:1430788392018382909>')
                 .setStyle(currentPeriod === 'monthly' ? ButtonStyle.Primary : ButtonStyle.Secondary)
+                .setDisabled(isStreakCategory),
+            new ButtonBuilder()
+                .setCustomId('tops_total')
+                .setLabel('All')
+                .setEmoji('<:emoji_22:1463536623730954376>')
+                .setStyle(currentPeriod === 'total' ? ButtonStyle.Primary : ButtonStyle.Secondary)
                 .setDisabled(isStreakCategory)
         );
 
@@ -626,6 +639,9 @@ async function execute(message, args, { client }) {
                 currentPage = 0;
             } else if (interaction.customId === 'tops_monthly') {
                 currentPeriod = 'monthly';
+                currentPage = 0;
+            } else if (interaction.customId === 'tops_total') {
+                currentPeriod = 'total';
                 currentPage = 0;
             } else if (interaction.customId === 'tops_prev' && currentPage > 0) {
                 currentPage--;
