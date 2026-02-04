@@ -499,19 +499,23 @@ async function execute(message, args, { saveData, BOT_OWNERS, client }) {
 
 // معالج التفاعلات
 async function handleInteraction(interaction, context) {
-  const { client, BOT_OWNERS } = context;
+  const { BOT_OWNERS } = context || {};
+  const ownersList = Array.isArray(BOT_OWNERS) ? BOT_OWNERS : (global.BOT_OWNERS || []);
   
   // التحقق من الصلاحيات
   if (global.reloadBotOwners) {
     global.reloadBotOwners();
   }
   
-  if (!BOT_OWNERS.includes(interaction.user.id)) {
+  if (!ownersList.includes(interaction.user.id)) {
     console.log(`❌ المستخدم ${interaction.user.id} ليس مالك`);
-    return interaction.reply({ 
-      content: '❌ ليس لديك صلاحية لاستخدام هذا الأمر', 
-      flags: 64 
-    }).catch(() => {});
+    if (interaction?.isRepliable?.() && !interaction.replied && !interaction.deferred) {
+      return interaction.reply({ 
+        content: '❌ ليس لديك صلاحية لاستخدام هذا الأمر', 
+        flags: 64 
+      }).catch(() => {});
+    }
+    return false;
   }
   
   // تمرير التفاعل للمعالج الرئيسي

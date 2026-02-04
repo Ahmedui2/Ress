@@ -425,6 +425,7 @@ const name = 'problem';
 
 async function execute(message, args, context) {
   const { client } = context;
+  if (client) lastClient = client;
   const adminRoles = loadAdminRoles();
   const owners = context.BOT_OWNERS || [];
 
@@ -546,11 +547,11 @@ async function handleInteraction(interaction, context) {
   const { client, BOT_OWNERS } = context;
   // Only handle customIds starting with problem_
   const id = interaction.customId;
-  if (!id || !id.startsWith('problem_')) return;
+  if (!id || !id.startsWith('problem_') || id.startsWith('problem_setup_')) return false;
   const sessionStore = getSessionStore(client);
   const session = sessionStore.get(interaction.user.id);
   if (!session) {
-    return; // no session for this user
+    return false; // no session for this user
   }
   try {
     // Defer update to avoid timeouts.  For component interactions we use
@@ -1024,10 +1025,15 @@ async function handleMessage(message, client) {
                 try {
                   const ownerUser = await client.users.fetch(ownerId).catch(() => null);
                   if (ownerUser) {
-                    await ownerUser.send(
-                      `**⚠️ العضو <@${message.author.id}> (رتبة إدارية) رد على <@${otherId}> في بروبلم.**\n` +
+                    const adminDescription = [
+                      `**⚠️ العضو <@${message.author.id}> (رتبة إدارية) رد على <@${otherId}> في بروبلم.**`,
                       `*رابط الرسالة : ${message.url}*`
-                    );
+                    ].join('\n');
+                    await ownerUser.send({
+                      embeds: [
+                        buildProblemEmbed('Problem Warning', adminDescription, message.author.displayAvatarURL({ dynamic: true }))
+                      ]
+                    });
                   }
                 } catch (_) {}
               }
@@ -2069,6 +2075,7 @@ async function sendSeparatorTest(message) {
 // and logs, and removes the problem from the activeProblems map.
 async function executeEnd(message, args, context) {
   const { client } = context;
+  if (client) lastClient = client;
   const adminRoles = loadAdminRoles();
   const owners = context.BOT_OWNERS || [];
   // Only moderators can end problems
@@ -2259,6 +2266,7 @@ async function closeProblem(key, guild, context) {
 // updated in place.  The session expires after a short time.
 async function executeSetup(message, args, context) {
   const { client } = context;
+  if (client) lastClient = client;
   const adminRoles = loadAdminRoles();
   const owners = context.BOT_OWNERS || [];
   const member = message.member;
