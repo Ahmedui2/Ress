@@ -90,6 +90,13 @@ function saveProblemConfig(config) {
   }
 }
 
+async function getLogsChannel(guild, logsChannelId) {
+  if (!guild || !logsChannelId) return null;
+  const cached = guild.channels.cache.get(logsChannelId);
+  if (cached) return cached;
+  return guild.channels.fetch(logsChannelId).catch(() => null);
+}
+
 // Session store for interactive flows.  This uses a WeakMap keyed by
 // client to store a Map keyed by user ID.  This pattern matches the
 // implementation used by the perm command.  Each entry stores data
@@ -293,7 +300,7 @@ setInterval(async () => {
       const config = loadProblemConfig();
       const logsChannelId = config.logsChannelId;
       if (!logsChannelId) continue;
-      const logsChannel = guild.channels.cache.get(logsChannelId);
+      const logsChannel = await getLogsChannel(guild, logsChannelId);
       if (!logsChannel) continue;
       const probs = resetsByGuild[guildId];
       // Build the description listing all problem pairs that were reset
@@ -661,7 +668,7 @@ async function createProblems(interaction, session, context) {
   const config = session.config || loadProblemConfig();
   let logsChannel = null;
   if (config.logsChannelId) {
-    logsChannel = guild.channels.cache.get(config.logsChannelId);
+    logsChannel = await getLogsChannel(guild, config.logsChannelId);
   }
   const muteRoleId = config.muteRoleId;
   const timestamp = Date.now();
@@ -855,10 +862,9 @@ async function handleMessage(message, client) {
         // Determine if this is the first response from this user in this problem
         const hasRespondedBefore = !!prob.responses[message.author.id];
         const config = loadProblemConfig();
-        let logsChannel = null;
-        if (config.logsChannelId) {
-          logsChannel = message.guild.channels.cache.get(config.logsChannelId);
-        }
+        const logsChannel = config.logsChannelId
+          ? await getLogsChannel(message.guild, config.logsChannelId)
+          : null;
         // Determine if the message author has a role that is higher or equal to the bot's highest role.
         let hasHighRole = false;
         let member = null;
@@ -878,10 +884,9 @@ async function handleMessage(message, client) {
         } catch (_) {
           hasHighRole = false;
         }
-        const adminRoles = loadAdminRoles();
         const owners = getProblemOwners(client);
         const isOwnerResponsible = member ? isOwnerOrResponsible(member, owners) : false;
-        const isAdminRole = member ? isAdmin(member, adminRoles) : false;
+        const isAdminRole = member ? member.permissions.has(PermissionsBitField.Flags.Administrator) : false;
         // Build the log embed.  Use a different title depending on whether the
         // message will be deleted or kept.  Include the link only when it still exists.
         const title = hasRespondedBefore ? 'تم حذف رسالة بسبب بروبلم' : 'تم رصد رسالة أثناء بروبلم';
@@ -1219,7 +1224,7 @@ async function handleVoice(oldState, newState, client) {
             if (logsChannelId) {
               if (!prob.voiceLoggedHigh) prob.voiceLoggedHigh = {};
               if (!prob.voiceLoggedHigh[userId]) {
-                const logsChannel = guild.channels.cache.get(logsChannelId);
+                const logsChannel = await getLogsChannel(guild, logsChannelId);
                 if (logsChannel) {
                   const logEmbed = colorManager
                     .createEmbed()
@@ -1346,7 +1351,7 @@ async function handleVoice(oldState, newState, client) {
           // Log the action once per lock
           const logsChannelId = config.logsChannelId;
           if (logsChannelId) {
-            const logsChannel = guild.channels.cache.get(logsChannelId);
+            const logsChannel = await getLogsChannel(guild, logsChannelId);
             if (logsChannel) {
               const logEmbed = colorManager
                 .createEmbed()
@@ -1381,7 +1386,7 @@ async function handleVoice(oldState, newState, client) {
               const reentryConfig = loadProblemConfig();
               const logsChanId = reentryConfig.logsChannelId;
               if (logsChanId) {
-                const logsChannel = guild.channels.cache.get(logsChanId);
+                const logsChannel = await getLogsChannel(guild, logsChanId);
                 if (logsChannel) {
                   const reentryEmbed = colorManager
                     .createEmbed()
@@ -1482,7 +1487,7 @@ async function handleMemberUpdate(oldMember, newMember, client) {
         if (!muteRemovalWarned.has(newMember.id)) {
           muteRemovalWarned.add(newMember.id);
           if (config.logsChannelId) {
-            const logsChannel = guild.channels.cache.get(config.logsChannelId);
+            const logsChannel = await getLogsChannel(guild, config.logsChannelId);
             if (logsChannel) {
               const executorMention = executorMember ? `<@${executorMember.id}>` : 'شخص مجهول';
               const logEmbed = colorManager.createEmbed()
@@ -1606,7 +1611,7 @@ async function handleMemberUpdate(oldMember, newMember, client) {
             if ((regainedAdmin.length > 0 || regainedSend.length > 0) && !roleReaddWarned.has(newMember.id)) {
               roleReaddWarned.add(newMember.id);
               if (config.logsChannelId) {
-                const logsChannel = guild.channels.cache.get(config.logsChannelId);
+                const logsChannel = await getLogsChannel(guild, config.logsChannelId);
                 if (logsChannel) {
                   // Build description listing the regained roles
                   const allRegained = [...regainedAdmin, ...regainedSend];
@@ -1910,7 +1915,7 @@ function getEffectiveRoleNameLength(name) {
         const config = loadProblemConfig();
         const logsChannelId = config.logsChannelId;
         if (!logsChannelId) return;
-        const logsChannel = guild.channels.cache.get(logsChannelId);
+                const logsChannel = await getLogsChannel(guild, logsChannelId);
         if (!logsChannel) return;
         // If a log message already exists, edit only the embed portion.  Do not resend the
         // separator image on edits to avoid duplicating the line.  The separator should be
@@ -2220,7 +2225,7 @@ async function closeProblem(key, guild, context) {
   // Log closure in logs channel.  Identify the moderator who ended the problem and
   // include the previous reason if available.
   if (config.logsChannelId) {
-    const logsChannel = guild.channels.cache.get(config.logsChannelId);
+    const logsChannel = await getLogsChannel(guild, config.logsChannelId);
     if (logsChannel) {
       const endedByUser = await client.users.fetch(endedById).catch(() => null);
       const logEmbed = colorManager.createEmbed()
