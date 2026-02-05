@@ -185,8 +185,8 @@ async function promptForOwnerSelection(message, userId, interaction) {
       time: 60000
     }).catch(() => null);
     if (!selection) return null;
-    await selection.update({ content: '✅ تم اختيار الأونر.', components: [] }).catch(() => {});
-    return selection.values[0];
+    await selection.update({ content: '✅ تم اختيار الأونر.', embeds: [], components: [] }).catch(() => {});
+    return { ownerId: selection.values[0], promptMessage: selection.message };
   }
 
   const selectMessage = await message.channel.send({
@@ -201,8 +201,8 @@ async function promptForOwnerSelection(message, userId, interaction) {
   }).catch(() => null);
   if (!selection) return null;
   await selection.deferUpdate().catch(() => {});
-  await selectMessage.edit({ components: [] }).catch(() => {});
-  return selection.values[0];
+  await selectMessage.edit({ content: '✅ تم اختيار الأونر.', embeds: [], components: [] }).catch(() => {});
+  return { ownerId: selection.values[0], promptMessage: selectMessage };
 }
 
 async function respondEphemeral(interaction, payload) {
@@ -229,9 +229,12 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
 
   const mentionId = message.mentions?.users?.first()?.id || args.find(arg => /^\d{17,19}$/.test(arg));
   let ownerId = ownerIdOverride || mentionId;
+  let ownerPromptMessage = null;
   if (!ownerId) {
-    ownerId = await promptForOwnerSelection(message, message.author.id, interaction);
-    if (!ownerId) return;
+    const ownerSelection = await promptForOwnerSelection(message, message.author.id, interaction);
+    if (!ownerSelection?.ownerId) return;
+    ownerId = ownerSelection.ownerId;
+    ownerPromptMessage = ownerSelection.promptMessage;
   }
 
   const canManage = isManager(message.member, guildConfig, BOT_OWNERS);
@@ -270,6 +273,7 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
   const state = {
     sessionId,
     ownerId,
+    ownerPromptMessage,
     createdBy: message.author.id,
     name: null,
     color: null,
@@ -462,6 +466,9 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
 
         activeCreates.delete(sessionId);
         await sentMessage.edit({ embeds: [], components: [], content: '**✅ تم إكمال إنشاء الرول.**' }).catch(() => {});
+        if (state.ownerPromptMessage && state.ownerPromptMessage.editable) {
+          await state.ownerPromptMessage.edit({ embeds: [], components: [], content: '**✅ تم إكمال إنشاء الرول.**' }).catch(() => {});
+        }
         collector.stop('completed');
         return;
       } catch (error) {
