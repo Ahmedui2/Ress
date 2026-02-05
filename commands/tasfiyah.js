@@ -224,6 +224,16 @@ function formatRoleMentions(roleIds, guild) {
     }).join('، ');
 }
 
+function buildRoleFields(roleIds, guild, fieldName = 'Roles') {
+    const roleMentions = formatRoleMentions(roleIds, guild);
+    const chunks = chunkLines(roleMentions === 'لا يوجد' ? [] : roleMentions.split('، '), 950);
+    return chunks.map((chunk, index) => ({
+        name: chunks.length > 1 ? `${fieldName} (${index + 1}/${chunks.length})` : fieldName,
+        value: chunk,
+        inline: false
+    }));
+}
+
 module.exports = {
     name,
     description: 'تصفية الرولات التفاعلية حسب النشاط الشهري',
@@ -794,7 +804,7 @@ async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selecte
                 .setTitle(resultTitle)
                 .addFields(
                     { name: 'Details', value: dmDetailsText, inline: false },
-                    { name: 'Roles', value: formatRoleMentions(rolesToRemove, message.guild), inline: false }
+                    ...buildRoleFields(rolesToRemove, message.guild, 'Roles')
                 )
                 .setTimestamp();
             await member.send({ embeds: [dmEmbed] }).catch(() => {});
@@ -851,13 +861,12 @@ async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selecte
         const logChannel = message.guild.channels.cache.get(logChannelId);
         if (logChannel) {
             const roleIdsForLog = removeAllAdminRoles ? allAdminRoleIds : selectedRoleIds;
-            const roleMentions = formatRoleMentions(roleIdsForLog, message.guild);
             const logEmbed = colorManager.createEmbed()
                 .setTitle(logTitle)
                 .setThumbnail(message.guild.iconURL({ dynamic: true }))
                 .addFields(
                     { name: '**المنفذ**', value: `<@${message.author.id}>`, inline: true },
-                    { name: '**الرولات**', value: roleMentions, inline: false },
+                    ...buildRoleFields(roleIdsForLog, message.guild, '**الرولات**'),
                     { name: '**عدد الأعضاء**', value: `**${totalMembers}**`, inline: true },
                     { name: '**نجاح**', value: `**${successCount}**`, inline: true },
                     { name: '**فشل**', value: `**${failedCount}**`, inline: true }
