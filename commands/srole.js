@@ -466,8 +466,8 @@ async function startCreateFlow({ message, args, client, BOT_OWNERS, ownerIdOverr
 
         activeCreates.delete(sessionId);
         await sentMessage.edit({ embeds: [], components: [], content: '**✅ تم إكمال إنشاء الرول.**' }).catch(() => {});
-        if (state.ownerPromptMessage && state.ownerPromptMessage.editable) {
-          await state.ownerPromptMessage.edit({ embeds: [], components: [], content: '**✅ تم إكمال إنشاء الرول.**' }).catch(() => {});
+        if (state.ownerPromptMessage) {
+          await state.ownerPromptMessage.delete().catch(() => {});
         }
         collector.stop('completed');
         return;
