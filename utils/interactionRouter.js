@@ -6,7 +6,7 @@
 class InteractionRouter {
     constructor() {
         this.handlers = [];
-        this.defaultTimeoutMs = 15000;
+        this.defaultTimeoutMs = 45000;
         this.slowThresholdMs = 1000;
     }
 
