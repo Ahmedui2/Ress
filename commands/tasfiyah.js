@@ -13,6 +13,10 @@ const name = 'تصفيه';
 const interactiveRolesPath = path.join(__dirname, '..', 'data', 'interactiveRoles.json');
 const adminApplicationsPath = path.join(__dirname, '..', 'data', 'adminApplications.json');
 const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
+let cachedAdminApplications = null;
+let cachedAdminApplicationsMtime = null;
+let cachedResponsibilities = null;
+let cachedResponsibilitiesMtime = null;
 
 function loadSettings() {
     try {
@@ -62,8 +66,13 @@ function hasPermission(member, settings) {
 function loadAdminApplicationSettings() {
     try {
         if (fs.existsSync(adminApplicationsPath)) {
-            const data = fs.readFileSync(adminApplicationsPath, 'utf8');
-            return JSON.parse(data);
+            const stats = fs.statSync(adminApplicationsPath);
+            if (!cachedAdminApplications || cachedAdminApplicationsMtime !== stats.mtimeMs) {
+                const data = fs.readFileSync(adminApplicationsPath, 'utf8');
+                cachedAdminApplications = JSON.parse(data);
+                cachedAdminApplicationsMtime = stats.mtimeMs;
+            }
+            return cachedAdminApplications;
         }
     } catch (error) {
         console.error('خطأ في قراءة إعدادات التقديم الإداري:', error);
@@ -94,7 +103,13 @@ function canUseAdminFilter(member, settings) {
     if (approvers.type === 'responsibility') {
         try {
             if (fs.existsSync(responsibilitiesPath)) {
-                const responsibilitiesData = JSON.parse(fs.readFileSync(responsibilitiesPath, 'utf8'));
+                const stats = fs.statSync(responsibilitiesPath);
+                if (!cachedResponsibilities || cachedResponsibilitiesMtime !== stats.mtimeMs) {
+                    const data = fs.readFileSync(responsibilitiesPath, 'utf8');
+                    cachedResponsibilities = JSON.parse(data);
+                    cachedResponsibilitiesMtime = stats.mtimeMs;
+                }
+                const responsibilitiesData = cachedResponsibilities;
                 const targetResp = approvers.list[0];
                 if (responsibilitiesData[targetResp] && responsibilitiesData[targetResp].responsibles) {
                     return responsibilitiesData[targetResp].responsibles.includes(member.id);
@@ -759,6 +774,8 @@ async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selecte
     let failedCount = 0;
     const successMemberIds = [];
     const failedMembers = [];
+    const executor = message.member;
+    const isGuildOwner = message.guild.ownerId === message.author.id;
     const logChannelId = options.logChannelId || null;
     const logTitle = options.logTitle || ' Active log';
     const removeAllAdminRoles = options.removeAllAdminRoles || false;
@@ -789,6 +806,12 @@ async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selecte
 
         const roleSource = removeAllAdminRoles ? allAdminRoleIds : selectedRoleIds;
         const rolesToRemove = roleSource.filter((roleId) => member.roles.cache.has(roleId));
+
+        if (!isGuildOwner && executor && member.roles.highest.comparePositionTo(executor.roles.highest) >= 0) {
+            failedCount += 1;
+            failedMembers.push({ memberId, reason: 'لا يمكنك تصفية عضو أعلى أو مساوي لرتبتك.' });
+            continue;
+        }
 
         if (rolesToRemove.length === 0) {
             failedCount += 1;
@@ -848,10 +871,13 @@ async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selecte
     const thumbnail = message.guild.iconURL({ dynamic: true });
     const successLines = successMemberIds.map((id) => `<@${id}>`);
     const failureLines = failedMembers.map((item) => `<@${item.memberId}> — ${item.reason}`);
-    const detailEmbeds = [
-        ...buildDetailEmbeds('✅ الأعضاء الذين تم تصفيتهم', successLines, thumbnail),
-        ...buildDetailEmbeds('❌ الأعضاء الذين فشلوا', failureLines, thumbnail)
-    ];
+    const detailEmbeds = [];
+    if (successLines.length > 0) {
+        detailEmbeds.push(...buildDetailEmbeds('✅ الأعضاء الذين تم تصفيتهم', successLines, thumbnail));
+    }
+    if (failureLines.length > 0) {
+        detailEmbeds.push(...buildDetailEmbeds('❌ الأعضاء الذين فشلوا', failureLines, thumbnail));
+    }
 
     for (const embed of detailEmbeds) {
         await message.channel.send({ embeds: [embed] });
