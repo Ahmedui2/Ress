@@ -180,6 +180,40 @@ function formatPercent(done, total) {
     return `${Math.min(100, Math.max(0, Math.round((done / total) * 100)))}%`;
 }
 
+function chunkLines(lines, maxLength = 3800) {
+    if (!Array.isArray(lines) || lines.length === 0) {
+        return ['لا يوجد'];
+    }
+    const chunks = [];
+    let current = '';
+    for (const line of lines) {
+        const next = current ? `${current}\n${line}` : line;
+        if (next.length > maxLength) {
+            if (current) chunks.push(current);
+            current = line;
+        } else {
+            current = next;
+        }
+    }
+    if (current) chunks.push(current);
+    return chunks.length > 0 ? chunks : ['لا يوجد'];
+}
+
+function buildDetailEmbeds(title, lines, thumbnail) {
+    const chunks = chunkLines(lines);
+    return chunks.map((chunk, index) => colorManager.createEmbed()
+        .setTitle(chunks.length > 1 ? `${title} (${index + 1}/${chunks.length})` : title)
+        .setDescription(chunk || 'لا يوجد')
+        .setThumbnail(thumbnail)
+        .setTimestamp());
+}
+
+function formatFailureReason(error) {
+    if (!error) return 'سبب غير معروف.';
+    const message = typeof error === 'string' ? error : error.message || 'سبب غير معروف.';
+    return message.toString().slice(0, 200);
+}
+
 module.exports = {
     name,
     description: 'تصفية الرولات التفاعلية حسب النشاط الشهري',
@@ -694,6 +728,8 @@ async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selecte
     const totalMembers = selectedMemberIds.length;
     let successCount = 0;
     let failedCount = 0;
+    const successMemberIds = [];
+    const failedMembers = [];
     const logChannelId = options.logChannelId || null;
     const logTitle = options.logTitle || ' Active log';
     const removeAllAdminRoles = options.removeAllAdminRoles || false;
@@ -710,18 +746,33 @@ async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selecte
     let processed = 0;
     const startedAt = Date.now();
     for (const memberId of selectedMemberIds) {
+        let member;
         try {
-            const member = await message.guild.members.fetch(memberId);
-            const roleSource = removeAllAdminRoles ? allAdminRoleIds : selectedRoleIds;
-            const rolesToRemove = roleSource.filter((roleId) => member.roles.cache.has(roleId));
+            member = await message.guild.members.fetch(memberId);
+        } catch (error) {
+            console.error(`Error fetching member ${memberId}:`, error);
+            failedCount += 1;
+            failedMembers.push({ memberId, reason: 'تعذر جلب العضو.' });
+            continue;
+        }
 
-            if (rolesToRemove.length > 0) {
-                await member.roles.remove(rolesToRemove, 'Tasfiyah roles filter');
-                successCount += 1;
-            }
+        const roleSource = removeAllAdminRoles ? allAdminRoleIds : selectedRoleIds;
+        const rolesToRemove = roleSource.filter((roleId) => member.roles.cache.has(roleId));
+
+        if (rolesToRemove.length === 0) {
+            failedCount += 1;
+            failedMembers.push({ memberId, reason: 'لا يملك الرولات المحددة للإزالة.' });
+            continue;
+        }
+
+        try {
+            await member.roles.remove(rolesToRemove, 'Tasfiyah roles filter');
+            successCount += 1;
+            successMemberIds.push(memberId);
         } catch (error) {
             console.error(`Error removing roles from ${memberId}:`, error);
             failedCount += 1;
+            failedMembers.push({ memberId, reason: formatFailureReason(error) });
         }
 
         processed += 1;
@@ -755,6 +806,18 @@ async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selecte
 
     await sentMessage.edit({ embeds: [resultEmbed], components: [] });
 
+    const thumbnail = message.guild.iconURL({ dynamic: true });
+    const successLines = successMemberIds.map((id) => `<@${id}>`);
+    const failureLines = failedMembers.map((item) => `<@${item.memberId}> — ${item.reason}`);
+    const detailEmbeds = [
+        ...buildDetailEmbeds('✅ الأعضاء الذين تم تصفيتهم', successLines, thumbnail),
+        ...buildDetailEmbeds('❌ الأعضاء الذين فشلوا', failureLines, thumbnail)
+    ];
+
+    for (const embed of detailEmbeds) {
+        await message.channel.send({ embeds: [embed] });
+    }
+
     if (logChannelId) {
         const logChannel = message.guild.channels.cache.get(logChannelId);
         if (logChannel) {
@@ -772,6 +835,9 @@ async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selecte
                 )
                 .setTimestamp();
             logChannel.send({ embeds: [logEmbed] }).catch(() => {});
+            for (const embed of detailEmbeds) {
+                logChannel.send({ embeds: [embed] }).catch(() => {});
+            }
         }
     }
 }
