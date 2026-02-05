@@ -117,9 +117,14 @@ function formatEta(milliseconds) {
 }
 
 function buildProgressBar(done, total, size = 12) {
-    if (!total) return '░'.repeat(size);
+    if (!total) return '⬜'.repeat(size);
     const filled = Math.min(size, Math.max(0, Math.round((done / total) * size)));
-    return `${'█'.repeat(filled)}${'░'.repeat(size - filled)}`;
+    return `${'🟩'.repeat(filled)}${'⬜'.repeat(size - filled)}`;
+}
+
+function formatPercent(done, total) {
+    if (!total) return '0%';
+    return `${Math.min(100, Math.max(0, Math.round((done / total) * 100)))}%`;
 }
 
 module.exports = {
@@ -165,13 +170,12 @@ module.exports = {
                 : 'لا يوجد';
 
             return colorManager.createEmbed()
-                .setTitle('🧹 **تصفيه الرولات التفاعلية**')
-                .setDescription('**اختر الرولات التفاعلية التي تريد تصفيتها (اختيار متعدد).**')
+                .setTitle('Active Roles')
+                .setDescription('**اختر الرولات التفاعلية التي تريد تصفيتها **')
                 .setThumbnail(message.guild.iconURL({ dynamic: true }))
                 .addFields(
                     { name: '**الرولات المختارة**', value: selectedMentions, inline: false },
                     { name: '**الصفحة**', value: `**${currentRolePage + 1} / ${rolePages.length}**`, inline: true },
-                    { name: '**ملاحظة**', value: '**يمكنك اختيار أكثر من صفحة، والاختيارات محفوظة.**', inline: true }
                 )
                 .setTimestamp();
         };
@@ -199,24 +203,24 @@ module.exports = {
         const buildRoleButtons = () => {
             const prevButton = new ButtonBuilder()
                 .setCustomId('tasfiyah_roles_prev')
-                .setEmoji('⬅️')
+                .setEmoji('<:emoji_13:1429263136136888501>')
                 .setStyle(ButtonStyle.Secondary)
                 .setDisabled(currentRolePage === 0);
 
             const nextButton = new ButtonBuilder()
                 .setCustomId('tasfiyah_roles_next')
-                .setEmoji('➡️')
+                .setEmoji('<:emoji_14:1429263186539974708>')
                 .setStyle(ButtonStyle.Secondary)
                 .setDisabled(currentRolePage >= rolePages.length - 1);
 
             const confirmButton = new ButtonBuilder()
                 .setCustomId('tasfiyah_roles_confirm')
-                .setLabel('متابعة')
-                .setStyle(ButtonStyle.Primary);
+                .setLabel('Done')             .setEmoji('<:emoji_7:1465221394966253768>')        .setStyle(ButtonStyle.Primary);
 
             const cancelButton = new ButtonBuilder()
                 .setCustomId('tasfiyah_roles_cancel')
-                .setLabel('إلغاء')
+                .setLabel('Cancel')
+                   .setEmoji('<:emoji_7:1465221361839505622>')
                 .setStyle(ButtonStyle.Danger);
 
             return new ActionRowBuilder().addComponents(prevButton, nextButton, confirmButton, cancelButton);
@@ -331,7 +335,7 @@ async function startMemberSelection(sentMessage, message, client, selectedRoleId
             const bar = buildProgressBar(processed, members.length, 14);
             const progressEmbed = colorManager.createEmbed()
                 .setTitle('⏳ **تجهيز بيانات التفاعل**')
-                .setDescription(`**تمت معالجة ${processed} / ${members.length} عضو...**\n${bar}\n**⏱️ الوقت المتبقي:** ${formatEta(eta)}`)
+                .setDescription(`**تمت معالجة ${processed} / ${members.length} عضو (${formatPercent(processed, members.length)})**\n${bar}\n**⏱️ الوقت المتبقي :** ${formatEta(eta)}`)
                 .setThumbnail(message.guild.iconURL({ dynamic: true }))
                 .setTimestamp();
             sentMessage.edit({ embeds: [progressEmbed] }).catch(() => {});
@@ -364,20 +368,21 @@ async function startMemberSelection(sentMessage, message, client, selectedRoleId
         const description = pageData.map((stat, idx) => {
             const rank = start + idx + 1;
             const voiceTimeFormatted = formatDuration(stat.voiceTime);
-            return `**#${rank}** - <@${stat.member.id}>\n**Voice:** ${voiceTimeFormatted} | **Chat:** **${stat.messages}**`;
+            return `**#${rank}** - <@${stat.member.id}>\n**<:emoji_85:1442986413510627530> :** ${voiceTimeFormatted} | **<:emoji_85:1442986444712054954> :** **${stat.messages}**`;
         }).join('\n\n');
 
         const selectedCount = Array.from(selectedMembersByPage.values())
             .reduce((count, set) => count + set.size, 0);
 
         return colorManager.createEmbed()
-            .setTitle('📊 **نتائج التفاعل الشهري**')
+            .setTitle('Active roles')
             .setDescription(description || '**لا يوجد بيانات**')
             .setThumbnail(message.guild.iconURL({ dynamic: true }))
             .addFields(
                 { name: '**المختارون للتصفية**', value: `**${selectedCount}**`, inline: true },
                 { name: '**الصفحة**', value: `**${currentPage + 1} / ${totalPages}**`, inline: true },
-                { name: '**تنبيه**', value: '**يمكنك اختيار أكثر من صفحة، والاختيارات محفوظة.**', inline: false }
+                { name: '**أساس "الأقل نشاط"**', value: '**الفرز حسب مجموع (دقائق الفويس + عدد الرسائل) للشهر الحالي.**', inline: false },
+                { name: '**تنبيه**', value: '**  اختيار الكل يكون للصفحه الحاليه مو كل الصفحات.**', inline: false }
             )
             .setTimestamp();
     };
@@ -405,7 +410,7 @@ async function startMemberSelection(sentMessage, message, client, selectedRoleId
         const selectAllButton = new ButtonBuilder()
             .setCustomId('tasfiyah_members_select_all')
             .setLabel('تحديد الكل')
-            .setStyle(ButtonStyle.Primary);
+            .setStyle(ButtonStyle.Secondary);
 
         const clearAllButton = new ButtonBuilder()
             .setCustomId('tasfiyah_members_clear_all')
@@ -419,25 +424,27 @@ async function startMemberSelection(sentMessage, message, client, selectedRoleId
 
         const prevButton = new ButtonBuilder()
             .setCustomId('tasfiyah_members_prev')
-            .setEmoji('⬅️')
+               .setEmoji('<:emoji_13:1429263136136888501>')
             .setStyle(ButtonStyle.Secondary)
             .setDisabled(currentPage === 0);
 
         const nextButton = new ButtonBuilder()
             .setCustomId('tasfiyah_members_next')
-            .setEmoji('➡️')
+                 .setEmoji('<:emoji_14:1429263186539974708>')
             .setStyle(ButtonStyle.Secondary)
             .setDisabled(currentPage >= totalPages - 1);
 
         const applyButton = new ButtonBuilder()
             .setCustomId('tasfiyah_members_apply')
-            .setLabel('تنفيذ التصفية')
-            .setStyle(ButtonStyle.Danger);
+            .setLabel('Confirm')
+             .setEmoji('<:emoji_7:1465221394966253768>')
+            .setStyle(ButtonStyle.Success);
 
         const cancelButton = new ButtonBuilder()
             .setCustomId('tasfiyah_members_cancel')
-            .setLabel('إلغاء')
-            .setStyle(ButtonStyle.Secondary);
+            .setLabel('Cancel')
+              .setEmoji('<:emoji_7:1465221361839505622>')
+            .setStyle(ButtonStyle.Danger);
 
         return [
             new ActionRowBuilder().addComponents(selectAllButton, clearAllButton, selectLowestButton),
@@ -513,7 +520,7 @@ async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selecte
     let failedCount = 0;
 
     const progressEmbed = colorManager.createEmbed()
-        .setTitle('🧹 **تنفيذ التصفية**')
+        .setTitle('Procces')
         .setDescription(`**جاري إزالة الرولات... 0 / ${totalMembers}**`)
         .setThumbnail(message.guild.iconURL({ dynamic: true }))
         .setTimestamp();
@@ -545,7 +552,7 @@ async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selecte
             const bar = buildProgressBar(processed, totalMembers, 14);
             const updateEmbed = colorManager.createEmbed()
                 .setTitle('🧹 **تنفيذ التصفية**')
-                .setDescription(`**جاري إزالة الرولات... ${processed} / ${totalMembers}**\n${bar}\n**⏱️ الوقت المتبقي:** ${formatEta(eta)}`)
+                .setDescription(`**جاري إزالة الرولات... ${processed} / ${totalMembers} (${formatPercent(processed, totalMembers)})**\n${bar}\n**⏱️ الوقت المتبقي:** ${formatEta(eta)}`)
                 .setThumbnail(message.guild.iconURL({ dynamic: true }))
                 .setTimestamp();
             await sentMessage.edit({ embeds: [updateEmbed], components: [] });
@@ -555,11 +562,11 @@ async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selecte
     }
 
     const resultEmbed = colorManager.createEmbed()
-        .setTitle('✅ **تمت التصفية بنجاح**')
-        .setDescription('**تم الانتهاء من إزالة الرولات المختارة.**')
+        .setTitle('✅ Done')
+        .setDescription('**تم الانتهاء من تصفيه اعضاء الرولات التفاعليه.**')
         .setThumbnail(message.guild.iconURL({ dynamic: true }))
         .addFields(
-            { name: '**عدد الأعضاء المعالجين**', value: `**${totalMembers}**`, inline: true },
+            { name: '**عدد الأعضاء المتصفيين**', value: `**${totalMembers}**`, inline: true },
             { name: '**نجاح**', value: `**${successCount}**`, inline: true },
             { name: '**فشل**', value: `**${failedCount}**`, inline: true }
         )
@@ -573,7 +580,7 @@ async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selecte
         if (logChannel) {
             const roleMentions = selectedRoleIds.map((roleId) => `<@&${roleId}>`).join('، ') || 'لا يوجد';
             const logEmbed = colorManager.createEmbed()
-                .setTitle('🧾 **سجل تصفيه الرولات التفاعلية**')
+                .setTitle(' Active log')
                 .setThumbnail(message.guild.iconURL({ dynamic: true }))
                 .addFields(
                     { name: '**المنفذ**', value: `<@${message.author.id}>`, inline: true },
