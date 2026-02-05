@@ -102,6 +102,7 @@ class InteractionRouter {
         if (interaction.replied || interaction.deferred) return true;
 
         let matched = false;
+        let consumed = false;
         for (const entry of this.handlers) {
             if (!this._matchEntry(entry, interaction.customId)) {
                 continue;
@@ -119,6 +120,7 @@ class InteractionRouter {
                     console.warn(`[InteractionRouter] المعالج بطيء (${duration}ms): ${entry.name}`);
                 }
                 if (result !== false) {
+                    consumed = true;
                     return true;
                 }
             } catch (error) {
@@ -131,7 +133,7 @@ class InteractionRouter {
                 return true;
             }
         }
-        return matched;
+        return consumed && matched;
     }
 }
 

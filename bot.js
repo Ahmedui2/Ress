@@ -1122,14 +1122,15 @@ client.once(Events.ClientReady, async () => {
                 lastTrackedTime: now, 
                 isAFK: false 
             });
-            saveVoiceSessionsToDisk();
         }
 
         // 2. المستخدم غادر القناة الصوتية كلياً (من قناة إلى لا شيء)
         else if (oldChannelId && !newChannelId) {
             if (existingSession) {
                 const currentTime = Date.now();
-                const endTime = currentTime;
+                const endTime = existingSession.isAFK
+                    ? (existingSession.afkSince || existingSession.lastTrackedTime)
+                    : currentTime;
                 const startTime = existingSession.lastTrackedTime;
                 const duration = endTime - startTime;
 
@@ -1139,13 +1140,12 @@ client.once(Events.ClientReady, async () => {
                         channelId: oldChannelId,
                         channelName: oldChannelName,
                         startTime: startTime,
-                        endTime: currentTime
+                        endTime: endTime
                     }).catch(() => {});
                 }
 
                 await checkAutoLevelUp(userId, 'voice', client).catch(() => {});
                 client.voiceSessions.delete(userId);
-                saveVoiceSessionsToDisk();
                 console.log(`🎤 ${displayName} غادر - تم إضافة ${Math.round(duration/1000)}ث متبقية لقاعدة البيانات.`);
             }
         }
@@ -1154,7 +1154,9 @@ client.once(Events.ClientReady, async () => {
         else if (oldChannelId && newChannelId && oldChannelId !== newChannelId) {
             if (existingSession) {
                 const currentTime = Date.now();
-                const endTime = currentTime;
+                const endTime = existingSession.isAFK
+                    ? (existingSession.afkSince || existingSession.lastTrackedTime)
+                    : currentTime;
                 const startTime = existingSession.lastTrackedTime;
                 const duration = endTime - startTime;
                 
@@ -1164,7 +1166,7 @@ client.once(Events.ClientReady, async () => {
                         channelId: oldChannelId,
                         channelName: oldChannelName,
                         startTime: startTime,
-                        endTime: currentTime
+                        endTime: endTime
                     }).catch(() => {});
                 }
             }
@@ -1180,7 +1182,6 @@ client.once(Events.ClientReady, async () => {
                 lastTrackedTime: now, 
                 isAFK: false 
             });
-            saveVoiceSessionsToDisk();
         }
 
         // 4. أي تغيير آخر ضمن نفس القناة (mute/unmute, deafen/undeafen, etc.)
