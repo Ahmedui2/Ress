@@ -214,6 +214,16 @@ function formatFailureReason(error) {
     return message.toString().slice(0, 200);
 }
 
+function formatRoleMentions(roleIds, guild) {
+    if (!Array.isArray(roleIds) || roleIds.length === 0) {
+        return 'لا يوجد';
+    }
+    return roleIds.map((roleId) => {
+        const role = guild.roles.cache.get(roleId);
+        return role ? `<@&${roleId}> (${role.name})` : roleId;
+    }).join('، ');
+}
+
 module.exports = {
     name,
     description: 'تصفية الرولات التفاعلية حسب النشاط الشهري',
@@ -266,7 +276,9 @@ module.exports = {
         }
 
         await startRoleSelection(message, client, interactiveRoleIds, settings, {
-            logChannelId: settings?.settings?.requestChannel
+            logChannelId: settings?.settings?.requestChannel,
+            resultTitle: 'Active roles',
+            dmDetailsText: 'تم تصفيتك وازاله رولك التفاعلي.'
         });
     }
 };
@@ -329,7 +341,9 @@ async function startAdminTypeSelection(message, client, adminRoleIds) {
                     logChannelId: promoteSettings?.logChannel,
                     logTitle: 'Admin filter log',
                     removeAllAdminRoles: true,
-                    allAdminRoleIds: adminRoleIds
+                    allAdminRoleIds: adminRoleIds,
+                    resultTitle: 'Admin roles',
+                    dmDetailsText: 'تم تصفيتك وازاله رولك الاداري.'
                 });
                 return;
             }
@@ -340,7 +354,9 @@ async function startAdminTypeSelection(message, client, adminRoleIds) {
                 logChannelId: promoteSettings?.logChannel,
                 logTitle: 'Admin filter log',
                 removeAllAdminRoles: false,
-                allAdminRoleIds: adminRoleIds
+                allAdminRoleIds: adminRoleIds,
+                resultTitle: 'Admin roles',
+                dmDetailsText: 'تم تصفيتك وازاله رولك الاداري.'
             });
         } catch (error) {
             console.error('Error in tasfiyah admin type collector:', error);
@@ -591,8 +607,8 @@ async function startMemberSelection(sentMessage, message, client, selectedRoleId
             .addFields(
                 { name: '**المختارون للتصفية**', value: `**${selectedCount}**`, inline: true },
                 { name: '**الصفحة**', value: `**${currentPage + 1} / ${totalPages}**`, inline: true },
-                { name: '**أساس "الأقل نشاط"**', value: '**الفرز حسب مجموع (دقائق الفويس + عدد الرسائل) للشهر الحالي. زر الأقل نشاط يختار من لديهم 0 في أحدهما.**', inline: false },
-                { name: '**تنبيه**', value: '**  اختيار الكل يكون للصفحه الحاليه مو كل الصفحات.**', inline: false }
+                { name: '**أساس "الأقل نشاط"**', value: '**الفرز حسب مجموع (دقائق الفويس + عدد الرسائل) للشهر الحالي. زر الأقل نشاط يختار من لديهم 0 في أحدهما من كل الصفحات.**', inline: false },
+                { name: '**تنبيه**', value: '**اختيار الكل يكون للصفحه الحاليه مو كل الصفحات.**', inline: false }
             )
             .setTimestamp();
     };
@@ -681,10 +697,13 @@ async function startMemberSelection(sentMessage, message, client, selectedRoleId
             } else if (interaction.customId === 'tasfiyah_members_clear_all') {
                 selectedMembersByPage.set(currentPage, new Set());
             } else if (interaction.customId === 'tasfiyah_members_select_lowest') {
-                const start = currentPage * pageSize;
-                const pageData = cleanedStats.slice(start, start + pageSize);
-                const zeroActivity = pageData.filter((stat) => stat.voiceTime === 0 || stat.messages === 0);
-                selectedMembersByPage.set(currentPage, new Set(zeroActivity.map((stat) => stat.member.id)));
+                selectedMembersByPage.clear();
+                for (let pageIndex = 0; pageIndex < totalPages; pageIndex += 1) {
+                    const start = pageIndex * pageSize;
+                    const pageData = cleanedStats.slice(start, start + pageSize);
+                    const zeroActivity = pageData.filter((stat) => stat.voiceTime === 0 || stat.messages === 0);
+                    selectedMembersByPage.set(pageIndex, new Set(zeroActivity.map((stat) => stat.member.id)));
+                }
             } else if (interaction.customId === 'tasfiyah_members_prev' && currentPage > 0) {
                 currentPage -= 1;
             } else if (interaction.customId === 'tasfiyah_members_next' && currentPage < totalPages - 1) {
@@ -734,6 +753,8 @@ async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selecte
     const logTitle = options.logTitle || ' Active log';
     const removeAllAdminRoles = options.removeAllAdminRoles || false;
     const allAdminRoleIds = Array.isArray(options.allAdminRoleIds) ? options.allAdminRoleIds : [];
+    const resultTitle = options.resultTitle || 'Active roles';
+    const dmDetailsText = options.dmDetailsText || 'تم تصفيتك وازاله رولك التفاعلي.';
 
     const progressEmbed = colorManager.createEmbed()
         .setTitle('Procces')
@@ -769,6 +790,14 @@ async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selecte
             await member.roles.remove(rolesToRemove, 'Tasfiyah roles filter');
             successCount += 1;
             successMemberIds.push(memberId);
+            const dmEmbed = colorManager.createEmbed()
+                .setTitle(resultTitle)
+                .addFields(
+                    { name: 'Details', value: dmDetailsText, inline: false },
+                    { name: 'Roles', value: formatRoleMentions(rolesToRemove, message.guild), inline: false }
+                )
+                .setTimestamp();
+            await member.send({ embeds: [dmEmbed] }).catch(() => {});
         } catch (error) {
             console.error(`Error removing roles from ${memberId}:`, error);
             failedCount += 1;
@@ -822,7 +851,7 @@ async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selecte
         const logChannel = message.guild.channels.cache.get(logChannelId);
         if (logChannel) {
             const roleIdsForLog = removeAllAdminRoles ? allAdminRoleIds : selectedRoleIds;
-            const roleMentions = roleIdsForLog.map((roleId) => `<@&${roleId}>`).join('، ') || 'لا يوجد';
+            const roleMentions = formatRoleMentions(roleIdsForLog, message.guild);
             const logEmbed = colorManager.createEmbed()
                 .setTitle(logTitle)
                 .setThumbnail(message.guild.iconURL({ dynamic: true }))
