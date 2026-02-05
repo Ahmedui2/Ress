@@ -107,9 +107,9 @@ function getMainDbData(userId) {
                     let stats = row || { total_messages: 0, total_voice_time: 0, total_reactions: 0 };
                     
                     // حساب الوقت الحي إذا كان العضو في روم صوتي حالياً
-                    if (client && client.voiceSessions && client.voiceSessions.has(userId)) {
-                        const session = client.voiceSessions.get(userId);
-                        if (!session.isAFK) {
+                    if (global.client && global.client.voiceSessions && global.client.voiceSessions.has(userId)) {
+                        const session = global.client.voiceSessions.get(userId);
+                        if (session && !session.isAFK) {
                             const liveStart = session.lastTrackedTime || session.startTime || session.sessionStartTime;
                             const liveDuration = Date.now() - liveStart;
                             stats.total_voice_time = (stats.total_voice_time || 0) + Math.max(0, liveDuration);

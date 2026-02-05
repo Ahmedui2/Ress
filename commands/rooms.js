@@ -100,8 +100,15 @@ async function getUserActivity(userId) {
             LIMIT 1
         `, [userId]);
 
-        const activeSessions = client.voiceSessions || new Map();
-        const liveDuration = activeSessions.has(userId) ? (Date.now() - (activeSessions.get(userId).startTime || activeSessions.get(userId).sessionStartTime)) : 0;
+        const activeSessions = (global.client && global.client.voiceSessions) || new Map();
+        let liveDuration = 0;
+        if (activeSessions.has(userId)) {
+            const session = activeSessions.get(userId);
+            if (session && !session.isAFK) {
+                const liveStart = session.lastTrackedTime || session.startTime || session.sessionStartTime;
+                liveDuration = Math.max(0, Date.now() - liveStart);
+            }
+        }
 
         return {
             totalMessages: stats.totalMessages || 0,

@@ -272,20 +272,15 @@ async function getTopUsers(db, category, period, limit = 50) {
         results = results || [];
 
         // إضافة الوقت الحي للفويس في الترتيب (اليومي والأسبوعي والشهري والكلي)
-        if (category === 'voice' && client && client.voiceSessions) {
+        if (category === 'voice' && global.client && global.client.voiceSessions) {
             const updatedResults = [...results];
             
-            for (const [userId, session] of client.voiceSessions.entries()) {
+            for (const [userId, session] of global.client.voiceSessions.entries()) {
                 let liveDuration = 0;
                 if (!session.isAFK) {
                     const liveStart = session.lastTrackedTime || session.startTime || session.sessionStartTime || nowMs;
                     const effectiveStart = periodStartMs ? Math.max(liveStart, periodStartMs) : liveStart;
                     liveDuration = Math.max(0, nowMs - effectiveStart);
-                } else if (session.lastTrackedTime) {
-                    const afkEnd = session.afkSince || session.lastTrackedTime;
-                    const effectiveStart = periodStartMs ? Math.max(session.lastTrackedTime, periodStartMs) : session.lastTrackedTime;
-                    const effectiveEnd = periodStartMs ? Math.max(afkEnd, periodStartMs) : afkEnd;
-                    liveDuration = Math.max(0, effectiveEnd - effectiveStart);
                 }
                 const existingUser = updatedResults.find(r => r.user_id === userId);
                 
