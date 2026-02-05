@@ -56,7 +56,8 @@ const DATA_FILES = {
     notifications: path.join(dataDir, 'notifications.json'),
     reports: path.join(dataDir, 'reports.json'),
     adminApplications: path.join(dataDir, 'adminApplications.json'),
-    serverMapConfig: path.join(dataDir, 'serverMapConfig.json')
+    serverMapConfig: path.join(dataDir, 'serverMapConfig.json'),
+    voiceSessions: path.join(dataDir, 'voiceSessions.json')
 };
 
 // نظام التحقق التلقائي من ملفات البيانات
@@ -269,6 +270,49 @@ if (!client.activeTasks) {
 if (!client.voiceSessions) {
   client.voiceSessions = new Map();
 }
+
+function loadVoiceSessionsFromDisk() {
+    try {
+        const storedSessions = readJSONFile(DATA_FILES.voiceSessions, {});
+        for (const [userId, session] of Object.entries(storedSessions)) {
+            if (!session || !session.channelId || !session.sessionStartTime) continue;
+            client.voiceSessions.set(userId, {
+                channelId: session.channelId,
+                channelName: session.channelName || 'روم غير معروفة',
+                sessionStartTime: session.sessionStartTime,
+                startTime: session.startTime || session.sessionStartTime,
+                lastTrackedTime: session.lastTrackedTime || session.sessionStartTime,
+                isAFK: Boolean(session.isAFK),
+                afkSince: session.afkSince || null
+            });
+        }
+        console.log(`✅ تم تحميل ${client.voiceSessions.size} جلسة صوتية من JSON`);
+    } catch (error) {
+        console.error('❌ خطأ في تحميل الجلسات الصوتية:', error);
+    }
+}
+
+function saveVoiceSessionsToDisk() {
+    try {
+        const sessions = {};
+        for (const [userId, session] of client.voiceSessions.entries()) {
+            sessions[userId] = {
+                channelId: session.channelId,
+                channelName: session.channelName,
+                sessionStartTime: session.sessionStartTime,
+                startTime: session.startTime,
+                lastTrackedTime: session.lastTrackedTime,
+                isAFK: session.isAFK,
+                afkSince: session.afkSince || null
+            };
+        }
+        writeJSONFile(DATA_FILES.voiceSessions, sessions);
+    } catch (error) {
+        console.error('❌ خطأ في حفظ الجلسات الصوتية:', error);
+    }
+}
+
+loadVoiceSessionsFromDisk();
 
 // إعداد قائمة مالكي البوت من ملف botConfig مع fallback لـ env
 let BOT_OWNERS = [];
@@ -1078,18 +1122,16 @@ client.once(Events.ClientReady, async () => {
                 lastTrackedTime: now, 
                 isAFK: false 
             });
+            saveVoiceSessionsToDisk();
         }
 
         // 2. المستخدم غادر القناة الصوتية كلياً (من قناة إلى لا شيء)
         else if (oldChannelId && !newChannelId) {
             if (existingSession) {
                 const currentTime = Date.now();
-                let duration = 0;
-                let startTime = existingSession.lastTrackedTime;
-                if (existingSession.isAFK && existingSession.afkSince) {
-                    startTime = existingSession.afkSince;
-                }
-                duration = currentTime - startTime;
+                const endTime = currentTime;
+                const startTime = existingSession.lastTrackedTime;
+                const duration = endTime - startTime;
 
                 if (duration > 1000) {
                     await trackUserActivity(userId, 'voice_time', {
@@ -1103,6 +1145,7 @@ client.once(Events.ClientReady, async () => {
 
                 await checkAutoLevelUp(userId, 'voice', client).catch(() => {});
                 client.voiceSessions.delete(userId);
+                saveVoiceSessionsToDisk();
                 console.log(`🎤 ${displayName} غادر - تم إضافة ${Math.round(duration/1000)}ث متبقية لقاعدة البيانات.`);
             }
         }
@@ -1111,11 +1154,9 @@ client.once(Events.ClientReady, async () => {
         else if (oldChannelId && newChannelId && oldChannelId !== newChannelId) {
             if (existingSession) {
                 const currentTime = Date.now();
-                let startTime = existingSession.lastTrackedTime;
-                if (existingSession.isAFK && existingSession.afkSince) {
-                    startTime = existingSession.afkSince;
-                }
-                const duration = currentTime - startTime;
+                const endTime = currentTime;
+                const startTime = existingSession.lastTrackedTime;
+                const duration = endTime - startTime;
                 
                 if (duration > 1000) {
                     await trackUserActivity(userId, 'voice_time', {
@@ -1139,6 +1180,7 @@ client.once(Events.ClientReady, async () => {
                 lastTrackedTime: now, 
                 isAFK: false 
             });
+            saveVoiceSessionsToDisk();
         }
 
         // 4. أي تغيير آخر ضمن نفس القناة (mute/unmute, deafen/undeafen, etc.)
@@ -1208,6 +1250,7 @@ client.once(Events.ClientReady, async () => {
                 } catch (err) {}
                 await new Promise(r => setTimeout(r, 20));
             }
+            saveVoiceSessionsToDisk();
         } catch (error) {}
     }, 3 * 60 * 1000);
 
@@ -1220,18 +1263,20 @@ client.once(Events.ClientReady, async () => {
             
             for (const [userId, session] of client.voiceSessions.entries()) {
                 try {
-                    const duration = now - session.lastTrackedTime;
+                    const endTime = session.isAFK ? (session.afkSince || session.lastTrackedTime) : now;
+                    const duration = endTime - session.lastTrackedTime;
                     if (duration > 1000) {
                         await trackUserActivity(userId, 'voice_time', {
                             duration: duration,
                             channelId: session.channelId,
                             channelName: session.channelName,
                             startTime: session.lastTrackedTime,
-                            endTime: now
+                            endTime: endTime
                         }).catch(() => {});
                     }
                 } catch (err) {}
             }
+            saveVoiceSessionsToDisk();
             console.log('✅ تم حفظ جميع البيانات بنجاح.');
         } catch (error) {
             console.error('❌ خطأ أثناء حفظ الجلسات قبل الإغلاق:', error);
@@ -1263,6 +1308,7 @@ client.once(Events.ClientReady, async () => {
       try {
         const now = Date.now();
         let memberCount = 0;
+        const activeUserIds = new Set();
         
         for (const guild of client.guilds.cache.values()) {
           for (const voiceState of guild.voiceStates.cache.values()) {
@@ -1271,8 +1317,15 @@ client.once(Events.ClientReady, async () => {
             const userId = voiceState.member.id;
             const channelId = voiceState.channelId;
             const channelName = voiceState.channel?.name || 'Unknown Room';
+            activeUserIds.add(userId);
 
-            if (!client.voiceSessions.has(userId)) {
+            const existingSession = client.voiceSessions.get(userId);
+            if (existingSession && existingSession.channelId === channelId) {
+              existingSession.channelName = channelName;
+              continue;
+            }
+
+            if (!existingSession || existingSession.channelId !== channelId) {
               // تخزين بيانات الجلسة في الذاكرة فقط (بدون أي طلبات API أو قاعدة بيانات)
               client.voiceSessions.set(userId, { 
                 channelId, 
@@ -1290,6 +1343,12 @@ client.once(Events.ClientReady, async () => {
             }
           }
         }
+        for (const userId of client.voiceSessions.keys()) {
+          if (!activeUserIds.has(userId)) {
+            client.voiceSessions.delete(userId);
+          }
+        }
+        saveVoiceSessionsToDisk();
         console.log(`✅ تم رصد ${memberCount} عضو في الرومات الصوتية تدريجياً.`);
       } catch (error) {
         console.error('❌ خطأ في رصد القنوات الصوتية:', error);
@@ -3851,6 +3910,14 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // Handle VIP modal submissions
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('activity_after_date_modal_')) {
+        const activityStatsCommand = client.commands.get('تفاعلي');
+        if (activityStatsCommand && typeof activityStatsCommand.handleModalSubmit === 'function') {
+            await activityStatsCommand.handleModalSubmit(interaction, client);
+        }
+        return;
+    }
+
     if (interaction.isModalSubmit() && (interaction.customId === 'vip_prefix_modal' ||
         interaction.customId === 'vip_name_modal' ||
         interaction.customId === 'vip_avatar_modal' ||

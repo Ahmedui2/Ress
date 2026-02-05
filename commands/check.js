@@ -147,7 +147,14 @@ async function getColorIndicator(userId, client, dbManager) {
         `, [userId, dayStart.format('YYYY-MM-DD')]);
 
         const activeSessions = client.voiceSessions || new Map();
-        const liveDuration = activeSessions.has(userId) ? (Date.now() - (activeSessions.get(userId).startTime || activeSessions.get(userId).sessionStartTime)) : 0;
+        let liveDuration = 0;
+        if (activeSessions.has(userId)) {
+            const session = activeSessions.get(userId);
+            if (session && !session.isAFK) {
+                const liveStart = session.lastTrackedTime || session.startTime || session.sessionStartTime;
+                liveDuration = Math.max(0, Date.now() - liveStart);
+            }
+        }
 
         const weeklyVoiceTime = (weeklyStats[0]?.voiceTime || 0) + liveDuration;
         const weeklyMessages = weeklyStats[0]?.messages || 0;
