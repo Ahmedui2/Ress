@@ -5,11 +5,14 @@ const colorManager = require('../utils/colorManager.js');
 const { isUserBlocked } = require('./block.js');
 const { isChannelBlocked } = require('./chatblock.js');
 const { getDatabase } = require('../utils/database.js');
+const promoteManager = require('../utils/promoteManager');
 const moment = require('moment-timezone');
 
 const name = 'تصفيه';
 
 const interactiveRolesPath = path.join(__dirname, '..', 'data', 'interactiveRoles.json');
+const adminApplicationsPath = path.join(__dirname, '..', 'data', 'adminApplications.json');
+const responsibilitiesPath = path.join(__dirname, '..', 'data', 'responsibilities.json');
 
 function loadSettings() {
     try {
@@ -54,6 +57,56 @@ function hasPermission(member, settings) {
         ? member.roles.cache.some((role) => approverRoles.includes(role.id))
         : false;
     return isGuildOwner || BOT_OWNERS.includes(member.id) || hasApproverRole;
+}
+
+function loadAdminApplicationSettings() {
+    try {
+        if (fs.existsSync(adminApplicationsPath)) {
+            const data = fs.readFileSync(adminApplicationsPath, 'utf8');
+            return JSON.parse(data);
+        }
+    } catch (error) {
+        console.error('خطأ في قراءة إعدادات التقديم الإداري:', error);
+    }
+    return {
+        settings: {
+            approvers: { type: "roles", list: [] }
+        }
+    };
+}
+
+function canUseAdminFilter(member, settings) {
+    const BOT_OWNERS = getBotOwners();
+    const isBotOwner = BOT_OWNERS.includes(member.id);
+    const isGuildOwner = member.guild.ownerId === member.id;
+    if (isBotOwner || isGuildOwner) return true;
+    const approvers = settings?.settings?.approvers;
+    if (!approvers) return false;
+
+    if (approvers.type === 'owners') {
+        return isBotOwner;
+    }
+
+    if (approvers.type === 'roles') {
+        return member.roles.cache.some(role => approvers.list.includes(role.id));
+    }
+
+    if (approvers.type === 'responsibility') {
+        try {
+            if (fs.existsSync(responsibilitiesPath)) {
+                const responsibilitiesData = JSON.parse(fs.readFileSync(responsibilitiesPath, 'utf8'));
+                const targetResp = approvers.list[0];
+                if (responsibilitiesData[targetResp] && responsibilitiesData[targetResp].responsibles) {
+                    return responsibilitiesData[targetResp].responsibles.includes(member.id);
+                }
+            }
+        } catch (error) {
+            console.error('خطأ في فحص المسؤوليات:', error);
+        }
+        return false;
+    }
+
+    return false;
 }
 
 function chunkArray(items, size) {
@@ -127,6 +180,50 @@ function formatPercent(done, total) {
     return `${Math.min(100, Math.max(0, Math.round((done / total) * 100)))}%`;
 }
 
+function chunkLines(lines, maxLength = 3800) {
+    if (!Array.isArray(lines) || lines.length === 0) {
+        return ['لا يوجد'];
+    }
+    const chunks = [];
+    let current = '';
+    for (const line of lines) {
+        const next = current ? `${current}\n${line}` : line;
+        if (next.length > maxLength) {
+            if (current) chunks.push(current);
+            current = line;
+        } else {
+            current = next;
+        }
+    }
+    if (current) chunks.push(current);
+    return chunks.length > 0 ? chunks : ['لا يوجد'];
+}
+
+function buildDetailEmbeds(title, lines, thumbnail) {
+    const chunks = chunkLines(lines);
+    return chunks.map((chunk, index) => colorManager.createEmbed()
+        .setTitle(chunks.length > 1 ? `${title} (${index + 1}/${chunks.length})` : title)
+        .setDescription(chunk || 'لا يوجد')
+        .setThumbnail(thumbnail)
+        .setTimestamp());
+}
+
+function formatFailureReason(error) {
+    if (!error) return 'سبب غير معروف.';
+    const message = typeof error === 'string' ? error : error.message || 'سبب غير معروف.';
+    return message.toString().slice(0, 200);
+}
+
+function formatRoleMentions(roleIds, guild) {
+    if (!Array.isArray(roleIds) || roleIds.length === 0) {
+        return 'لا يوجد';
+    }
+    return roleIds.map((roleId) => {
+        const role = guild.roles.cache.get(roleId);
+        return role ? `<@&${roleId}> (${role.name})` : roleId;
+    }).join('، ');
+}
+
 module.exports = {
     name,
     description: 'تصفية الرولات التفاعلية حسب النشاط الشهري',
@@ -144,6 +241,26 @@ module.exports = {
             return;
         }
 
+        const isAdminMode = args?.[0]?.toLowerCase() === 'admin';
+        if (isAdminMode) {
+            const adminSettings = loadAdminApplicationSettings();
+            const adminRoles = promoteManager.getAdminRoles()
+                .filter((roleId) => message.guild.roles.cache.has(roleId));
+
+            if (!canUseAdminFilter(message.member, adminSettings)) {
+                await message.reply('**❌ لا تملك صلاحية لاستخدام تصفية الإدارة.**');
+                return;
+            }
+
+            if (adminRoles.length === 0) {
+                await message.reply('**❌ لا توجد رولات إدارية محددة في Adminroles.**');
+                return;
+            }
+
+            await startAdminTypeSelection(message, client, adminRoles);
+            return;
+        }
+
         const settings = loadSettings();
         if (!hasPermission(message.member, settings)) {
             await message.reply('**❌ لا تملك صلاحية لاستخدام هذا الأمر.**');
@@ -158,132 +275,241 @@ module.exports = {
             return;
         }
 
-        const rolePages = chunkArray(interactiveRoleIds, 25);
-        let currentRolePage = 0;
-        const selectedRolesByPage = new Map();
-
-        const buildRoleSelectionEmbed = () => {
-            const selectedRoleIds = Array.from(selectedRolesByPage.values())
-                .flatMap((set) => Array.from(set));
-            const selectedMentions = selectedRoleIds.length > 0
-                ? selectedRoleIds.map((id) => `<@&${id}>`).join('، ')
-                : 'لا يوجد';
-
-            return colorManager.createEmbed()
-                .setTitle('Active Roles')
-                .setDescription('**اختر الرولات التفاعلية التي تريد تصفيتها **')
-                .setThumbnail(message.guild.iconURL({ dynamic: true }))
-                .addFields(
-                    { name: '**الرولات المختارة**', value: selectedMentions, inline: false },
-                    { name: '**الصفحة**', value: `**${currentRolePage + 1} / ${rolePages.length}**`, inline: true },
-                )
-                .setTimestamp();
-        };
-
-        const buildRoleMenu = () => {
-            const roleOptions = rolePages[currentRolePage].map((roleId) => {
-                const role = message.guild.roles.cache.get(roleId);
-                const pageSelected = selectedRolesByPage.get(currentRolePage) || new Set();
-                return {
-                    label: role ? role.name.slice(0, 100) : roleId,
-                    value: roleId,
-                    description: role ? `ID: ${roleId}` : 'Role not found',
-                    default: pageSelected.has(roleId)
-                };
-            });
-
-            return new StringSelectMenuBuilder()
-                .setCustomId('tasfiyah_roles_select')
-                .setPlaceholder('اختر الرولات التفاعلية...')
-                .setMinValues(0)
-                .setMaxValues(roleOptions.length || 1)
-                .addOptions(roleOptions);
-        };
-
-        const buildRoleButtons = () => {
-            const prevButton = new ButtonBuilder()
-                .setCustomId('tasfiyah_roles_prev')
-                .setEmoji('<:emoji_13:1429263136136888501>')
-                .setStyle(ButtonStyle.Secondary)
-                .setDisabled(currentRolePage === 0);
-
-            const nextButton = new ButtonBuilder()
-                .setCustomId('tasfiyah_roles_next')
-                .setEmoji('<:emoji_14:1429263186539974708>')
-                .setStyle(ButtonStyle.Secondary)
-                .setDisabled(currentRolePage >= rolePages.length - 1);
-
-            const confirmButton = new ButtonBuilder()
-                .setCustomId('tasfiyah_roles_confirm')
-                .setLabel('Done')             .setEmoji('<:emoji_7:1465221394966253768>')        .setStyle(ButtonStyle.Primary);
-
-            const cancelButton = new ButtonBuilder()
-                .setCustomId('tasfiyah_roles_cancel')
-                .setLabel('Cancel')
-                   .setEmoji('<:emoji_7:1465221361839505622>')
-                .setStyle(ButtonStyle.Danger);
-
-            return new ActionRowBuilder().addComponents(prevButton, nextButton, confirmButton, cancelButton);
-        };
-
-        const roleMenuRow = new ActionRowBuilder().addComponents(buildRoleMenu());
-        const roleButtonsRow = buildRoleButtons();
-
-        const sentMessage = await message.channel.send({
-            embeds: [buildRoleSelectionEmbed()],
-            components: [roleMenuRow, roleButtonsRow]
-        });
-
-        const filter = (interaction) => interaction.user.id === message.author.id && interaction.message.id === sentMessage.id;
-        const collector = sentMessage.createMessageComponentCollector({ filter, time: 10 * 60 * 1000 });
-
-        collector.on('collect', async (interaction) => {
-            try {
-                if (interaction.customId === 'tasfiyah_roles_select') {
-                    selectedRolesByPage.set(currentRolePage, new Set(interaction.values));
-                } else if (interaction.customId === 'tasfiyah_roles_prev' && currentRolePage > 0) {
-                    currentRolePage -= 1;
-                } else if (interaction.customId === 'tasfiyah_roles_next' && currentRolePage < rolePages.length - 1) {
-                    currentRolePage += 1;
-                } else if (interaction.customId === 'tasfiyah_roles_cancel') {
-                    collector.stop('cancelled');
-                    await interaction.update({ content: '**تم إلغاء العملية.**', embeds: [], components: [] });
-                    return;
-                } else if (interaction.customId === 'tasfiyah_roles_confirm') {
-                    const selectedRoleIds = Array.from(selectedRolesByPage.values())
-                        .flatMap((set) => Array.from(set));
-
-                    if (selectedRoleIds.length === 0) {
-                        await interaction.reply({ content: '**❌ يجب اختيار رول واحد على الأقل.**', ephemeral: true });
-                        return;
-                    }
-
-                    collector.stop('confirmed');
-                    await interaction.update({ content: '**⏳ انتظر للمعالجة...**', embeds: [], components: [] });
-                    await startMemberSelection(sentMessage, message, client, selectedRoleIds, settings);
-                    return;
-                }
-
-                collector.resetTimer();
-                const updatedMenuRow = new ActionRowBuilder().addComponents(buildRoleMenu());
-                const updatedButtonsRow = buildRoleButtons();
-                await interaction.update({
-                    embeds: [buildRoleSelectionEmbed()],
-                    components: [updatedMenuRow, updatedButtonsRow]
-                });
-            } catch (error) {
-                console.error('Error in tasfiyah role collector:', error);
-            }
-        });
-
-        collector.on('end', async (_, reason) => {
-            if (reason === 'confirmed' || reason === 'cancelled') return;
-            sentMessage.edit({ components: [] }).catch(() => {});
+        await startRoleSelection(message, client, interactiveRoleIds, settings, {
+            logChannelId: settings?.settings?.requestChannel,
+            resultTitle: 'Active roles',
+            dmDetailsText: 'تم تصفيتك وازاله رولك التفاعلي.'
         });
     }
 };
 
-async function startMemberSelection(sentMessage, message, client, selectedRoleIds, settings) {
+async function startAdminTypeSelection(message, client, adminRoleIds) {
+    const typeEmbed = colorManager.createEmbed()
+        .setTitle('تصفيه الإدارة')
+        .setDescription('**اختار نوع الرتب الادارية للتصفية (حرف أو ظواهر).**')
+        .setThumbnail(message.guild.iconURL({ dynamic: true }))
+        .setTimestamp();
+
+    const typeMenu = new StringSelectMenuBuilder()
+        .setCustomId('tasfiyah_admin_select_type')
+        .setPlaceholder('اختر النوع...')
+        .setMinValues(1)
+        .setMaxValues(2)
+        .addOptions([
+            { label: 'رتب الحرف (Rank)', value: 'rank', description: 'التعامل مع رولات (A , B , C ...)' },
+            { label: 'رتب ظاهرية (Visual)', value: 'visual', description: 'التعامل مع رولات الأسماء والظواهر' }
+        ]);
+
+    const sentMessage = await message.channel.send({
+        embeds: [typeEmbed],
+        components: [new ActionRowBuilder().addComponents(typeMenu)]
+    });
+
+    const filter = (interaction) => interaction.user.id === message.author.id && interaction.message.id === sentMessage.id;
+    const collector = sentMessage.createMessageComponentCollector({ filter, time: 5 * 60 * 1000 });
+
+    collector.on('collect', async (interaction) => {
+        try {
+            if (interaction.customId !== 'tasfiyah_admin_select_type') return;
+
+            const selectedTypes = interaction.values;
+            const selectedBothTypes = selectedTypes.includes('rank') && selectedTypes.includes('visual');
+            const filteredAdminRoles = adminRoleIds.filter((roleId) => {
+                const role = message.guild.roles.cache.get(roleId);
+                if (!role) return false;
+                if (selectedBothTypes) return true;
+                const isRankType = selectedTypes.includes('rank');
+                return (role.name.length <= 3) === isRankType;
+            });
+
+            if (filteredAdminRoles.length === 0) {
+                await interaction.update({
+                    content: '**❌ لا توجد رولات إدارية مطابقة لهذا النوع.**',
+                    embeds: [],
+                    components: []
+                });
+                collector.stop('empty');
+                return;
+            }
+
+            collector.stop('selected');
+            await interaction.update({ content: '**⏳ انتظر للمعالجة...**', embeds: [], components: [] });
+            const promoteSettings = promoteManager.getSettings();
+
+            if (selectedBothTypes) {
+                await startMemberSelection(sentMessage, message, client, adminRoleIds, {
+                    logChannelId: promoteSettings?.logChannel,
+                    logTitle: 'Admin filter log',
+                    removeAllAdminRoles: true,
+                    allAdminRoleIds: adminRoleIds,
+                    resultTitle: 'Admin roles',
+                    dmDetailsText: 'تم تصفيتك وازاله رولك الاداري.'
+                });
+                return;
+            }
+
+            await startRoleSelection(message, client, filteredAdminRoles, null, {
+                title: 'Admin Roles',
+                description: '**اختر الرولات الادارية التي تريد تصفيتها **',
+                logChannelId: promoteSettings?.logChannel,
+                logTitle: 'Admin filter log',
+                removeAllAdminRoles: false,
+                allAdminRoleIds: adminRoleIds,
+                resultTitle: 'Admin roles',
+                dmDetailsText: 'تم تصفيتك وازاله رولك الاداري.'
+            });
+        } catch (error) {
+            console.error('Error in tasfiyah admin type collector:', error);
+        }
+    });
+
+    collector.on('end', async (_, reason) => {
+        if (reason === 'selected' || reason === 'empty') return;
+        sentMessage.edit({ components: [] }).catch(() => {});
+    });
+}
+
+async function startRoleSelection(message, client, roleIds, settings, options = {}) {
+    const rolePages = chunkArray(roleIds, 25);
+    let currentRolePage = 0;
+    const selectedRolesByPage = new Map();
+    const {
+        title = 'Active Roles',
+        description = '**اختر الرولات التفاعلية التي تريد تصفيتها **',
+        logChannelId = settings?.settings?.requestChannel || null,
+        logTitle = ' Active log',
+        removeAllAdminRoles = false,
+        allAdminRoleIds = null
+    } = options;
+
+    const buildRoleSelectionEmbed = () => {
+        const selectedRoleIds = Array.from(selectedRolesByPage.values())
+            .flatMap((set) => Array.from(set));
+        const selectedMentions = selectedRoleIds.length > 0
+            ? selectedRoleIds.map((id) => `<@&${id}>`).join('، ')
+            : 'لا يوجد';
+
+        return colorManager.createEmbed()
+            .setTitle(title)
+            .setDescription(description)
+            .setThumbnail(message.guild.iconURL({ dynamic: true }))
+            .addFields(
+                { name: '**الرولات المختارة**', value: selectedMentions, inline: false },
+                { name: '**الصفحة**', value: `**${currentRolePage + 1} / ${rolePages.length}**`, inline: true },
+            )
+            .setTimestamp();
+    };
+
+    const buildRoleMenu = () => {
+        const roleOptions = rolePages[currentRolePage].map((roleId) => {
+            const role = message.guild.roles.cache.get(roleId);
+            const pageSelected = selectedRolesByPage.get(currentRolePage) || new Set();
+            return {
+                label: role ? role.name.slice(0, 100) : roleId,
+                value: roleId,
+                description: role ? `ID: ${roleId}` : 'Role not found',
+                default: pageSelected.has(roleId)
+            };
+        });
+
+        return new StringSelectMenuBuilder()
+            .setCustomId('tasfiyah_roles_select')
+            .setPlaceholder('اختر الرولات...')
+            .setMinValues(0)
+            .setMaxValues(roleOptions.length || 1)
+            .addOptions(roleOptions);
+    };
+
+    const buildRoleButtons = () => {
+        const prevButton = new ButtonBuilder()
+            .setCustomId('tasfiyah_roles_prev')
+            .setEmoji('<:emoji_13:1429263136136888501>')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(currentRolePage === 0);
+
+        const nextButton = new ButtonBuilder()
+            .setCustomId('tasfiyah_roles_next')
+            .setEmoji('<:emoji_14:1429263186539974708>')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(currentRolePage >= rolePages.length - 1);
+
+        const confirmButton = new ButtonBuilder()
+            .setCustomId('tasfiyah_roles_confirm')
+            .setLabel('Done')
+            .setEmoji('<:emoji_7:1465221394966253768>')
+            .setStyle(ButtonStyle.Primary);
+
+        const cancelButton = new ButtonBuilder()
+            .setCustomId('tasfiyah_roles_cancel')
+            .setLabel('Cancel')
+            .setEmoji('<:emoji_7:1465221361839505622>')
+            .setStyle(ButtonStyle.Danger);
+
+        return new ActionRowBuilder().addComponents(prevButton, nextButton, confirmButton, cancelButton);
+    };
+
+    const roleMenuRow = new ActionRowBuilder().addComponents(buildRoleMenu());
+    const roleButtonsRow = buildRoleButtons();
+
+    const sentMessage = await message.channel.send({
+        embeds: [buildRoleSelectionEmbed()],
+        components: [roleMenuRow, roleButtonsRow]
+    });
+
+    const filter = (interaction) => interaction.user.id === message.author.id && interaction.message.id === sentMessage.id;
+    const collector = sentMessage.createMessageComponentCollector({ filter, time: 10 * 60 * 1000 });
+
+    collector.on('collect', async (interaction) => {
+        try {
+            if (interaction.customId === 'tasfiyah_roles_select') {
+                selectedRolesByPage.set(currentRolePage, new Set(interaction.values));
+            } else if (interaction.customId === 'tasfiyah_roles_prev' && currentRolePage > 0) {
+                currentRolePage -= 1;
+            } else if (interaction.customId === 'tasfiyah_roles_next' && currentRolePage < rolePages.length - 1) {
+                currentRolePage += 1;
+            } else if (interaction.customId === 'tasfiyah_roles_cancel') {
+                collector.stop('cancelled');
+                await interaction.update({ content: '**تم إلغاء العملية.**', embeds: [], components: [] });
+                return;
+            } else if (interaction.customId === 'tasfiyah_roles_confirm') {
+                const selectedRoleIds = Array.from(selectedRolesByPage.values())
+                    .flatMap((set) => Array.from(set));
+
+                if (selectedRoleIds.length === 0) {
+                    await interaction.reply({ content: '**❌ يجب اختيار رول واحد على الأقل.**', ephemeral: true });
+                    return;
+                }
+
+                collector.stop('confirmed');
+                await interaction.update({ content: '**⏳ انتظر للمعالجة...**', embeds: [], components: [] });
+                await startMemberSelection(sentMessage, message, client, selectedRoleIds, {
+                    logChannelId,
+                    logTitle,
+                    removeAllAdminRoles,
+                    allAdminRoleIds
+                });
+                return;
+            }
+
+            collector.resetTimer();
+            const updatedMenuRow = new ActionRowBuilder().addComponents(buildRoleMenu());
+            const updatedButtonsRow = buildRoleButtons();
+            await interaction.update({
+                embeds: [buildRoleSelectionEmbed()],
+                components: [updatedMenuRow, updatedButtonsRow]
+            });
+        } catch (error) {
+            console.error('Error in tasfiyah role collector:', error);
+        }
+    });
+
+    collector.on('end', async (_, reason) => {
+        if (reason === 'confirmed' || reason === 'cancelled') return;
+        sentMessage.edit({ components: [] }).catch(() => {});
+    });
+}
+
+async function startMemberSelection(sentMessage, message, client, selectedRoleIds, options = {}) {
     const dbManager = getDatabase();
     if (!dbManager || !dbManager.isInitialized) {
         await sentMessage.edit({ content: '**❌ قاعدة البيانات غير متاحة.**', embeds: [], components: [] });
@@ -381,8 +607,8 @@ async function startMemberSelection(sentMessage, message, client, selectedRoleId
             .addFields(
                 { name: '**المختارون للتصفية**', value: `**${selectedCount}**`, inline: true },
                 { name: '**الصفحة**', value: `**${currentPage + 1} / ${totalPages}**`, inline: true },
-                { name: '**أساس "الأقل نشاط"**', value: '**الفرز حسب مجموع (دقائق الفويس + عدد الرسائل) للشهر الحالي.**', inline: false },
-                { name: '**تنبيه**', value: '**  اختيار الكل يكون للصفحه الحاليه مو كل الصفحات.**', inline: false }
+                { name: '**أساس "الأقل نشاط"**', value: '**الفرز حسب مجموع (دقائق الفويس + عدد الرسائل) للشهر الحالي. زر الأقل نشاط يختار من لديهم 0 في أحدهما من كل الصفحات.**', inline: false },
+                { name: '**تنبيه**', value: '**اختيار الكل يكون للصفحه الحاليه مو كل الصفحات.**', inline: false }
             )
             .setTimestamp();
     };
@@ -471,10 +697,13 @@ async function startMemberSelection(sentMessage, message, client, selectedRoleId
             } else if (interaction.customId === 'tasfiyah_members_clear_all') {
                 selectedMembersByPage.set(currentPage, new Set());
             } else if (interaction.customId === 'tasfiyah_members_select_lowest') {
-                const start = currentPage * pageSize;
-                const pageData = cleanedStats.slice(start, start + pageSize);
-                const sortedByLowest = [...pageData].sort((a, b) => a.score - b.score);
-                selectedMembersByPage.set(currentPage, new Set(sortedByLowest.map((stat) => stat.member.id)));
+                selectedMembersByPage.clear();
+                for (let pageIndex = 0; pageIndex < totalPages; pageIndex += 1) {
+                    const start = pageIndex * pageSize;
+                    const pageData = cleanedStats.slice(start, start + pageSize);
+                    const zeroActivity = pageData.filter((stat) => stat.voiceTime === 0 || stat.messages === 0);
+                    selectedMembersByPage.set(pageIndex, new Set(zeroActivity.map((stat) => stat.member.id)));
+                }
             } else if (interaction.customId === 'tasfiyah_members_prev' && currentPage > 0) {
                 currentPage -= 1;
             } else if (interaction.customId === 'tasfiyah_members_next' && currentPage < totalPages - 1) {
@@ -494,7 +723,7 @@ async function startMemberSelection(sentMessage, message, client, selectedRoleId
 
                 collector.stop('apply');
                 await interaction.update({ content: '**⏳ جاري تنفيذ التصفية...**', embeds: [], components: [] });
-                await applyRoleRemoval(sentMessage, message, selectedMemberIds, selectedRoleIds, settings);
+                await applyRoleRemoval(sentMessage, message, selectedMemberIds, selectedRoleIds, options);
                 return;
             }
 
@@ -514,10 +743,18 @@ async function startMemberSelection(sentMessage, message, client, selectedRoleId
     });
 }
 
-async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selectedRoleIds, settings) {
+async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selectedRoleIds, options = {}) {
     const totalMembers = selectedMemberIds.length;
     let successCount = 0;
     let failedCount = 0;
+    const successMemberIds = [];
+    const failedMembers = [];
+    const logChannelId = options.logChannelId || null;
+    const logTitle = options.logTitle || ' Active log';
+    const removeAllAdminRoles = options.removeAllAdminRoles || false;
+    const allAdminRoleIds = Array.isArray(options.allAdminRoleIds) ? options.allAdminRoleIds : [];
+    const resultTitle = options.resultTitle || 'Active roles';
+    const dmDetailsText = options.dmDetailsText || 'تم تصفيتك وازاله رولك التفاعلي.';
 
     const progressEmbed = colorManager.createEmbed()
         .setTitle('Procces')
@@ -530,17 +767,41 @@ async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selecte
     let processed = 0;
     const startedAt = Date.now();
     for (const memberId of selectedMemberIds) {
+        let member;
         try {
-            const member = await message.guild.members.fetch(memberId);
-            const rolesToRemove = selectedRoleIds.filter((roleId) => member.roles.cache.has(roleId));
+            member = await message.guild.members.fetch(memberId);
+        } catch (error) {
+            console.error(`Error fetching member ${memberId}:`, error);
+            failedCount += 1;
+            failedMembers.push({ memberId, reason: 'تعذر جلب العضو.' });
+            continue;
+        }
 
-            if (rolesToRemove.length > 0) {
-                await member.roles.remove(rolesToRemove, 'Tasfiyah interactive roles');
-                successCount += 1;
-            }
+        const roleSource = removeAllAdminRoles ? allAdminRoleIds : selectedRoleIds;
+        const rolesToRemove = roleSource.filter((roleId) => member.roles.cache.has(roleId));
+
+        if (rolesToRemove.length === 0) {
+            failedCount += 1;
+            failedMembers.push({ memberId, reason: 'لا يملك الرولات المحددة للإزالة.' });
+            continue;
+        }
+
+        try {
+            await member.roles.remove(rolesToRemove, 'Tasfiyah roles filter');
+            successCount += 1;
+            successMemberIds.push(memberId);
+            const dmEmbed = colorManager.createEmbed()
+                .setTitle(resultTitle)
+                .addFields(
+                    { name: 'Details', value: dmDetailsText, inline: false },
+                    { name: 'Roles', value: formatRoleMentions(rolesToRemove, message.guild), inline: false }
+                )
+                .setTimestamp();
+            await member.send({ embeds: [dmEmbed] }).catch(() => {});
         } catch (error) {
             console.error(`Error removing roles from ${memberId}:`, error);
             failedCount += 1;
+            failedMembers.push({ memberId, reason: formatFailureReason(error) });
         }
 
         processed += 1;
@@ -563,7 +824,7 @@ async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selecte
 
     const resultEmbed = colorManager.createEmbed()
         .setTitle('✅ Done')
-        .setDescription('**تم الانتهاء من تصفيه اعضاء الرولات التفاعليه.**')
+        .setDescription('**تم الانتهاء من تنفيذ التصفية.**')
         .setThumbnail(message.guild.iconURL({ dynamic: true }))
         .addFields(
             { name: '**عدد الأعضاء المتصفيين**', value: `**${totalMembers}**`, inline: true },
@@ -574,13 +835,25 @@ async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selecte
 
     await sentMessage.edit({ embeds: [resultEmbed], components: [] });
 
-    const logChannelId = settings?.settings?.requestChannel;
+    const thumbnail = message.guild.iconURL({ dynamic: true });
+    const successLines = successMemberIds.map((id) => `<@${id}>`);
+    const failureLines = failedMembers.map((item) => `<@${item.memberId}> — ${item.reason}`);
+    const detailEmbeds = [
+        ...buildDetailEmbeds('✅ الأعضاء الذين تم تصفيتهم', successLines, thumbnail),
+        ...buildDetailEmbeds('❌ الأعضاء الذين فشلوا', failureLines, thumbnail)
+    ];
+
+    for (const embed of detailEmbeds) {
+        await message.channel.send({ embeds: [embed] });
+    }
+
     if (logChannelId) {
         const logChannel = message.guild.channels.cache.get(logChannelId);
         if (logChannel) {
-            const roleMentions = selectedRoleIds.map((roleId) => `<@&${roleId}>`).join('، ') || 'لا يوجد';
+            const roleIdsForLog = removeAllAdminRoles ? allAdminRoleIds : selectedRoleIds;
+            const roleMentions = formatRoleMentions(roleIdsForLog, message.guild);
             const logEmbed = colorManager.createEmbed()
-                .setTitle(' Active log')
+                .setTitle(logTitle)
                 .setThumbnail(message.guild.iconURL({ dynamic: true }))
                 .addFields(
                     { name: '**المنفذ**', value: `<@${message.author.id}>`, inline: true },
@@ -591,6 +864,9 @@ async function applyRoleRemoval(sentMessage, message, selectedMemberIds, selecte
                 )
                 .setTimestamp();
             logChannel.send({ embeds: [logEmbed] }).catch(() => {});
+            for (const embed of detailEmbeds) {
+                logChannel.send({ embeds: [embed] }).catch(() => {});
+            }
         }
     }
 }
