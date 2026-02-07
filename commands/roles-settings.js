@@ -56,6 +56,13 @@ async function respondEphemeralWithMessage(interaction, payload) {
   return response?.resource?.message || response || null;
 }
 
+async function ensureEphemeralAck(interaction) {
+  if (!interaction) return false;
+  if (interaction.deferred || interaction.replied) return true;
+  const deferred = await interaction.deferReply({ ephemeral: true }).catch(() => null);
+  return Boolean(deferred);
+}
+
 function getRequestCooldownRemaining(guildConfig, userId) {
   const cooldowns = guildConfig.requestCooldowns || {};
   const lastRejectedAt = cooldowns[userId];
@@ -1985,14 +1992,25 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
   }
 
   if (interaction.customId.startsWith('customroles_request_approve_')) {
+    const acknowledged = await ensureEphemeralAck(interaction);
     if (!isAdminUser) {
-      await interaction.reply({ content: '❌ لا تملك صلاحية.', ephemeral: true });
+      if (acknowledged) {
+        await interaction.editReply({ content: '❌ لا تملك صلاحية.' }).catch(() => {});
+      } else {
+        await respondEphemeral(interaction, { content: '❌ لا تملك صلاحية.' });
+      }
       return;
     }
-    await interaction.deferUpdate();
     const userId = interaction.customId.split('_')[3];
     const member = await interaction.guild.members.fetch(userId).catch(() => null);
-    if (!member) return;
+    if (!member) {
+      if (acknowledged) {
+        await interaction.editReply({ content: '❌ لم يتم العثور على العضو المطلوب.' }).catch(() => {});
+      } else {
+        await respondEphemeral(interaction, { content: '❌ لم يتم العثور على العضو المطلوب.' });
+      }
+      return;
+    }
 
     const latestConfig = getGuildConfig(interaction.guild.id);
     const pendingRequest = latestConfig.pendingRoleRequests?.[userId];
@@ -2006,14 +2024,19 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     }).catch(() => null);
 
     if (!role) {
-      await interaction.message.edit({ content: '❌ فشل إنشاء الرول. تحقق من الصلاحيات.', components: [] });
+      await interaction.message.edit({ content: '❌ فشل إنشاء الرول. تحقق من الصلاحيات.', components: [] }).catch(() => {});
+      if (acknowledged) {
+        await interaction.editReply({ content: '❌ فشل إنشاء الرول. تحقق من الصلاحيات.' }).catch(() => {});
+      } else {
+        await respondEphemeral(interaction, { content: '❌ فشل إنشاء الرول. تحقق من الصلاحيات.' });
+      }
       return;
     }
     await applyRoleCategoryPosition(role, getGuildConfig(interaction.guild.id));
 
     const roleAddResult = await member.roles.add(role, 'منح رول خاص عبر الطلب').catch(() => null);
     if (!roleAddResult) {
-      await interaction.message.edit({ content: '⚠️ تم إنشاء الرول لكن تعذر منحه للعضو.', components: [] });
+      await interaction.message.edit({ content: '⚠️ تم إنشاء الرول لكن تعذر منحه للعضو.', components: [] }).catch(() => {});
     }
 
     addRoleEntry(role.id, {
@@ -2050,7 +2073,12 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       ? EmbedBuilder.from(interaction.message.embeds[0])
       : colorManager.createEmbed().setTitle('طلب رول خاص');
     updatedEmbed.addFields({ name: 'المسؤول الموافق', value: `<@${interaction.user.id}>`, inline: false });
-    await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
+    await interaction.message.edit({ embeds: [updatedEmbed], components: [] }).catch(() => {});
+    if (acknowledged) {
+      await interaction.editReply({ content: `✅ المسؤول الموافق : <@${interaction.user.id}>` }).catch(() => {});
+    } else {
+      await respondEphemeral(interaction, { content: `✅ المسؤول الموافق : <@${interaction.user.id}>` });
+    }
     return;
   }
 
