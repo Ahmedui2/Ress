@@ -90,6 +90,13 @@ function saveProblemConfig(config) {
   }
 }
 
+async function getLogsChannel(guild, logsChannelId) {
+  if (!guild || !logsChannelId) return null;
+  const cached = guild.channels.cache.get(logsChannelId);
+  if (cached) return cached;
+  return guild.channels.fetch(logsChannelId).catch(() => null);
+}
+
 // Session store for interactive flows.  This uses a WeakMap keyed by
 // client to store a Map keyed by user ID.  This pattern matches the
 // implementation used by the perm command.  Each entry stores data
@@ -293,7 +300,7 @@ setInterval(async () => {
       const config = loadProblemConfig();
       const logsChannelId = config.logsChannelId;
       if (!logsChannelId) continue;
-      const logsChannel = guild.channels.cache.get(logsChannelId);
+      const logsChannel = await getLogsChannel(guild, logsChannelId);
       if (!logsChannel) continue;
       const probs = resetsByGuild[guildId];
       // Build the description listing all problem pairs that were reset
@@ -301,9 +308,10 @@ setInterval(async () => {
       const desc = `**تم إعادة ضبط التحذيرات للمشكلات التالية :**\n*${pairs}*`;
       const resetEmbed = colorManager
         .createEmbed()
-        .setTitle('إعادة ضبط التحذيرات اليومية')
+        .setTitle('Reset problem warns')
         .setDescription(desc)
-        .addFields({ name: 'الحالة', value: 'بدأ يوم جديد' })
+      .setThumbnail(guild.iconURL({ dynamic: true }))
+        .addFields({ name: 'الحالة', value: 'New day' })
         .setTimestamp();
       const files = getSeparatorAttachments();
       // Send the reset embed first without the separator image.  Then send the image as
@@ -425,6 +433,7 @@ const name = 'problem';
 
 async function execute(message, args, context) {
   const { client } = context;
+  if (client) lastClient = client;
   const adminRoles = loadAdminRoles();
   const owners = context.BOT_OWNERS || [];
 
@@ -508,9 +517,10 @@ async function execute(message, args, context) {
     .setMaxValues(5); // up to 5 users
 
   const embed = colorManager.createEmbed()
-    .setTitle('إنشاء بروبلم')
+    .setTitle('Create problem')
     .setDescription('**اختر الطرف الأول**\nيمكنك اختيار عضو واحد أو أكثر.')
-    .setThumbnail('https://cdn.discordapp.com/attachments/1294840822780526633/1465458307329167360/problem-solving.png?ex=69792de7&is=6977dc67&hm=876028d8022c57e8258ee956d753608a9d247e1e5f774a62f149f29f1200a673&');
+    .setThumbnail(message.guild.iconURL({ dynamic: true }));
+  
 
   const row = new ActionRowBuilder().addComponents(firstMenu);
   // Send the interactive embed and components without extra mentions
@@ -546,11 +556,11 @@ async function handleInteraction(interaction, context) {
   const { client, BOT_OWNERS } = context;
   // Only handle customIds starting with problem_
   const id = interaction.customId;
-  if (!id || !id.startsWith('problem_')) return;
+  if (!id || !id.startsWith('problem_') || id.startsWith('problem_setup_')) return false;
   const sessionStore = getSessionStore(client);
   const session = sessionStore.get(interaction.user.id);
   if (!session) {
-    return; // no session for this user
+    return false; // no session for this user
   }
   try {
     // Defer update to avoid timeouts.  For component interactions we use
@@ -572,9 +582,11 @@ async function handleInteraction(interaction, context) {
         .setMinValues(1)
         .setMaxValues(5);
       const embed = colorManager.createEmbed()
-        .setTitle('إنشاء بروبلم')
+        .setTitle('Create problem')
         .setDescription('**اختر الطرف الثاني**\nيجب اختيار عضو واحد أو أكثر.')
-        .setThumbnail('https://cdn.discordapp.com/attachments/1294840822780526633/1465458307329167360/problem-solving.png?ex=69792de7&is=6977dc67&hm=876028d8022c57e8258ee956d753608a9d247e1e5f774a62f149f29f1200a673&');
+        .setThumbnail(message.guild.iconURL({ dynamic: true }));
+
+  
       const row = new ActionRowBuilder().addComponents(secondMenu);
       // Update the original message with the new embed and components
       await interaction.message.edit({ embeds: [embed], components: [row] });
@@ -660,7 +672,7 @@ async function createProblems(interaction, session, context) {
   const config = session.config || loadProblemConfig();
   let logsChannel = null;
   if (config.logsChannelId) {
-    logsChannel = guild.channels.cache.get(config.logsChannelId);
+    logsChannel = await getLogsChannel(guild, config.logsChannelId);
   }
   const muteRoleId = config.muteRoleId;
   const timestamp = Date.now();
@@ -854,10 +866,9 @@ async function handleMessage(message, client) {
         // Determine if this is the first response from this user in this problem
         const hasRespondedBefore = !!prob.responses[message.author.id];
         const config = loadProblemConfig();
-        let logsChannel = null;
-        if (config.logsChannelId) {
-          logsChannel = message.guild.channels.cache.get(config.logsChannelId);
-        }
+        const logsChannel = config.logsChannelId
+          ? await getLogsChannel(message.guild, config.logsChannelId)
+          : null;
         // Determine if the message author has a role that is higher or equal to the bot's highest role.
         let hasHighRole = false;
         let member = null;
@@ -877,10 +888,9 @@ async function handleMessage(message, client) {
         } catch (_) {
           hasHighRole = false;
         }
-        const adminRoles = loadAdminRoles();
         const owners = getProblemOwners(client);
         const isOwnerResponsible = member ? isOwnerOrResponsible(member, owners) : false;
-        const isAdminRole = member ? isAdmin(member, adminRoles) : false;
+        const isAdminRole = member ? member.permissions.has(PermissionsBitField.Flags.Administrator) : false;
         // Build the log embed.  Use a different title depending on whether the
         // message will be deleted or kept.  Include the link only when it still exists.
         const title = hasRespondedBefore ? 'تم حذف رسالة بسبب بروبلم' : 'تم رصد رسالة أثناء بروبلم';
@@ -1024,10 +1034,15 @@ async function handleMessage(message, client) {
                 try {
                   const ownerUser = await client.users.fetch(ownerId).catch(() => null);
                   if (ownerUser) {
-                    await ownerUser.send(
-                      `**⚠️ العضو <@${message.author.id}> (رتبة إدارية) رد على <@${otherId}> في بروبلم.**\n` +
+                    const adminDescription = [
+                      `**⚠️ العضو <@${message.author.id}> (رتبة إدارية) رد على <@${otherId}> في بروبلم.**`,
                       `*رابط الرسالة : ${message.url}*`
-                    );
+                    ].join('\n');
+                    await ownerUser.send({
+                      embeds: [
+                        buildProblemEmbed('Problem Warning', adminDescription, message.author.displayAvatarURL({ dynamic: true }))
+                      ]
+                    });
                   }
                 } catch (_) {}
               }
@@ -1213,7 +1228,7 @@ async function handleVoice(oldState, newState, client) {
             if (logsChannelId) {
               if (!prob.voiceLoggedHigh) prob.voiceLoggedHigh = {};
               if (!prob.voiceLoggedHigh[userId]) {
-                const logsChannel = guild.channels.cache.get(logsChannelId);
+                const logsChannel = await getLogsChannel(guild, logsChannelId);
                 if (logsChannel) {
                   const logEmbed = colorManager
                     .createEmbed()
@@ -1340,7 +1355,7 @@ async function handleVoice(oldState, newState, client) {
           // Log the action once per lock
           const logsChannelId = config.logsChannelId;
           if (logsChannelId) {
-            const logsChannel = guild.channels.cache.get(logsChannelId);
+            const logsChannel = await getLogsChannel(guild, logsChannelId);
             if (logsChannel) {
               const logEmbed = colorManager
                 .createEmbed()
@@ -1375,7 +1390,7 @@ async function handleVoice(oldState, newState, client) {
               const reentryConfig = loadProblemConfig();
               const logsChanId = reentryConfig.logsChannelId;
               if (logsChanId) {
-                const logsChannel = guild.channels.cache.get(logsChanId);
+                const logsChannel = await getLogsChannel(guild, logsChanId);
                 if (logsChannel) {
                   const reentryEmbed = colorManager
                     .createEmbed()
@@ -1476,7 +1491,7 @@ async function handleMemberUpdate(oldMember, newMember, client) {
         if (!muteRemovalWarned.has(newMember.id)) {
           muteRemovalWarned.add(newMember.id);
           if (config.logsChannelId) {
-            const logsChannel = guild.channels.cache.get(config.logsChannelId);
+            const logsChannel = await getLogsChannel(guild, config.logsChannelId);
             if (logsChannel) {
               const executorMention = executorMember ? `<@${executorMember.id}>` : 'شخص مجهول';
               const logEmbed = colorManager.createEmbed()
@@ -1600,7 +1615,7 @@ async function handleMemberUpdate(oldMember, newMember, client) {
             if ((regainedAdmin.length > 0 || regainedSend.length > 0) && !roleReaddWarned.has(newMember.id)) {
               roleReaddWarned.add(newMember.id);
               if (config.logsChannelId) {
-                const logsChannel = guild.channels.cache.get(config.logsChannelId);
+                const logsChannel = await getLogsChannel(guild, config.logsChannelId);
                 if (logsChannel) {
                   // Build description listing the regained roles
                   const allRegained = [...regainedAdmin, ...regainedSend];
@@ -1904,7 +1919,7 @@ function getEffectiveRoleNameLength(name) {
         const config = loadProblemConfig();
         const logsChannelId = config.logsChannelId;
         if (!logsChannelId) return;
-        const logsChannel = guild.channels.cache.get(logsChannelId);
+                const logsChannel = await getLogsChannel(guild, logsChannelId);
         if (!logsChannel) return;
         // If a log message already exists, edit only the embed portion.  Do not resend the
         // separator image on edits to avoid duplicating the line.  The separator should be
@@ -2069,6 +2084,7 @@ async function sendSeparatorTest(message) {
 // and logs, and removes the problem from the activeProblems map.
 async function executeEnd(message, args, context) {
   const { client } = context;
+  if (client) lastClient = client;
   const adminRoles = loadAdminRoles();
   const owners = context.BOT_OWNERS || [];
   // Only moderators can end problems
@@ -2213,7 +2229,7 @@ async function closeProblem(key, guild, context) {
   // Log closure in logs channel.  Identify the moderator who ended the problem and
   // include the previous reason if available.
   if (config.logsChannelId) {
-    const logsChannel = guild.channels.cache.get(config.logsChannelId);
+    const logsChannel = await getLogsChannel(guild, config.logsChannelId);
     if (logsChannel) {
       const endedByUser = await client.users.fetch(endedById).catch(() => null);
       const logEmbed = colorManager.createEmbed()
@@ -2259,6 +2275,7 @@ async function closeProblem(key, guild, context) {
 // updated in place.  The session expires after a short time.
 async function executeSetup(message, args, context) {
   const { client } = context;
+  if (client) lastClient = client;
   const adminRoles = loadAdminRoles();
   const owners = context.BOT_OWNERS || [];
   const member = message.member;
@@ -2285,7 +2302,7 @@ async function executeSetup(message, args, context) {
     : 'غير مُفعل';
   // Create embed showing current settings
   const embed = colorManager.createEmbed()
-    .setTitle('إعدادات نظام المشاكل')
+    .setTitle('Problem settings')
     .setDescription('يمكنك تحديث الإعدادات عبر الأزرار أدناه.\nيتم تحديث الإيمبد تلقائيًا بعد أي تغيير.')
     .addFields(
       { name: 'روم السجلات الحالية', value: logsChannelDisplay, inline: true },
@@ -2429,7 +2446,7 @@ async function handleSetupInteraction(interaction, context) {
       ? (cfg.separatorImage ? 'مُفعّل (صورة مخصصة)' : 'مُفعّل')
       : 'غير مُفعل';
     const newEmbed = colorManager.createEmbed()
-      .setTitle('إعدادات نظام البروبلم')
+      .setTitle('Problem settings')
       .setDescription('يمكنك تحديث الإعدادات عبر الأزرار أدناه.\nيتم تحديث الإيمبد تلقائيًا بعد أي تغيير.')
       .addFields(
         { name: 'روم السجلات الحالية', value: logsDisplay, inline: true },

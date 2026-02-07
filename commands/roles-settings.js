@@ -2046,7 +2046,11 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     }
 
     await member.send(`✅ تمت الموافقة على طلبك وتم إنشاء الرول الخاص بك: **${role.name}**`).catch(() => {});
-    await interaction.message.edit({ content: '✅ تمت الموافقة على الطلب.', components: [] });
+    const updatedEmbed = interaction.message.embeds[0]
+      ? EmbedBuilder.from(interaction.message.embeds[0])
+      : colorManager.createEmbed().setTitle('طلب رول خاص');
+    updatedEmbed.addFields({ name: 'المسؤول الموافق', value: `<@${interaction.user.id}>`, inline: false });
+    await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
     return;
   }
 
