@@ -19,6 +19,7 @@ require('events').EventEmitter.defaultMaxListeners = Infinity;
 process.setMaxListeners(0);
 
 const { Client, GatewayIntentBits, Partials, Collection, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, EmbedBuilder, Events, MessageFlags } = require('discord.js');
+const ms = require('ms');
 const dotenv = require('dotenv');
 const fs = require('fs');
 const path = require('path');
@@ -1635,11 +1636,113 @@ let pairingsCache = {};
 const pairingsPath = path.join(__dirname, 'data', 'pairings.json');
 const pairingStatusPath = path.join(__dirname, 'data', 'pairingStatus.json');
 let pairingStatusCache = { off: false, message: null };
+const pendingDmSchedules = new Map();
+const DM_SCHEDULE_MIN_MS = 10 * 1000;
+const DM_SCHEDULE_MAX_MS = 7 * 24 * 60 * 60 * 1000;
+const DM_SCHEDULE_MAX_MESSAGE_LENGTH = 1500;
 
 function normalizeUserId(input) {
   if (!input) return null;
   const cleaned = String(input).replace(/[<@!>]/g, '').trim();
   return /^\d{17,19}$/.test(cleaned) ? cleaned : null;
+}
+
+function parseScheduledMessageInput(input) {
+  if (!input) return null;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  if (trimmed.toLowerCase() === 'cancel') return { canceled: true };
+  const parts = trimmed.split(/\s+/);
+  if (parts.length < 2) return { error: 'missing_duration' };
+  let durationMs = null;
+  let durationToken = null;
+  let messageText = null;
+  for (let i = 1; i <= Math.min(4, parts.length); i += 1) {
+    const candidateToken = parts.slice(parts.length - i).join(' ');
+    const candidateMs = ms(candidateToken) || parseArabicDuration(candidateToken);
+    if (candidateMs && candidateMs > 0) {
+      durationMs = candidateMs;
+      durationToken = candidateToken;
+      messageText = parts.slice(0, -i).join(' ').trim();
+      break;
+    }
+  }
+  if (!durationMs || durationMs <= 0) return { error: 'invalid_duration' };
+  if (!messageText) return { error: 'missing_message' };
+  if (messageText.length > DM_SCHEDULE_MAX_MESSAGE_LENGTH) return { error: 'too_long' };
+  if (messageText.includes('@everyone') || messageText.includes('@here')) return { error: 'mass_mention' };
+  return { messageText, durationMs, durationToken };
+}
+
+function parseArabicDuration(text) {
+  if (!text) return null;
+  let normalized = text
+    .replace(/[٫،]/g, '.')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return null;
+  normalized = normalized
+    .replace(/نصف\s*ساعة|نص\s*ساعة/gi, '0.5 ساعة')
+    .replace(/ربع\s*ساعة/gi, '0.25 ساعة')
+    .replace(/نصف\s*دقيقة|نص\s*دقيقة/gi, '0.5 دقيقة')
+    .replace(/ربع\s*دقيقة/gi, '0.25 دقيقة')
+    .replace(/ساعتين/gi, '2 ساعة')
+    .replace(/دقيقتين/gi, '2 دقيقة')
+    .replace(/ثانيتين/gi, '2 ثانية');
+
+  const numberWords = {
+    واحد: 1,
+    واحدة: 1,
+    اثنين: 2,
+    اثنان: 2,
+    اثنتان: 2,
+    اثنتين: 2,
+    اثنينَ: 2,
+    اثنتانِ: 2,
+    اثنتينِ: 2,
+    ثلاث: 3,
+    ثلاثة: 3,
+    أربع: 4,
+    اربعة: 4,
+    أربعة: 4,
+    خمس: 5,
+    خمسة: 5,
+    ست: 6,
+    ستة: 6,
+    سبع: 7,
+    سبعة: 7,
+    ثمان: 8,
+    ثمانية: 8,
+    تسع: 9,
+    تسعة: 9,
+    عشر: 10,
+    عشرة: 10
+  };
+  const units = '(?:ساعة|ساعات|دقيقة|دقائق|ثانية|ثواني|يوم|ايام|أيام|اسبوع|أسبوع|اسابيع|أسابيع)';
+  const wordPattern = Object.keys(numberWords).join('|');
+  const wordRegex = new RegExp(`\\b(${wordPattern})\\s*(${units})\\b`, 'gi');
+  normalized = normalized.replace(wordRegex, (match, word, unit) => {
+    const value = numberWords[word];
+    return value ? `${value} ${unit}` : match;
+  });
+
+  const patterns = [
+    { regex: /(\d+(?:\.\d+)?)\s*(?:w|week|weeks|اسبوع|أسبوع|اسابيع|أسابيع)/gi, ms: 7 * 24 * 60 * 60 * 1000 },
+    { regex: /(\d+(?:\.\d+)?)\s*(?:d|day|days|يوم|ايام|أيام)/gi, ms: 24 * 60 * 60 * 1000 },
+    { regex: /(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hour|hours|ساعه|ساعة|ساعات)/gi, ms: 60 * 60 * 1000 },
+    { regex: /(\d+(?:\.\d+)?)\s*(?:m|min|mins|minute|minutes|دقيقه|دقيقة|دقائق)/gi, ms: 60 * 1000 },
+    { regex: /(\d+(?:\.\d+)?)\s*(?:s|sec|secs|second|seconds|ثانيه|ثانية|ثواني)/gi, ms: 1000 }
+  ];
+  let totalMs = 0;
+  let matched = false;
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.regex.exec(normalized)) !== null) {
+      matched = true;
+      totalMs += Number(match[1]) * pattern.ms;
+    }
+  }
+  return matched && totalMs > 0 ? totalMs : null;
 }
 
 async function fetchUserForDm(client, userId) {
@@ -1777,6 +1880,77 @@ client.on('messageCreate', async message => {
   if (message.channel.type === 1) { // DM
     const content = message.content.trim();
     let forwardedToAllowed = false;
+
+    const pendingSchedule = pendingDmSchedules.get(message.author.id);
+    if (pendingSchedule?.step === 'await_message') {
+      const parsed = parseScheduledMessageInput(content);
+      if (!parsed) {
+        await message.reply('❌ **صيغة غير صحيحة.** اكتب الرسالة متبوعة بالوقت مثل: `احمد 2h` أو `مرحبا 2d`، أو اكتب `cancel` للإلغاء.').catch(() => {});
+        return;
+      }
+      if (parsed.error === 'missing_duration') {
+        await message.reply('❌ **الوقت غير موجود.** اكتب الرسالة ثم الوقت مثل: `مرحبا 2h`.').catch(() => {});
+        return;
+      }
+      if (parsed.error === 'invalid_duration') {
+        await message.reply('❌ **صيغة الوقت غير صحيحة.** مثال صحيح: `2m` أو `2h` أو `2d` أو `ساعتين وربع ساعة و10 دقائق`.').catch(() => {});
+        return;
+      }
+      if (parsed.error === 'missing_message') {
+        await message.reply('❌ **نص الرسالة غير موجود.** اكتب الرسالة ثم الوقت.').catch(() => {});
+        return;
+      }
+      if (parsed.error === 'too_long') {
+        await message.reply(`❌ **نص الرسالة طويل جدًا.** الحد الأقصى ${DM_SCHEDULE_MAX_MESSAGE_LENGTH} حرف.`).catch(() => {});
+        return;
+      }
+      if (parsed.error === 'mass_mention') {
+        await message.reply('❌ **غير مسموح استخدام @everyone أو @here في الرسالة.**').catch(() => {});
+        return;
+      }
+      if (parsed.canceled) {
+        pendingDmSchedules.delete(message.author.id);
+        await message.reply('✅ تم إلغاء العملية.').catch(() => {});
+        return;
+      }
+      if (parsed.durationMs < DM_SCHEDULE_MIN_MS) {
+        await message.reply('❌ **المدة قصيرة جدًا.** أقل مدة هي 10 ثواني.').catch(() => {});
+        return;
+      }
+      if (parsed.durationMs > DM_SCHEDULE_MAX_MS) {
+        await message.reply('❌ **المدة طويلة جدًا.** الحد الأقصى 7 أيام.').catch(() => {});
+        return;
+      }
+      pendingDmSchedules.delete(message.author.id);
+      const targetId = pendingSchedule.targetId;
+      const deliverAt = Date.now() + parsed.durationMs;
+      setTimeout(async () => {
+        const targetUser = await fetchUserForDm(client, targetId).catch(() => null);
+        if (!targetUser) return;
+        await targetUser.send(parsed.messageText).catch(() => {});
+      }, parsed.durationMs);
+      await message.reply(`✅ تم تعيين الوقت، سيتم إرسال الرسالة إلى <@${targetId}> بعد ${parsed.durationToken} (الوقت: <t:${Math.floor(deliverAt / 1000)}:R>).`).catch(() => {});
+      return;
+    }
+
+    if (content.startsWith('send ')) {
+      if (message.author.id !== ALLOWED_ID) {
+        await message.reply('❌ **هذا الأمر متاح فقط لشخص محدد.**').catch(() => {});
+        return;
+      }
+      if (pendingSchedule?.step === 'await_message') {
+        await message.reply('⚠️ لديك عملية مجدولة بالفعل. أرسل الرسالة مع الوقت أو اكتب `cancel` للإلغاء.').catch(() => {});
+        return;
+      }
+      const targetId = normalizeUserId(content.split(' ')[1]);
+      if (!targetId) {
+        await message.reply('❌ **آيدي غير صحيح.**').catch(() => {});
+        return;
+      }
+      pendingDmSchedules.set(message.author.id, { step: 'await_message', targetId });
+      await message.reply('📩 ارسل الرسالة مع الوقت مثل: `احمد 2h` أو `مرحبا 2d` (أو اكتب `cancel` للإلغاء).').catch(() => {});
+      return;
+    }
 
     if (message.author.id !== ALLOWED_ID) {
       try {
