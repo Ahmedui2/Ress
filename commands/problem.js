@@ -584,7 +584,7 @@ async function handleInteraction(interaction, context) {
       const embed = colorManager.createEmbed()
         .setTitle('Create problem')
         .setDescription('**اختر الطرف الثاني**\nيجب اختيار عضو واحد أو أكثر.')
-        .setThumbnail(message.guild.iconURL({ dynamic: true }));
+        .setThumbnail(interaction.guild?.iconURL({ dynamic: true }) || null);
 
   
       const row = new ActionRowBuilder().addComponents(secondMenu);
@@ -595,7 +595,14 @@ async function handleInteraction(interaction, context) {
     if (id === 'problem_select_second') {
       // Validate that selected second parties are allowed based on moderator's role
       const selectedIds = interaction.values;
-    const guild = interaction.guild;
+      const guild = interaction.guild;
+      if (!guild) {
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({ content: '❌ **تعذر العثور على السيرفر لهذا التفاعل.**', ephemeral: true }).catch(() => {});
+        }
+        sessionStore.delete(interaction.user.id);
+        return;
+      }
       // Load admin roles to detect if targets are admins
       const adminRoles = loadAdminRoles();
       const owners = context.BOT_OWNERS || [];
