@@ -17,6 +17,8 @@ const {
 
 const fs = require('fs');
 const path = require('path');
+const dns = require('dns');
+const net = require('net');
 
 const interactionRouter = require('../utils/interactionRouter.js');
 const colorManager = require('../utils/colorManager.js');
@@ -214,10 +216,83 @@ const channelLocks = new Map();
  * @param {string} url - The URL of the remote image to download.
  * @returns {Promise<string>} - Resolves to the absolute path of the saved file.
  */
-function downloadSeparatorImage(url) {
+const ALLOWED_SEPARATOR_HOSTS = new Set([
+  'cdn.discordapp.com',
+  'media.discordapp.net',
+  'images-ext-1.discordapp.net',
+  'images-ext-2.discordapp.net'
+]);
+
+function isPrivateIpAddress(address) {
+  if (!address) return true;
+  if (net.isIP(address) === 4) {
+    return (
+      address.startsWith('10.') ||
+      address.startsWith('127.') ||
+      address.startsWith('169.254.') ||
+      address.startsWith('172.16.') ||
+      address.startsWith('172.17.') ||
+      address.startsWith('172.18.') ||
+      address.startsWith('172.19.') ||
+      address.startsWith('172.20.') ||
+      address.startsWith('172.21.') ||
+      address.startsWith('172.22.') ||
+      address.startsWith('172.23.') ||
+      address.startsWith('172.24.') ||
+      address.startsWith('172.25.') ||
+      address.startsWith('172.26.') ||
+      address.startsWith('172.27.') ||
+      address.startsWith('172.28.') ||
+      address.startsWith('172.29.') ||
+      address.startsWith('172.30.') ||
+      address.startsWith('172.31.') ||
+      address.startsWith('192.168.')
+    );
+  }
+  if (net.isIP(address) === 6) {
+    const normalized = address.toLowerCase();
+    return normalized === '::1' || normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe80:');
+  }
+  return true;
+}
+
+async function validateSeparatorUrl(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch (_) {
+    throw new Error('INVALID_URL');
+  }
+
+  if (parsed.protocol !== 'https:') {
+    throw new Error('ONLY_HTTPS_ALLOWED');
+  }
+
+  const hostname = (parsed.hostname || '').toLowerCase();
+  if (!ALLOWED_SEPARATOR_HOSTS.has(hostname)) {
+    throw new Error('HOST_NOT_ALLOWED');
+  }
+
+  const lookups = await dns.promises.lookup(hostname, { all: true });
+  if (!Array.isArray(lookups) || lookups.length === 0) {
+    throw new Error('DNS_LOOKUP_FAILED');
+  }
+
+  for (const entry of lookups) {
+    if (isPrivateIpAddress(entry.address)) {
+      throw new Error('PRIVATE_IP_NOT_ALLOWED');
+    }
+  }
+
+  return parsed;
+}
+
+async function downloadSeparatorImage(url) {
+  const parsedUrl = await validateSeparatorUrl(url);
+
   return new Promise((resolve, reject) => {
     try {
-      const extMatch = url.split('?')[0].match(/\.[a-zA-Z0-9]+$/);
+      const extMatch = parsedUrl.pathname.match(/\.[a-zA-Z0-9]+$/);
       const ext = extMatch ? extMatch[0] : '.png';
       const assetsDir = path.join(__dirname, '..', 'assets');
       if (!fs.existsSync(assetsDir)) {
@@ -226,9 +301,8 @@ function downloadSeparatorImage(url) {
       // Save with a consistent name so that old custom images are overwritten
       const dest = path.join(assetsDir, 'custom_separator' + ext.toLowerCase());
       const file = fs.createWriteStream(dest);
-      // Choose the correct protocol module based on the URL
-      const protocol = url.startsWith('https') ? require('https') : require('http');
-      const request = protocol.get(url, (response) => {
+      const protocol = require('https');
+      const request = protocol.get(parsedUrl.toString(), (response) => {
         if (response.statusCode !== 200) {
           file.close(() => {
             fs.unlink(dest, () => {});
@@ -236,10 +310,21 @@ function downloadSeparatorImage(url) {
           });
           return;
         }
+        const contentType = String(response.headers['content-type'] || '').toLowerCase();
+        if (!contentType.startsWith('image/')) {
+          file.close(() => {
+            fs.unlink(dest, () => {});
+            reject(new Error('INVALID_CONTENT_TYPE'));
+          });
+          return;
+        }
         response.pipe(file);
         file.on('finish', () => {
           file.close(() => resolve(dest));
         });
+      });
+      request.setTimeout(10000, () => {
+        request.destroy(new Error('REQUEST_TIMEOUT'));
       });
       request.on('error', (err) => {
         file.close(() => {
@@ -370,8 +455,9 @@ function registerProblemListeners(client) {
 }
 
 // Utility: generate problem key for two user IDs (order independent)
-function getProblemKey(id1, id2) {
-  return [id1, id2].sort().join('|');
+function getProblemKey(id1, id2, guildId = null) {
+  const pair = [id1, id2].sort().join('|');
+  return guildId ? `${guildId}:${pair}` : pair;
 }
 
 // Check if the user is the owner of the bot or has an admin role.  We
@@ -484,7 +570,7 @@ async function execute(message, args, context) {
     const ownersList = context.BOT_OWNERS || [];
     interactionRouter.register('problem_', async (interaction, context = {}) => {
       const resolvedClient = context.client || context;
-      return handleInteraction(interaction, { client: resolvedClient, BOT_OWNERS: ownersList });
+      return handleInteraction(interaction, { client: resolvedClient, BOT_OWNERS: context.BOT_OWNERS || ownersList });
     });
     client._problemRouterRegistered = true;
   }
@@ -679,9 +765,10 @@ async function createProblems(interaction, session, context) {
   for (const firstId of session.firstParties) {
     for (const secondId of session.secondParties) {
       if (firstId === secondId) continue; // skip same user
-      const key = getProblemKey(firstId, secondId);
-      // Do not overwrite an existing problem between the same parties
-      if (!activeProblems.has(key)) {
+      const key = getProblemKey(firstId, secondId, guild.id);
+      const legacyKey = getProblemKey(firstId, secondId);
+      // Do not overwrite an existing problem between the same parties within the same guild.
+      if (!activeProblems.has(key) && !activeProblems.has(legacyKey)) {
         activeProblems.set(key, {
           firstId,
           secondId,
@@ -796,6 +883,7 @@ async function handleMessage(message, client) {
   if (!message.guild || message.author.bot) return;
   // Iterate over active problems
   for (const [key, prob] of activeProblems.entries()) {
+    if (prob.guildId && prob.guildId !== message.guild.id) continue;
     const { firstId, secondId, moderatorId, reason, timestamp } = prob;
     // Check if author is one of the parties
          if (message.author.id === firstId || message.author.id === secondId) {
@@ -1135,6 +1223,7 @@ async function handleVoice(oldState, newState, client) {
   if (newChannel.type === ChannelType.GuildStageVoice) return;
   // Check if there is an active problem involving this user
   for (const [key, prob] of activeProblems.entries()) {
+    if (prob.guildId && prob.guildId !== newState.guild.id) continue;
     const { firstId, secondId } = prob;
     if (userId === firstId || userId === secondId) {
       // Identify the other user
@@ -1434,6 +1523,7 @@ async function handleMemberUpdate(oldMember, newMember, client) {
       // Check if the member is involved in any active problem
       let inProblem = false;
       for (const [key, prob] of activeProblems.entries()) {
+        if (prob.guildId && prob.guildId !== newMember.guild.id) continue;
         if (prob.firstId === newMember.id || prob.secondId === newMember.id) {
           inProblem = true;
           break;
@@ -2098,9 +2188,11 @@ async function executeEnd(message, args, context) {
   if (!id1 || !id2) {
     return message.reply('❌ **الرجاء تحديد الطرفين بشكل صحيح.**');
   }
-  const key = getProblemKey(id1, id2);
+  const guildKey = getProblemKey(id1, id2, message.guild.id);
+  const legacyKey = getProblemKey(id1, id2);
+  const key = activeProblems.has(guildKey) ? guildKey : legacyKey;
   const prob = activeProblems.get(key);
-  if (!prob) {
+  if (!prob || (prob.guildId && prob.guildId !== message.guild.id)) {
     return message.reply('⚠️ **لا توجد مشكلة نشطة بين الطرفين المحددين.**');
   }
   // Close the problem
@@ -2348,7 +2440,7 @@ async function executeSetup(message, args, context) {
     const ownersList = context.BOT_OWNERS || [];
     interactionRouter.register('problem_setup_', async (interaction, context = {}) => {
       const resolvedClient = context.client || context;
-      return handleSetupInteraction(interaction, { client: resolvedClient, BOT_OWNERS: ownersList });
+      return handleSetupInteraction(interaction, { client: resolvedClient, BOT_OWNERS: context.BOT_OWNERS || ownersList });
     });
     client._problemSetupRouterRegistered = true;
   }
@@ -2399,7 +2491,7 @@ async function handleSetupInteraction(interaction, context) {
         await refreshEmbed();
       } catch (err) {
         console.error('Error downloading separator image:', err);
-        await interaction.reply({ content: '❌ **حدث خطأ أثناء تحميل الصورة. يرجى التأكد من صحة الرابط والمحاولة مرة أخرى.**', ephemeral: true });
+        await interaction.reply({ content: '❌ **فشل تعيين الخط الفاصل. يُسمح فقط بروابط HTTPS من Discord CDN (مثل cdn.discordapp.com) ويجب أن تكون صورة صالحة.**', ephemeral: true });
       }
       return;
     }
