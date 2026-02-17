@@ -31,6 +31,17 @@ function writeJSONFile(filePath, data) {
     }
 }
 
+function isAuthorizedCategoryManager(interaction) {
+    try {
+        const botConfig = readJSONFile(path.join(__dirname, '..', 'data', 'botConfig.json'), {});
+        const BOT_OWNERS = botConfig.owners || [];
+        return BOT_OWNERS.includes(interaction.user.id) || interaction.guild?.ownerId === interaction.user.id;
+    } catch (error) {
+        console.error('خطأ في التحقق من الصلاحية:', error);
+        return false;
+    }
+}
+
 let updateTimeout = null;
 const pendingReorderCategoryByUser = new Map();
 async function updateRespEmbeds(client) {
@@ -244,6 +255,15 @@ module.exports = {
     async handleInteraction(interaction, context) {
         const { client } = context;
         const customId = interaction.customId;
+
+        if (!isAuthorizedCategoryManager(interaction)) {
+            if (interaction.deferred || interaction.replied) return;
+            await interaction.reply({
+                content: '❌ لا تملك صلاحية استخدام إدارة الأقسام.',
+                ephemeral: true
+            });
+            return;
+        }
 
         if (interaction.isButton()) {
             if (customId === 'add_category') {
@@ -627,6 +647,15 @@ module.exports = {
     },
 
     async handleModalSubmit(interaction, client) {
+        if (!isAuthorizedCategoryManager(interaction)) {
+            if (interaction.deferred || interaction.replied) return;
+            await interaction.reply({
+                content: '❌ لا تملك صلاحية استخدام إدارة الأقسام.',
+                ephemeral: true
+            });
+            return;
+        }
+
         if (interaction.customId === 'add_category_modal') {
             const categoryName = interaction.fields.getTextInputValue('category_name');
             const orderInput = interaction.fields.getTextInputValue('category_order');

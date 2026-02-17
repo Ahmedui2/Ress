@@ -339,8 +339,8 @@ function createSuggestionButton() {
     return createSuggestionComponents();
 }
 
-// دالة لتحديث جميع رسائل الايمبد
-async function updateEmbedMessage(client) {
+// دالة لتحديث رسائل الايمبد (كل السيرفرات أو سيرفر محدد)
+async function updateEmbedMessage(client, targetGuildId = null) {
     try {
         const { dbManager } = require('../utils/database.js');
         const responsibilities = await dbManager.getResponsibilities();
@@ -355,7 +355,11 @@ async function updateEmbedMessage(client) {
         // فحص وجود صورة لنظام المسؤوليات في السيرفر
         const config = readJSONFile(DATA_FILES.respConfig, { guilds: {} });
 
-        for (const [guildId, embedData] of embedMessages.entries()) {
+        const entries = targetGuildId
+            ? (embedMessages.has(targetGuildId) ? [[targetGuildId, embedMessages.get(targetGuildId)]] : [])
+            : [...embedMessages.entries()];
+
+        for (const [guildId, embedData] of entries) {
             try {
                 const guildConfig = config.guilds?.[guildId] || {};
                 const globalImageUrl = guildConfig.globalImageUrl;
@@ -418,7 +422,7 @@ async function updateEmbedMessage(client) {
                             message: newMessage,
                             format
                         });
-                        updateStoredEmbedData();
+                        updateStoredEmbedData(guildId);
                         console.log(`✅ تم إنشاء رسالة مسؤوليات جديدة تلقائياً في السيرفر ${guildId}`);
                     } else {
                         console.log(`⚠️ لم يتم العثور على رسالة المسؤوليات أو القناة الاحتياطية في السيرفر ${guildId}`);
@@ -1241,7 +1245,7 @@ if (subCommand === 'delete' && args[1] === 'all') {
 
     // تحديث إيمبد العرض تلقائياً ليعكس التغييرات
     try {
-        await updateEmbedMessage(message.client);
+        await updateEmbedMessage(message.client, guildId);
     } catch (error) {
         console.error('Error updating embed message after delete all:', error);
     }
@@ -1319,7 +1323,7 @@ if (subCommand === 'delete' && args[1] === 'all') {
             }
         } catch (_) {}
 
-        await updateEmbedMessage(message.client);
+        await updateEmbedMessage(message.client, guildId);
 
         return message.reply({
             content: `✅ تم تعيين الصورة لجميع المسؤوليات (${respKeys.length}) بنجاح.`
@@ -1353,7 +1357,7 @@ if (subCommand === 'delete' && args[1] === 'all') {
         }
     } catch (_) {}
 
-    await updateEmbedMessage(message.client);
+    await updateEmbedMessage(message.client, guildId);
 
     return message.reply({
         content: `✅ تم تعيين الصورة للمسؤولية "**${respName}**" بنجاح.`
@@ -1662,20 +1666,29 @@ function setGuildConfig(guildId, updates) {
 }
 
 // دالة لحفظ بيانات الايمبد في الكونفيغ
-function updateStoredEmbedData() {
-    for (const [guildId, embedData] of embedMessages.entries()) {
-        setGuildConfig(guildId, {
-            embedData: {
-                messageId: embedData.messageId,
-                channelId: embedData.channelId
-            }
-        });
+function updateStoredEmbedData(targetGuildId = null) {
+    const config = readJSONFile(DATA_FILES.respConfig, { guilds: {} });
+    if (!config.guilds) config.guilds = {};
+
+    const entries = targetGuildId
+        ? (embedMessages.has(targetGuildId) ? [[targetGuildId, embedMessages.get(targetGuildId)]] : [])
+        : [...embedMessages.entries()];
+
+    for (const [guildId, embedData] of entries) {
+        if (!config.guilds[guildId]) config.guilds[guildId] = {};
+        config.guilds[guildId].embedData = {
+            messageId: embedData.messageId,
+            channelId: embedData.channelId
+        };
     }
+
+    writeJSONFile(DATA_FILES.respConfig, config);
 }
 
 // دالة لتحميل بيانات الايمبد عند بدء التشغيل
 function loadEmbedData(client) {
     try {
+        embedMessages.clear();
         const config = readJSONFile(DATA_FILES.respConfig, { guilds: {} });
         if (config.guilds) {
             for (const [guildId, guildConfig] of Object.entries(config.guilds)) {
