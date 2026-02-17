@@ -484,17 +484,8 @@ async function execute(message, args, context) {
     const ownersList = context.BOT_OWNERS || [];
     interactionRouter.register('problem_', async (interaction, context = {}) => {
       const resolvedClient = context.client || context;
-      await handleInteraction(interaction, { client: resolvedClient, BOT_OWNERS: ownersList });
+      return handleInteraction(interaction, { client: resolvedClient, BOT_OWNERS: ownersList });
     });
-    // Also ensure the router's route function is invoked on every
-    // interactionCreate event.  We guard with another flag to avoid
-    // adding multiple listeners.
-    if (!client._interactionRouterListenerAdded) {
-      client.on('interactionCreate', async (interaction) => {
-        await interactionRouter.route(interaction, client);
-      });
-      client._interactionRouterListenerAdded = true;
-    }
     client._problemRouterRegistered = true;
   }
 
@@ -2357,14 +2348,8 @@ async function executeSetup(message, args, context) {
     const ownersList = context.BOT_OWNERS || [];
     interactionRouter.register('problem_setup_', async (interaction, context = {}) => {
       const resolvedClient = context.client || context;
-      await handleSetupInteraction(interaction, { client: resolvedClient, BOT_OWNERS: ownersList });
+      return handleSetupInteraction(interaction, { client: resolvedClient, BOT_OWNERS: ownersList });
     });
-    if (!client._interactionRouterListenerAdded) {
-      client.on('interactionCreate', async (interaction) => {
-        await interactionRouter.route(interaction, client);
-      });
-      client._interactionRouterListenerAdded = true;
-    }
     client._problemSetupRouterRegistered = true;
   }
   // Inform user interactively
