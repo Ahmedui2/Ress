@@ -1577,12 +1577,19 @@ const deleteButton = new ButtonBuilder()
           const buttonsRow1 = new ActionRowBuilder().addComponents(editButton, renameButton, deleteButton, manageButton, roleButton);
           
           // إنشاء select menu للترتيب بالمواقع المحدثة
-          const positionOptions = updatedOrderedKeys.map((key, index) => ({
+          let positionOptions = updatedOrderedKeys.map((key, index) => ({
             label: `${index + 1}. ${key}`,
             value: index.toString(),
             default: index === updatedIndex,
             description: index === updatedIndex ? '(الموضع الحالي)' : `نقل إلى الموضع ${index + 1}`
           }));
+
+          // Discord يسمح بحد أقصى 25 خيار فقط
+          if (positionOptions.length > 25) {
+            const start = Math.max(0, updatedIndex - 12);
+            const end = Math.min(updatedOrderedKeys.length, start + 25);
+            positionOptions = positionOptions.slice(start, end);
+          }
 
           const positionSelect = new StringSelectMenuBuilder()
             .setCustomId(`reorder_${responsibilityName}`)

@@ -32,6 +32,7 @@ function writeJSONFile(filePath, data) {
 }
 
 let updateTimeout = null;
+const pendingReorderCategoryByUser = new Map();
 async function updateRespEmbeds(client) {
     if (updateTimeout) clearTimeout(updateTimeout);
     updateTimeout = setTimeout(async () => {
@@ -142,6 +143,10 @@ function createMainMenuButtons() {
             new ButtonBuilder()
                 .setCustomId('manage_category_resps')
                 .setLabel('responsibilities')
+                .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId('reorder_category_resps')
+                .setLabel('ترتيب المسؤوليات')
                 .setStyle(ButtonStyle.Secondary)
         );
 }
@@ -326,6 +331,25 @@ module.exports = {
                     ephemeral: true
                 });
 
+            } else if (customId === 'reorder_category_resps') {
+                const currentCategories = readJSONFile(DATA_FILES.categories, {});
+
+                if (Object.keys(currentCategories).length === 0) {
+                    await interaction.reply({
+                        content: '❌ لا توجد أقسام. قم بإضافة قسم أولاً',
+                        ephemeral: true
+                    });
+                    return;
+                }
+
+                const selectMenu = createCategorySelectMenu(currentCategories, 'select_category_for_resp_order', 'اختر قسماً لترتيب مسؤولياته...');
+
+                await interaction.reply({
+                    content: '**اختر القسم الذي تريد ترتيب مسؤولياته:**',
+                    components: [new ActionRowBuilder().addComponents(selectMenu)],
+                    ephemeral: true
+                });
+
             } else if (customId.startsWith('confirm_delete_')) {
                 const categoryName = customId.replace('confirm_delete_', '');
                 const currentCategories = readJSONFile(DATA_FILES.categories, {});
@@ -420,6 +444,54 @@ module.exports = {
                     content: `**⚠️ هل أنت متأكد من حذف القسم "${categoryName}"؟**\n\nسيتم حذف القسم فقط، المسؤوليات ستبقى موجودة.`,
                     components: [confirmRow]
                 });
+
+            } else if (customId === 'select_category_for_resp_order') {
+                const categoryName = interaction.values[0];
+                const currentCategories = readJSONFile(DATA_FILES.categories, {});
+                const categoryData = currentCategories[categoryName];
+
+                if (!categoryData) {
+                    await interaction.update({ content: '❌ القسم غير موجود', components: [] });
+                    return;
+                }
+
+                const categoryResps = Array.isArray(categoryData.responsibilities) ? categoryData.responsibilities : [];
+                if (categoryResps.length < 2) {
+                    await interaction.update({
+                        content: '❌ يجب أن يحتوي القسم على مسؤوليتين على الأقل لإعادة الترتيب.',
+                        components: []
+                    });
+                    return;
+                }
+
+                pendingReorderCategoryByUser.set(interaction.user.id, categoryName);
+
+                const modal = new ModalBuilder()
+                    .setCustomId('reorder_category_resps_modal')
+                    .setTitle(`ترتيب مسؤوليات: ${categoryName}`);
+
+                const respNameInput = new TextInputBuilder()
+                    .setCustomId('resp_name')
+                    .setLabel('اسم المسؤولية')
+                    .setStyle(TextInputStyle.Short)
+                    .setPlaceholder(categoryResps[0])
+                    .setRequired(true)
+                    .setMaxLength(100);
+
+                const posInput = new TextInputBuilder()
+                    .setCustomId('new_position')
+                    .setLabel(`الموضع الجديد (1 - ${categoryResps.length})`)
+                    .setStyle(TextInputStyle.Short)
+                    .setPlaceholder('1')
+                    .setRequired(true)
+                    .setMaxLength(3);
+
+                modal.addComponents(
+                    new ActionRowBuilder().addComponents(respNameInput),
+                    new ActionRowBuilder().addComponents(posInput)
+                );
+
+                await interaction.showModal(modal);
 
             } else if (customId === 'select_category_for_resps') {
                 const categoryName = interaction.values[0];
@@ -584,6 +656,52 @@ module.exports = {
 
             await updateRespEmbeds(client);
             await updateAllCategoriesEmbeds(client);
+
+        } else if (interaction.customId === 'reorder_category_resps_modal') {
+            const categoryName = pendingReorderCategoryByUser.get(interaction.user.id);
+            pendingReorderCategoryByUser.delete(interaction.user.id);
+
+            if (!categoryName) {
+                await interaction.reply({ content: '❌ انتهت جلسة الترتيب، أعد المحاولة.', ephemeral: true });
+                return;
+            }
+
+            const categories = readJSONFile(DATA_FILES.categories, {});
+            const categoryData = categories[categoryName];
+            if (!categoryData || !Array.isArray(categoryData.responsibilities)) {
+                await interaction.reply({ content: '❌ القسم غير موجود أو لا يحتوي مسؤوليات.', ephemeral: true });
+                return;
+            }
+
+            const respName = interaction.fields.getTextInputValue('resp_name').trim();
+            const newPositionRaw = interaction.fields.getTextInputValue('new_position').trim();
+            const newPosition = Number(newPositionRaw);
+            const list = categoryData.responsibilities;
+
+            const currentIndex = list.indexOf(respName);
+            if (currentIndex === -1) {
+                await interaction.reply({ content: `❌ المسؤولية "${respName}" غير موجودة داخل قسم "${categoryName}".`, ephemeral: true });
+                return;
+            }
+
+            if (!Number.isInteger(newPosition) || newPosition < 1 || newPosition > list.length) {
+                await interaction.reply({ content: `❌ أدخل ترتيباً صحيحاً من 1 إلى ${list.length}.`, ephemeral: true });
+                return;
+            }
+
+            const targetIndex = newPosition - 1;
+            if (targetIndex !== currentIndex) {
+                const [moved] = list.splice(currentIndex, 1);
+                list.splice(targetIndex, 0, moved);
+                writeJSONFile(DATA_FILES.categories, categories);
+                await updateRespEmbeds(client);
+                await updateAllCategoriesEmbeds(client);
+            }
+
+            await interaction.reply({
+                content: `✅ تم نقل "${respName}" إلى الترتيب ${newPosition} داخل قسم "${categoryName}".`,
+                ephemeral: true
+            });
 
         } else if (interaction.customId.startsWith('edit_category_modal_')) {
             const oldCategoryName = interaction.customId.replace('edit_category_modal_', '');

@@ -922,6 +922,25 @@ client.on(Events.InviteDelete, (invite) => {
     });
 
 // دالة لمزامنة الرولات لجميع المسؤوليات عند التشغيل
+
+async function ensureRespMessageFreshness(client, reason = 'periodic') {
+    try {
+        const respCommand = client.commands.get('resp');
+        if (!respCommand) return;
+
+        if (typeof respCommand.initialize === 'function') {
+            respCommand.initialize(client);
+        }
+
+        if (typeof respCommand.updateEmbedMessage === 'function') {
+            await respCommand.updateEmbedMessage(client);
+            console.log(`✅ [RESP] تم التحقق من تحديث رسالة المسؤوليات (${reason})`);
+        }
+    } catch (error) {
+        console.error(`❌ [RESP] فشل التحقق من تحديث رسالة المسؤوليات (${reason}):`, error);
+    }
+}
+
 async function syncAllResponsibilityRoles(client) {
     console.log('🔄 جاري بدء فحص ومزامنة رولات المسؤوليات...');
     try {
@@ -982,6 +1001,9 @@ client.once(Events.ClientReady, async () => {
     
     // تشغيل المزامنة فور الجاهزية
     await syncAllResponsibilityRoles(client);
+
+    // فحص وتحديث رسالة المسؤوليات عند كل تشغيل/إعادة تشغيل
+    await ensureRespMessageFreshness(client, 'startup');
   } catch (dbError) {
     console.error('❌ Error initializing database/responsibilities:', dbError);
   }
@@ -1381,6 +1403,11 @@ client.once(Events.ClientReady, async () => {
   setInterval(() => {
     checkExpiredReports();
   }, 5 * 60 * 1000);
+
+  // فحص دوري لرسالة المسؤوليات كل 30 دقيقة لضمان تزامنها مع أحدث التعديلات
+  setInterval(async () => {
+    await ensureRespMessageFreshness(client, '30m-check');
+  }, 30 * 60 * 1000);
 
   // حفظ البيانات فقط عند الحاجة - كل 5 دقائق أو عند وجود تغييرات
   setInterval(() => {
