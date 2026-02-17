@@ -705,7 +705,7 @@ async function handleApplyRespModal(interaction, client) {
                 const minutes = Math.floor(timeLeft / 60000);
                 const seconds = Math.floor((timeLeft % 60000) / 1000);
                 return await interaction.editReply({
-                    content: `⏳ **يجب عليك الانتظار ${minutes}د و ${seconds}ث قبل تقديم طلب آخر أو اختيار مسؤولية أخرى.**`
+                    content: `⏳ **يجب عليك الانتظار ${minutes}m  ${seconds}s قبل تقديم طلب آخر أو اختيار مسؤولية أخرى.**`
                 });
             }
         }
@@ -734,7 +734,7 @@ async function handleApplyRespModal(interaction, client) {
                     const messages = await channel.messages.fetch({ limit: 50 });
                     const pendingApply = messages.find(m => 
                         m.embeds.length > 0 && 
-                        m.embeds[0].title === 'طلب مسؤولية جديد' &&
+                        m.embeds[0].title === 'Apply Resp' &&
                         m.embeds[0].fields.some(f => f.name === 'المقدم' && f.value.includes(interaction.user.id)) &&
                         m.embeds[0].fields.some(f => f.name === 'المسؤولية' && f.value === respName) &&
                         m.components.length > 0 // الطلب لا يزال يحتاج قرار (أزرار موجودة)
@@ -766,7 +766,7 @@ async function handleApplyRespModal(interaction, client) {
 
         const respData = currentResps[respName];
         const applyEmbed = colorManager.createEmbed()
-            .setTitle('طلب مسؤولية جديد')
+            .setTitle('Apply Resp')
             .addFields([
                 { name: 'المقدم', value: `<@${interaction.user.id}>`, inline: true },
                 { name: 'المسؤولية', value: respName, inline: true },
@@ -778,12 +778,14 @@ async function handleApplyRespModal(interaction, client) {
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId(`approve_apply_${interaction.user.id}_${respName}`)
-                .setLabel('قبول')
-                .setStyle(ButtonStyle.Success),
+                .setLabel('accept?')
+                   .setEmoji("<:emoji_7:1465221394966253768>")
+                .setStyle(ButtonStyle.Secondary),
             new ButtonBuilder()
                 .setCustomId(`reject_apply_${interaction.user.id}_${respName}`)
-                .setLabel('رفض')
-                .setStyle(ButtonStyle.Danger)
+                .setLabel('reject?')
+                   .setEmoji("<:emoji_7:1465221361839505622>")
+                .setStyle(ButtonStyle.Secondary)
         );
 
         await channel.send({ embeds: [applyEmbed], components: [row] });
@@ -801,7 +803,7 @@ async function handleApplyRespModal(interaction, client) {
         applyCooldowns.set(interaction.user.id, Date.now());
         
         await interaction.editReply({
-            content: 'تم إرسال طلبك بنجاح، سيتم الرد عليك قريباً'
+            content: '*تم إرسال طلبك بنجاح، سيتم الرد عليك قريباً*'
         });
     } catch (error) {
         console.error('Error in handleApplyRespModal:', error);
@@ -817,7 +819,7 @@ async function handleApplyAction(interaction, client) {
 
         if (!isAllowed) {
             return await interaction.reply({
-                content: '❌ **مب مسؤول؟ والله ماوريك.**',
+                content: '❌ **مب مسؤول؟ شتبي اجل.**',
                 ephemeral: true
             });
         }
@@ -874,13 +876,13 @@ async function handleApplyAction(interaction, client) {
                 }
                 
                 const approvalEmbed = colorManager.createEmbed()
-                    .setTitle('✅ تم قبول طلب المسؤولية')
-                    .setDescription(`**العضو:** <@${userId}>\n**المسؤولية:** ال${respName}\n**المسؤول:** <@${interaction.user.id}>`)
+                    .setTitle('✅ Accepted')
+                           .setDescription(`**المسؤول الجديد : <@${userId}>\nعلى مسؤولية : ال${respName}\n من مسؤول المسؤوليات : <@${interaction.user.id}>**`)
                     .setThumbnail(targetMember?.user.displayAvatarURL({ size: 128 }) || null)
                     .setTimestamp();
 
                 await interaction.editReply({ 
-                    content: '',
+                    content: '**R Sys;**',
                     embeds: [approvalEmbed],
                     files: [],
                     components: [] 
@@ -926,7 +928,7 @@ async function handleRejectReasonModal(interaction, client) {
 
         if (!isAllowed) {
             return await interaction.reply({
-                content: '❌ **مب مسؤول؟ والله ماوريك.**',
+                content: '❌ **مب مسؤول؟ اجل دز.**',
                 ephemeral: true
             });
         }
@@ -956,21 +958,21 @@ async function handleRejectReasonModal(interaction, client) {
         }
         
         const rejectResponseEmbed = colorManager.createEmbed()
-            .setTitle('❌ تم رفض طلب المسؤولية')
-            .setDescription(`**العضو:** <@${userId}>\n**المسؤولية:** ال${respName}\n**المسؤول:** <@${interaction.user.id}>\n**السبب:** ${reason}`)
+            .setTitle('❌ Rejected')
+            .setDescription(`**الإداري المقدم : <@${userId}>\n المسؤوليه :  ال${respName}\n من مسؤول المسؤوليات : <@${interaction.user.id}>\nالسبب : ${reason}**`)
             .setThumbnail(targetMember?.user.displayAvatarURL({ size: 128 }) || null)
             .setTimestamp();
 
         await interaction.editReply({ 
-            content: '',
+            content: '**R Sys;**',
             embeds: [rejectResponseEmbed],
             files: []
         });
         // محاولة تعديل الرسالة الأصلية في قناة الطلبات
         if (interaction.message) {
             const rejectPublicEmbed = colorManager.createEmbed()
-                .setTitle('❌ تم رفض طلب المسؤولية')
-                .setDescription(`**العضو:** <@${userId}>\n**المسؤولية:** ال${respName}\n**المسؤول:** <@${interaction.user.id}>\n**السبب:** ${reason}`)
+                .setTitle('❌ Rejected')
+                .setDescription(`**الإداري المقدم : <@${userId}>\n المسؤوليه :  ال${respName}\n من مسؤول المسؤوليات : <@${interaction.user.id}>\nالسبب : ${reason}**`)
                 .setThumbnail(targetMember?.user.displayAvatarURL({ size: 128 }) || null)
                 .setTimestamp();
 
@@ -1024,11 +1026,11 @@ module.exports = {
                 .addComponents(
                     new ButtonBuilder()
                         .setCustomId('format_embed')
-                        .setLabel('إيمبد')
+                        .setLabel('Embed')
                         .setStyle(ButtonStyle.Secondary),
                     new ButtonBuilder()
                         .setCustomId('format_text')
-                        .setLabel('نص عادي')
+                        .setLabel('Text')
                         .setStyle(ButtonStyle.Secondary)
                 );
             
@@ -1046,7 +1048,7 @@ module.exports = {
             formatCollector.on('collect', async (interaction) => {
                 const format = interaction.customId === 'format_embed' ? 'embed' : 'text';
                 setGuildConfig(guildId, { messageFormat: format });
-                await interaction.update({ content: `تم اختيار : ${format === 'embed' ? 'إيمبد' : 'نص عادي'}`, components: [] });
+                await interaction.update({ content: `** Done : ${format === 'embed' ? 'Embed' : 'Text'}`, components: [] });
                 callback(format);
             });
             
