@@ -707,7 +707,9 @@ module.exports = {
             const newPosition = Number(newPositionRaw);
             const list = categoryData.responsibilities;
 
-            const currentIndex = list.indexOf(respName);
+            const respToMove = list.find((name) => name.toLowerCase() === respName.toLowerCase());
+
+            const currentIndex = respToMove ? list.indexOf(respToMove) : -1;
             if (currentIndex === -1) {
                 await interaction.reply({ content: `❌ المسؤولية "${respName}" غير موجودة داخل قسم "${categoryName}".`, ephemeral: true });
                 return;
@@ -728,7 +730,7 @@ module.exports = {
             }
 
             await interaction.reply({
-                content: `✅ تم نقل "${respName}" إلى الترتيب ${newPosition} داخل قسم "${categoryName}".`,
+                content: `✅ تم نقل "${respToMove}" إلى الترتيب ${newPosition} داخل قسم "${categoryName}".`,
                 ephemeral: true
             });
 

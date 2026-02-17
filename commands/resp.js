@@ -2,6 +2,8 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
+const dns = require('dns').promises;
+const net = require('net');
 const colorManager = require('../utils/colorManager.js');
 
 // نظام الكولداون
@@ -87,15 +89,59 @@ function getImageNameFromUrl(url) {
 
 async function createImageAttachment(url) {
     try {
+        const parsedUrl = new URL(url);
+
+        if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+            console.log('⚠️ تم رفض رابط صورة ببروتوكول غير مسموح');
+            return null;
+        }
+
+        const hostname = parsedUrl.hostname.toLowerCase();
+        if (hostname === 'localhost' || hostname.endsWith('.localhost')) {
+            console.log('⚠️ تم رفض رابط صورة يشير إلى localhost');
+            return null;
+        }
+
+        const isPrivateIp = (ip) => {
+            if (!net.isIP(ip)) return false;
+            if (ip === '127.0.0.1' || ip === '::1') return true;
+            if (ip.startsWith('10.') || ip.startsWith('192.168.')) return true;
+            if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(ip)) return true;
+            if (ip.startsWith('169.254.')) return true;
+            if (ip.startsWith('fc') || ip.startsWith('fd') || ip.startsWith('fe80')) return true;
+            return false;
+        };
+
+        if (net.isIP(hostname) && isPrivateIp(hostname)) {
+            console.log('⚠️ تم رفض رابط صورة يشير إلى عنوان IP داخلي');
+            return null;
+        }
+
+        if (!net.isIP(hostname)) {
+            const records = await dns.lookup(hostname, { all: true }).catch(() => []);
+            if (!records.length || records.some((record) => isPrivateIp(record.address))) {
+                console.log('⚠️ تم رفض رابط صورة بسبب DNS غير موثوق/داخلي');
+                return null;
+            }
+        }
+
         const response = await axios.get(url, {
             responseType: 'arraybuffer',
             timeout: 10000,
             maxRedirects: 5,
+            maxContentLength: 8 * 1024 * 1024,
+            maxBodyLength: 8 * 1024 * 1024,
             headers: {
                 'User-Agent': 'Mozilla/5.0 (compatible; RespBot/1.0)',
                 'Accept': 'image/*,*/*'
             }
         });
+
+        const contentType = String(response.headers?.['content-type'] || '').toLowerCase();
+        if (!contentType.startsWith('image/')) {
+            console.log('⚠️ تم رفض رابط لأن المحتوى ليس صورة');
+            return null;
+        }
 
         const fileName = getImageNameFromUrl(url);
         return new AttachmentBuilder(Buffer.from(response.data), { name: fileName });
@@ -411,11 +457,25 @@ async function updateEmbedMessage(client, targetGuildId = null) {
                         // إذا كانت الرسالة محذوفة، يفضل إرسال واحدة جديدة أو تنبيه المالك
                     }
                 } else {
-                    const fallbackChannelId = embedData.channelId || config.guilds?.[guildId]?.embedChannel;
-                    const fallbackChannel = fallbackChannelId ? await client.channels.fetch(fallbackChannelId).catch(() => null) : null;
+                    const fallbackCandidates = [
+                        config.guilds?.[guildId]?.embedChannel,
+                        embedData.channelId
+                    ].filter(Boolean);
 
-                    if (fallbackChannel && fallbackChannel.isTextBased()) {
-                        const newMessage = await fallbackChannel.send(editOptions);
+                    let fallbackChannel = null;
+                    for (const candidateId of fallbackCandidates) {
+                        const candidate = await client.channels.fetch(candidateId).catch(() => null);
+                        if (candidate && candidate.isTextBased()) {
+                            fallbackChannel = candidate;
+                            break;
+                        }
+                    }
+
+                    if (fallbackChannel) {
+                        const sendOptions = { ...editOptions };
+                        if (sendOptions.content === null) delete sendOptions.content;
+
+                        const newMessage = await fallbackChannel.send(sendOptions);
                         embedMessages.set(guildId, {
                             messageId: newMessage.id,
                             channelId: fallbackChannel.id,
@@ -1501,7 +1561,9 @@ if (subCommand === 'delete' && args[1] === 'all') {
                     await panelMessage.edit({
                         content: '⌛ انتهى وقت إعداد المسؤوليات المكتملة. أعد الأمر إذا لزم.',
                         components: []
-                    }).catch(() => {});
+                    }).catch((err) => {
+                        console.error('Failed to edit message on collector timeout:', err);
+                    });
                 }
             });
 
