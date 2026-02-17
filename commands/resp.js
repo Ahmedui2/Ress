@@ -38,6 +38,25 @@ function writeJSONFile(filePath, data) {
     }
 }
 
+function isValidImageUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+
+    try {
+        const parsed = new URL(url);
+        if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+
+        // السماح بروابط الصور الشائعة حتى مع query params
+        if (/\.(jpg|jpeg|png|webp|gif)$/i.test(parsed.pathname)) {
+            return true;
+        }
+
+        // قبول روابط CDN/Discord حتى بدون امتداد واضح
+        return parsed.hostname.includes('discord') || parsed.hostname.includes('imgur') || parsed.hostname.includes('cdn');
+    } catch (_) {
+        return false;
+    }
+}
+
 // متغير لتخزين رسائل الايمبد (دعم عدة سيرفرات)
 let embedMessages = new Map(); // guildId -> { messageId, channelId, message }
 
@@ -329,7 +348,22 @@ async function updateEmbedMessage(client) {
                         // إذا كانت الرسالة محذوفة، يفضل إرسال واحدة جديدة أو تنبيه المالك
                     }
                 } else {
-                    console.log(`⚠️ لم يتم العثور على رسالة المسؤوليات لتحديثها في السيرفر ${guildId}`);
+                    const fallbackChannelId = embedData.channelId || config.guilds?.[guildId]?.embedChannel;
+                    const fallbackChannel = fallbackChannelId ? await client.channels.fetch(fallbackChannelId).catch(() => null) : null;
+
+                    if (fallbackChannel && fallbackChannel.isTextBased()) {
+                        const newMessage = await fallbackChannel.send(editOptions);
+                        embedMessages.set(guildId, {
+                            messageId: newMessage.id,
+                            channelId: fallbackChannel.id,
+                            message: newMessage,
+                            format
+                        });
+                        updateStoredEmbedData();
+                        console.log(`✅ تم إنشاء رسالة مسؤوليات جديدة تلقائياً في السيرفر ${guildId}`);
+                    } else {
+                        console.log(`⚠️ لم يتم العثور على رسالة المسؤوليات أو القناة الاحتياطية في السيرفر ${guildId}`);
+                    }
                 }
             } catch (error) {
                 console.error(`خطأ في تحديث رسالة المسؤوليات للسيرفر ${guildId}:`, error);
@@ -1162,9 +1196,7 @@ if (subCommand === 'delete' && args[1] === 'all') {
     }
 
     // فحص بسيط للصورة
-    const isImage =
-        attachment ||
-        /\.(jpg|jpeg|png|webp|gif)$/i.test(imageUrl);
+    const isImage = attachment || isValidImageUrl(imageUrl);
 
     if (!isImage) {
         return message.reply({ content: '❌ الرابط المقدم لا يبدو أنه صورة صالحة.' });
@@ -1209,6 +1241,8 @@ if (subCommand === 'delete' && args[1] === 'all') {
             }
         } catch (_) {}
 
+        await updateEmbedMessage(message.client);
+
         return message.reply({
             content: `✅ تم تعيين الصورة لجميع المسؤوليات (${respKeys.length}) بنجاح.`
         });
@@ -1240,6 +1274,8 @@ if (subCommand === 'delete' && args[1] === 'all') {
             );
         }
     } catch (_) {}
+
+    await updateEmbedMessage(message.client);
 
     return message.reply({
         content: `✅ تم تعيين الصورة للمسؤولية "**${respName}**" بنجاح.`
