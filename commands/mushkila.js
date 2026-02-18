@@ -250,18 +250,16 @@ async function execute(message, args, context) {
   } catch (_) {
     // If collector creation fails, proceed without restricting interactions
   }
-  // Register router for this command once per client
+  // Register router for this command once per client.
+  // Note: interaction routing is already handled globally in bot.js,
+  // so we must NOT attach another interactionCreate listener here.
   if (!client._mushkilaRouterRegistered) {
     const ownersList = context.BOT_OWNERS || [];
-    interactionRouter.register('mushkila_', async (interaction, client) => {
-      await handleInteraction(interaction, { client, BOT_OWNERS: ownersList });
+    interactionRouter.register('mushkila_', async (interaction, routerContext = {}) => {
+      const resolvedClient = routerContext.client || (routerContext.ws ? routerContext : client);
+      const resolvedOwners = routerContext.BOT_OWNERS || ownersList;
+      await handleInteraction(interaction, { client: resolvedClient, BOT_OWNERS: resolvedOwners });
     });
-    if (!client._interactionRouterListenerAdded) {
-      client.on('interactionCreate', async (interaction) => {
-        await interactionRouter.route(interaction, client);
-      });
-      client._interactionRouterListenerAdded = true;
-    }
     client._mushkilaRouterRegistered = true;
   }
 }
