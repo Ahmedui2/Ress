@@ -73,14 +73,15 @@ function loadProblemConfig() {
         // Separator line enabled flag. When true, a horizontal line image is attached to each log message.
         separatorEnabled: typeof config.separatorEnabled === 'boolean' ? config.separatorEnabled : false,
         // Optional custom separator image URL. When set, this URL will be used for the line image instead of the default asset.
-        separatorImage: typeof config.separatorImage === 'string' ? config.separatorImage : null
+        separatorImage: typeof config.separatorImage === 'string' ? config.separatorImage : null,
+        adminProblemEnabled: typeof config.adminProblemEnabled === 'boolean' ? config.adminProblemEnabled : true
       };
     }
   } catch (err) {
     console.error('Failed to load problemConfig:', err);
   }
   // default configuration
-  return { logsChannelId: null, muteRoleId: null, muteDuration: 10 * 60 * 1000, responsibleRoleIds: [], separatorEnabled: false, separatorImage: null };
+  return { logsChannelId: null, muteRoleId: null, muteDuration: 10 * 60 * 1000, responsibleRoleIds: [], separatorEnabled: false, separatorImage: null, adminProblemEnabled: true };
 }
 
 function saveProblemConfig(config) {
@@ -481,6 +482,12 @@ function userIsModerator(member, adminRoles, owners) {
   if (adminRoles.some((roleId) => member.roles.cache.has(roleId))) return true;
   return false;
 }
+function isProblemOwner(member, owners) {
+  if (!member) return false;
+  if (member.id === member.guild.ownerId) return true;
+  return Array.isArray(owners) && owners.includes(member.id);
+}
+
 
 // Determine if a member is an owner or responsible (BOT_OWNERS).  This
 // helper distinguishes super moderators from regular admin roles.
@@ -541,6 +548,11 @@ async function execute(message, args, context) {
 
   // Ensure that problem config exists and load it
   const config = loadProblemConfig();
+
+  // When admin-problem mode is disabled, allow only guild owner, bot owners, or responsible roles.
+  if (config.adminProblemEnabled === false && !isOwnerOrResponsible(member, owners)) {
+    return message.reply('❌ **تم تعطيل فتح البروبلم للإدارة. المسموح فقط لمالك السيرفر، الرولات المسؤولة، وأونرز البوت.**');
+  }
 
   // If user invoked setup subcommand, delegate to executeSetup
   if (args.length > 0) {
@@ -670,6 +682,13 @@ async function handleInteraction(interaction, context) {
       return;
     }
     if (id === 'problem_select_second') {
+      // Prevent duplicate handling for the same interaction step.
+      if (session.openingReasonModal) {
+        return;
+      }
+      session.openingReasonModal = true;
+
+      try {
       // Validate that selected second parties are allowed based on moderator's role
       const selectedIds = interaction.values;
       const guild = interaction.guild;
@@ -715,17 +734,36 @@ async function handleInteraction(interaction, context) {
         .setPlaceholder('اكتب سبب المشكلة هنا...')
         .setRequired(true);
       modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
-      // Display the modal as the first response. Do not defer the interaction beforehand.
-      await interaction.showModal(modal);
+      // Display the modal only if interaction is still unacknowledged.
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.showModal(modal);
+      }
       return;
+      } finally {
+        session.openingReasonModal = false;
+      }
     }
     if (interaction.type === 5 && id === 'problem_reason_modal') {
-      // Modal submission: save reason and create problems
-      const reason = interaction.fields.getTextInputValue('problem_reason_input');
-      session.reason = reason;
-      await createProblems(interaction, session, context);
-      // Remove session after creation
-      sessionStore.delete(interaction.user.id);
+      // Modal submission: save reason and create problems.
+      // Guard against duplicate handling (e.g. duplicated interaction listeners)
+      // so the same problem/log is not created twice.
+      if (session.creating) {
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({ content: '⏳ **جاري إنشاء البروبلم بالفعل...**', ephemeral: true }).catch(() => {});
+        }
+        return;
+      }
+
+      session.creating = true;
+      try {
+        const reason = interaction.fields.getTextInputValue('problem_reason_input');
+        session.reason = reason;
+        await createProblems(interaction, session, context);
+        // Remove session after creation
+        sessionStore.delete(interaction.user.id);
+      } finally {
+        session.creating = false;
+      }
       return;
     }
   } catch (err) {
@@ -761,40 +799,48 @@ async function createProblems(interaction, session, context) {
   const muteRoleId = config.muteRoleId;
   const timestamp = Date.now();
   const isMultiParty = session.firstParties.length > 1 || session.secondParties.length > 1;
+  let createdProblemsCount = 0;
+
   // Iterate through each combination of selected first and second parties.
   for (const firstId of session.firstParties) {
     for (const secondId of session.secondParties) {
       if (firstId === secondId) continue; // skip same user
       const key = getProblemKey(firstId, secondId, guild.id);
       const legacyKey = getProblemKey(firstId, secondId);
+      const alreadyExists = activeProblems.has(key) || activeProblems.has(legacyKey);
+
       // Do not overwrite an existing problem between the same parties within the same guild.
-      if (!activeProblems.has(key) && !activeProblems.has(legacyKey)) {
-        activeProblems.set(key, {
-          firstId,
-          secondId,
-          moderatorId: session.moderatorId,
-          reason: session.reason,
-          timestamp,
-          // Store the guild ID so that scheduled tasks can look up the guild and logs channel
-          guildId: guild.id,
-          // Record when warnings were last reset; initialise to the creation timestamp
-          lastWarningReset: timestamp,
-          warnings: {},
-          responses: {}, // track if each party has responded once; first response is not deleted
-          removedAdminRoles: {}, // track roles removed from users due to Administrator permission
-              removedSendRoles: {}, // track roles removed that grant SendMessages in a channel
-              removedSendOverrides: {}, // track channel overrides applied to deny SendMessages
-              locks: {}, // track voice locks per channel
-              voiceWarned: {}, // track if DM has been sent to each user for voice violation
-              // Track the ID of the log message in the logs channel associated with this problem.
-              // This allows us to update the same embed for subsequent events rather than
-              // sending a new message every time.
-              logMessageId: null
-        });
-        // Persist new problem to disk
-        saveActiveProblemsToDisk();
+      if (alreadyExists) {
+        continue;
       }
-      // Send DM notifications
+
+      createdProblemsCount += 1;
+      activeProblems.set(key, {
+        firstId,
+        secondId,
+        moderatorId: session.moderatorId,
+        reason: session.reason,
+        timestamp,
+        // Store the guild ID so that scheduled tasks can look up the guild and logs channel
+        guildId: guild.id,
+        // Record when warnings were last reset; initialise to the creation timestamp
+        lastWarningReset: timestamp,
+        warnings: {},
+        responses: {}, // track if each party has responded once; first response is not deleted
+        removedAdminRoles: {}, // track roles removed from users due to Administrator permission
+        removedSendRoles: {}, // track roles removed that grant SendMessages in a channel
+        removedSendOverrides: {}, // track channel overrides applied to deny SendMessages
+        locks: {}, // track voice locks per channel
+        voiceWarned: {}, // track if DM has been sent to each user for voice violation
+        // Track the ID of the log message in the logs channel associated with this problem.
+        // This allows us to update the same embed for subsequent events rather than
+        // sending a new message every time.
+        logMessageId: null
+      });
+      // Persist new problem to disk
+      saveActiveProblemsToDisk();
+
+      // Send DM notifications only for newly-created problems
       try {
         const firstUser = await client.users.fetch(firstId);
         const description = [
@@ -825,37 +871,48 @@ async function createProblems(interaction, session, context) {
       } catch (err) {
         console.error('Failed to DM second party:', err);
       }
-      // Post log to logs channel if defined
+
+      // Post log to logs channel if defined (single pair mode)
       if (logsChannel && !isMultiParty) {
         const moderatorAvatar = interaction.user?.displayAvatarURL?.({ dynamic: true }) || null;
         const logEmbed = colorManager.createEmbed()
           .setTitle('New problem')
           .setDescription(
-            `**المسؤول : <@${session.moderatorId}>\n الطرف الأول : <@${firstId}>\n الطرف الثاني : <@${secondId}>\n\n السبب : ${session.reason}**`
+            `**المسؤول : <@${session.moderatorId}>
+ الطرف الأول : <@${firstId}>
+ الطرف الثاني : <@${secondId}>
+
+ السبب : ${session.reason}**`
           )
           .setTimestamp();
         if (moderatorAvatar) {
           logEmbed.setThumbnail(moderatorAvatar);
         }
-        // Attach separator line image if enabled in config.  Send the log embed first.
         const files = getSeparatorAttachments();
         logsChannel.send({ content: '@here', embeds: [logEmbed] }).catch(() => {});
-        // Then send the separator image as a separate message (below the embed) if present
         if (files && files.length > 0) {
           logsChannel.send({ files }).catch(() => {});
         }
       }
     }
   }
-  // If multiple parties are involved, send one combined log embed instead of one per pair.
-  if (logsChannel && isMultiParty) {
+
+  // If multiple parties are involved, send one combined log embed only if
+  // at least one new problem was created.
+  if (logsChannel && isMultiParty && createdProblemsCount > 0) {
     const moderatorAvatar = interaction.user?.displayAvatarURL?.({ dynamic: true }) || null;
     const firstPartiesText = session.firstParties.map((id) => `<@${id}>`).join('\n');
     const secondPartiesText = session.secondParties.map((id) => `<@${id}>`).join('\n');
     const logEmbed = colorManager.createEmbed()
       .setTitle(' New problem ')
       .setDescription(
-        `**المسؤول : <@${session.moderatorId}>\n الطرف الأول :\n${firstPartiesText}\n الطرف الثاني :\n${secondPartiesText}\n\n السبب : ${session.reason}**`
+        `**المسؤول : <@${session.moderatorId}>
+ الطرف الأول :
+${firstPartiesText}
+ الطرف الثاني :
+${secondPartiesText}
+
+ السبب : ${session.reason}**`
       )
       .setTimestamp();
     if (moderatorAvatar) {
@@ -867,9 +924,14 @@ async function createProblems(interaction, session, context) {
       logsChannel.send({ files }).catch(() => {});
     }
   }
+
   // Acknowledge to the moderator
   try {
-    await interaction.reply({ content: '✅ **تم إنشاء البروبلم بنجاح. سيتم مراقبة التفاعل بين الأطراف.**', ephemeral: true });
+    if (createdProblemsCount === 0) {
+      await interaction.reply({ content: '⚠️ **البروبلم موجود مسبقًا بين نفس الأطراف، لم يتم إنشاء مشكلة جديدة.**', ephemeral: true });
+    } else {
+      await interaction.reply({ content: '✅ **تم إنشاء البروبلم بنجاح. سيتم مراقبة التفاعل بين الأطراف.**', ephemeral: true });
+    }
   } catch (_) {}
 }
 
@@ -2390,6 +2452,7 @@ async function executeSetup(message, args, context) {
   const separatorDisplay = currentConfig.separatorEnabled
     ? (currentConfig.separatorImage ? 'مُفعّل (صورة مخصصة)' : 'مُفعّل')
     : 'غير مُفعل';
+  const adminProblemDisplay = currentConfig.adminProblemEnabled === false ? 'مقفّل (مالك السيرفر + الرولات المسؤولة + أونرز البوت)' : 'مُفعّل (نفس المنطق الحالي)';
   // Create embed showing current settings
   const embed = colorManager.createEmbed()
     .setTitle('Problem settings')
@@ -2399,11 +2462,12 @@ async function executeSetup(message, args, context) {
       { name: 'رول الميوت الحالي', value: muteRoleDisplay, inline: true },
       { name: 'مدة الميوت الحالية', value: muteDurationDisplay, inline: true },
       { name: 'الرولات المسؤولة الحالية', value: responsibleRolesDisplay, inline: false },
-      { name: 'استخدام الخط الفاصل', value: separatorDisplay, inline: false }
+      { name: 'استخدام الخط الفاصل', value: separatorDisplay, inline: false },
+      { name: 'وضع الإدارة لفتح البروبلم', value: adminProblemDisplay, inline: false }
     )
     .setTimestamp();
-  // Create action row with five buttons including separator toggle
-  const row = new ActionRowBuilder().addComponents(
+  // Create action rows for settings controls
+  const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('problem_setup_set_channel')
       .setLabel('تعيين روم السجلات')
@@ -2425,8 +2489,14 @@ async function executeSetup(message, args, context) {
       .setLabel('تعيين/تعطيل خط الفاصل')
       .setStyle(ButtonStyle.Secondary)
   );
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('problem_setup_toggle_admin')
+      .setLabel('زر الإدارة (فتح البروبلم)')
+      .setStyle(currentConfig.adminProblemEnabled === false ? ButtonStyle.Danger : ButtonStyle.Success)
+  );
   // Send embed and buttons
-  const sent = await message.channel.send({ embeds: [embed], components: [row] });
+  const sent = await message.channel.send({ embeds: [embed], components: [row1, row2] });
   // Session store for setup flows (per user)
   const sessionStore = getSessionStore(client);
   sessionStore.set(message.author.id, {
@@ -2499,17 +2569,28 @@ async function handleSetupInteraction(interaction, context) {
     return;
   }
   if (id === 'problem_setup_set_separator') {
-    const modal = new ModalBuilder()
-      .setCustomId('problem_setup_separator_modal')
-      .setTitle('تعيين الخط الفاصل');
-    const urlInput = new TextInputBuilder()
-      .setCustomId('separator_url')
-      .setLabel('رابط صورة الخط الفاصل أو off للتعطيل')
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true)
-      .setPlaceholder('https://example.com/line.png أو off');
-    modal.addComponents(new ActionRowBuilder().addComponents(urlInput));
-    return interaction.showModal(modal);
+    if (session.openingSetupSeparatorModal) {
+      return;
+    }
+    session.openingSetupSeparatorModal = true;
+    try {
+      const modal = new ModalBuilder()
+        .setCustomId('problem_setup_separator_modal')
+        .setTitle('تعيين الخط الفاصل');
+      const urlInput = new TextInputBuilder()
+        .setCustomId('separator_url')
+        .setLabel('رابط صورة الخط الفاصل أو off للتعطيل')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setPlaceholder('https://example.com/line.png أو off');
+      modal.addComponents(new ActionRowBuilder().addComponents(urlInput));
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.showModal(modal);
+      }
+      return;
+    } finally {
+      session.openingSetupSeparatorModal = false;
+    }
   }
   // Defer update to show loading state
   if (!interaction.replied && !interaction.deferred) {
@@ -2529,6 +2610,7 @@ async function handleSetupInteraction(interaction, context) {
     const separatorDisplay = cfg.separatorEnabled
       ? (cfg.separatorImage ? 'مُفعّل (صورة مخصصة)' : 'مُفعّل')
       : 'غير مُفعل';
+    const adminProblemDisplay = cfg.adminProblemEnabled === false ? 'مقفّل (مالك السيرفر + الرولات المسؤولة + أونرز البوت)' : 'مُفعّل (نفس المنطق الحالي)';
     const newEmbed = colorManager.createEmbed()
       .setTitle('Problem settings')
       .setDescription('يمكنك تحديث الإعدادات عبر الأزرار أدناه.\nيتم تحديث الإيمبد تلقائيًا بعد أي تغيير.')
@@ -2537,15 +2619,55 @@ async function handleSetupInteraction(interaction, context) {
         { name: 'رول الميوت الحالي', value: roleDisplay, inline: true },
         { name: 'مدة الميوت الحالية', value: durDisplay, inline: true },
         { name: 'الرولات المسؤولة الحالية', value: responsibleDisplay, inline: false },
-        { name: 'استخدام الخط الفاصل', value: separatorDisplay, inline: false }
+        { name: 'استخدام الخط الفاصل', value: separatorDisplay, inline: false },
+        { name: 'وضع الإدارة لفتح البروبلم', value: adminProblemDisplay, inline: false }
       )
       .setTimestamp();
     const msg = await interaction.channel.messages.fetch(session.messageId).catch(() => null);
     if (msg) {
-      await msg.edit({ embeds: [newEmbed] }).catch(() => {});
+      const controlsRow1 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('problem_setup_set_channel')
+          .setLabel('تعيين روم السجلات')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('problem_setup_set_role')
+          .setLabel('تعيين رول الميوت')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('problem_setup_set_time')
+          .setLabel('تعيين مدة الميوت')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('problem_setup_set_responsible_roles')
+          .setLabel('تعيين الرولات المسؤولة')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('problem_setup_set_separator')
+          .setLabel('تعيين/تعطيل خط الفاصل')
+          .setStyle(ButtonStyle.Secondary)
+      );
+      const controlsRow2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('problem_setup_toggle_admin')
+          .setLabel('زر الإدارة (فتح البروبلم)')
+          .setStyle(cfg.adminProblemEnabled === false ? ButtonStyle.Danger : ButtonStyle.Success)
+      );
+      await msg.edit({ embeds: [newEmbed], components: [controlsRow1, controlsRow2] }).catch(() => {});
     }
   }
   // Determine which setting to update based on button clicked
+  if (id === 'problem_setup_toggle_admin') {
+    const cfg = loadProblemConfig();
+    cfg.adminProblemEnabled = cfg.adminProblemEnabled === false ? true : false;
+    saveProblemConfig(cfg);
+    const stateText = cfg.adminProblemEnabled === false
+      ? '❌ **تم قفل فتح البروبلم للإدارة. الآن فقط الأونرز يمكنهم فتح بروبلم.**'
+      : '✅ **تم تفعيل فتح البروبلم للإدارة (نفس المنطق الحالي).**';
+    await interaction.followUp({ content: stateText, ephemeral: true });
+    await refreshEmbed();
+    return;
+  }
   if (id === 'problem_setup_set_channel') {
     // Prompt for channel
     await interaction.followUp({ content: '🔧 **يرجى منشن قناة السجلات أو كتابة الـ ID الخاص بها.**', ephemeral: true });
