@@ -234,47 +234,24 @@ function getSessionStore(client) {
 }
 
 /**
- * Initialize the interaction router for the perm command.  This function
- * registers the perm handler with the router and attaches a single
- * interactionCreate listener on the client that delegates to the router.
- * It ensures the initialization occurs only once per client to avoid
- * duplicate listeners.  Without modifying the main bot file, this
- * approach allows our command to independently handle its component
- * interactions.
+ * Initialize the interaction router for the perm command.
+ * Registers only the command handler; global interaction routing is
+ * already handled in bot.js, so no local interactionCreate listener is added.
  *
  * @param {Client} client The Discord client instance
  */
 function initRouter(client) {
-  // Register our handler with the router only once
   if (!client._permRouterInitialized) {
-    // Register the perm prefix handler.  The router will call our
-    // handleInteraction with the client context when any interaction's
-    // customId starts with 'perm_'.
-    interactionRouter.register('perm_', async (interaction, clientInstance) => {
-      // Wrap in try/catch to avoid unhandled rejections
+    interactionRouter.register('perm_', async (interaction, routerContext = {}) => {
       try {
-        await handleInteraction(interaction, { client: clientInstance });
+        const resolvedClient = routerContext.client || routerContext || client;
+        await handleInteraction(interaction, { client: resolvedClient });
       } catch (err) {
         console.error('Error in perm router handler:', err);
       }
     });
 
     client._permRouterInitialized = true;
-  }
-  // Attach a single global interaction listener if not already attached.
-  // The listener delegates all interactions to the router, which then
-  // forwards to registered handlers based on the customId prefix.
-  if (!client._interactionRouterListenerAdded) {
-    client.on('interactionCreate', async (interaction) => {
-      try {
-        // Use the shared router to dispatch.  Passing the client allows
-        // handlers to access context if needed.
-        await interactionRouter.route(interaction, client);
-      } catch (err) {
-        console.error('Error routing interaction:', err);
-      }
-    });
-    client._interactionRouterListenerAdded = true;
   }
 }
 
