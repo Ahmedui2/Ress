@@ -17,6 +17,7 @@ const panelCleanupKeepIds = new Map();
 const pendingPanelSetup = new Map();
 const pendingPanelTimeouts = new Map();
 const pendingBulkDeletes = new Map();
+const pendingRoleApprovals = new Set();
 const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
 const REQUEST_REAPPLY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
@@ -70,6 +71,17 @@ function getRequestCooldownRemaining(guildConfig, userId) {
   const elapsed = Date.now() - lastRejectedAt;
   const remaining = REQUEST_REAPPLY_COOLDOWN_MS - elapsed;
   return remaining > 0 ? remaining : 0;
+}
+
+function getValidOwnerRoleEntry(guild, ownerId, deletedBy = 'system_cleanup') {
+  const roleEntry = findRoleByOwner(guild.id, ownerId);
+  if (!roleEntry) return null;
+
+  const roleExists = guild.roles.cache.has(roleEntry.roleId);
+  if (roleExists) return roleEntry;
+
+  deleteRoleEntry(roleEntry.roleId, deletedBy);
+  return null;
 }
 
 function buildSettingsMenu(userId, client) {
@@ -1895,7 +1907,7 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       await interaction.reply({ content: '⚠️ لديك طلب رول خاص قيد المراجعة بالفعل.', ephemeral: true });
       return;
     }
-    const existingRole = findRoleByOwner(interaction.guild.id, interaction.user.id);
+    const existingRole = getValidOwnerRoleEntry(interaction.guild, interaction.user.id, interaction.user.id);
     if (existingRole) {
       await interaction.reply({ content: '⚠️ لديك رول خاص بالفعل ولا يمكنك طلب رول جديد.', ephemeral: true });
       return;
@@ -1945,7 +1957,7 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       await interaction.editReply({ content: '⚠️ لديك طلب رول خاص قيد المراجعة بالفعل.' });
       return;
     }
-    const existingRole = findRoleByOwner(interaction.guild.id, interaction.user.id);
+    const existingRole = getValidOwnerRoleEntry(interaction.guild, interaction.user.id, interaction.user.id);
     if (existingRole) {
       await interaction.editReply({ content: '⚠️ لديك رول خاص بالفعل ولا يمكنك طلب رول جديد.' });
       return;
@@ -2002,6 +2014,20 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       return;
     }
     const userId = interaction.customId.split('_')[3];
+    const approvalKey = `${interaction.guild.id}:${userId}`;
+
+    if (pendingRoleApprovals.has(approvalKey)) {
+      if (acknowledged) {
+        await interaction.editReply({ content: '⚠️ يتم الآن معالجة هذا الطلب بالفعل.' }).catch(() => {});
+      } else {
+        await respondEphemeral(interaction, { content: '⚠️ يتم الآن معالجة هذا الطلب بالفعل.' });
+      }
+      return;
+    }
+
+    pendingRoleApprovals.add(approvalKey);
+
+    try {
     const member = await interaction.guild.members.fetch(userId).catch(() => null);
     if (!member) {
       if (acknowledged) {
@@ -2014,8 +2040,39 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
 
     const latestConfig = getGuildConfig(interaction.guild.id);
     const pendingRequest = latestConfig.pendingRoleRequests?.[userId];
+    if (!pendingRequest) {
+      await interaction.message.edit({ components: [] }).catch(() => {});
+      if (acknowledged) {
+        await interaction.editReply({ content: '⚠️ هذا الطلب تمت معالجته مسبقاً.' }).catch(() => {});
+      } else {
+        await respondEphemeral(interaction, { content: '⚠️ هذا الطلب تمت معالجته مسبقاً.' });
+      }
+      return;
+    }
+
+    const existingRole = getValidOwnerRoleEntry(interaction.guild, member.id, interaction.user.id);
+    if (existingRole) {
+      const guildConfig = getGuildConfig(interaction.guild.id);
+      if (guildConfig.pendingRoleRequests?.[member.id]) {
+        const pendingRequests = { ...(guildConfig.pendingRoleRequests || {}) };
+        delete pendingRequests[member.id];
+        updateGuildConfig(interaction.guild.id, { pendingRoleRequests: pendingRequests });
+      }
+      await interaction.message.edit({ components: [] }).catch(() => {});
+      if (acknowledged) {
+        await interaction.editReply({ content: '⚠️ العضو لديه رول خاص بالفعل.' }).catch(() => {});
+      } else {
+        await respondEphemeral(interaction, { content: '⚠️ العضو لديه رول خاص بالفعل.' });
+      }
+      return;
+    }
+
     const roleNameField = interaction.message.embeds[0]?.fields?.find(field => field.name === 'الرول المطلوب');
     const roleName = pendingRequest?.roleName || roleNameField?.value || `رول-${member.user.username}`;
+
+    const pendingRequests = { ...(latestConfig.pendingRoleRequests || {}) };
+    delete pendingRequests[userId];
+    updateGuildConfig(interaction.guild.id, { pendingRoleRequests: pendingRequests });
 
     const role = await interaction.guild.roles.create({
       name: roleName,
@@ -2024,6 +2081,9 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     }).catch(() => null);
 
     if (!role) {
+      const restoredPendingRequests = { ...(getGuildConfig(interaction.guild.id).pendingRoleRequests || {}) };
+      restoredPendingRequests[userId] = pendingRequest;
+      updateGuildConfig(interaction.guild.id, { pendingRoleRequests: restoredPendingRequests });
       await interaction.message.edit({ content: '❌ فشل إنشاء الرول. تحقق من الصلاحيات.', components: [] }).catch(() => {});
       if (acknowledged) {
         await interaction.editReply({ content: '❌ فشل إنشاء الرول. تحقق من الصلاحيات.' }).catch(() => {});
@@ -2060,24 +2120,28 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     });
 
     const guildConfig = getGuildConfig(interaction.guild.id);
-    if (guildConfig.pendingRoleRequests?.[member.id]) {
-      const pendingRequests = { ...(guildConfig.pendingRoleRequests || {}) };
-      delete pendingRequests[member.id];
-      const cooldowns = { ...(guildConfig.requestCooldowns || {}) };
-      delete cooldowns[member.id];
-      updateGuildConfig(interaction.guild.id, { pendingRoleRequests: pendingRequests, requestCooldowns: cooldowns });
-    }
+    const cooldowns = { ...(guildConfig.requestCooldowns || {}) };
+    delete cooldowns[member.id];
+    updateGuildConfig(interaction.guild.id, { requestCooldowns: cooldowns });
 
     await member.send(`✅ تمت الموافقة على طلبك وتم إنشاء الرول الخاص بك: **${role.name}**`).catch(() => {});
     const updatedEmbed = interaction.message.embeds[0]
       ? EmbedBuilder.from(interaction.message.embeds[0])
       : colorManager.createEmbed().setTitle('طلب رول خاص');
-    updatedEmbed.addFields({ name: 'المسؤول الموافق', value: `<@${interaction.user.id}>`, inline: false });
+    updatedEmbed
+      .setFields(
+        { name: 'العضو', value: `<@${member.id}>`, inline: true },
+        { name: 'المسؤول الموافق', value: `<@${interaction.user.id}>`, inline: true }
+      )
+      .setFooter({ text: 'تمت الموافقة على الطلب' });
     await interaction.message.edit({ embeds: [updatedEmbed], components: [] }).catch(() => {});
     if (acknowledged) {
       await interaction.editReply({ content: `✅ المسؤول الموافق : <@${interaction.user.id}>` }).catch(() => {});
     } else {
       await respondEphemeral(interaction, { content: `✅ المسؤول الموافق : <@${interaction.user.id}>` });
+    }
+    } finally {
+      pendingRoleApprovals.delete(approvalKey);
     }
     return;
   }
@@ -2120,6 +2184,19 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     if (member) {
       await member.send(`❌ تم رفض طلب الرول الخاص. السبب: ${reason}`).catch(() => {});
     }
+
+    const updatedEmbed = interaction.message?.embeds?.[0]
+      ? EmbedBuilder.from(interaction.message.embeds[0])
+      : colorManager.createEmbed().setTitle('طلب رول خاص');
+    updatedEmbed
+      .setFields(
+        { name: 'العضو', value: member ? `<@${member.id}>` : `<@${userId}>`, inline: true },
+        { name: 'المسؤول الرافض', value: `<@${interaction.user.id}>`, inline: true },
+        { name: 'سبب الرفض', value: reason || 'بدون سبب', inline: false }
+      )
+      .setFooter({ text: 'تم رفض الطلب' });
+    await interaction.message?.edit({ embeds: [updatedEmbed], components: [] }).catch(() => {});
+
     await interaction.editReply({ content: '✅ تم إرسال سبب الرفض.' });
     return;
   }
