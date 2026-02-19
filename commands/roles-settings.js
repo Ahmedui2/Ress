@@ -2128,7 +2128,12 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     const updatedEmbed = interaction.message.embeds[0]
       ? EmbedBuilder.from(interaction.message.embeds[0])
       : colorManager.createEmbed().setTitle('طلب رول خاص');
-    updatedEmbed.addFields({ name: 'المسؤول الموافق', value: `<@${interaction.user.id}>`, inline: false });
+    updatedEmbed
+      .setFields(
+        { name: 'العضو', value: `<@${member.id}>`, inline: true },
+        { name: 'المسؤول الموافق', value: `<@${interaction.user.id}>`, inline: true }
+      )
+      .setFooter({ text: 'تمت الموافقة على الطلب' });
     await interaction.message.edit({ embeds: [updatedEmbed], components: [] }).catch(() => {});
     if (acknowledged) {
       await interaction.editReply({ content: `✅ المسؤول الموافق : <@${interaction.user.id}>` }).catch(() => {});
@@ -2179,6 +2184,19 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
     if (member) {
       await member.send(`❌ تم رفض طلب الرول الخاص. السبب: ${reason}`).catch(() => {});
     }
+
+    const updatedEmbed = interaction.message?.embeds?.[0]
+      ? EmbedBuilder.from(interaction.message.embeds[0])
+      : colorManager.createEmbed().setTitle('طلب رول خاص');
+    updatedEmbed
+      .setFields(
+        { name: 'العضو', value: member ? `<@${member.id}>` : `<@${userId}>`, inline: true },
+        { name: 'المسؤول الرافض', value: `<@${interaction.user.id}>`, inline: true },
+        { name: 'سبب الرفض', value: reason || 'بدون سبب', inline: false }
+      )
+      .setFooter({ text: 'تم رفض الطلب' });
+    await interaction.message?.edit({ embeds: [updatedEmbed], components: [] }).catch(() => {});
+
     await interaction.editReply({ content: '✅ تم إرسال سبب الرفض.' });
     return;
   }
