@@ -87,7 +87,10 @@ async function execute(message, args, { client, BOT_OWNERS }) {
 
     if (!activeVacation) {
         const desc = isSelfCheck ? `** انت مب بإجازه\n للتقديم اكتب اجازه**`: `**${targetUser.tag} ليس في إجازة حالياً.**`;
-        const noVacationEmbed = new EmbedBuilder().setDescription(desc).setColor(colorManager.getColor());
+        const noVacationEmbed = new EmbedBuilder().setDescription(desc).setColor(colorManager.getColor())
+                .setThumbnail(targetUser.displayAvatarURL({ size: 128 }))
+
+;
         return message.reply({ embeds: [noVacationEmbed] });
     }
 
@@ -446,7 +449,7 @@ async function handleInteraction(interaction, context) {
                 if (originalMessage) {
                     const reactivatedButton = new ButtonBuilder()
                         .setCustomId(`vac_end_request_${userId}`)
-                        .setLabel("طلب إنهاء الإجازة مبكراً")
+                        .setLabel("Vacation ending ")
                         .setStyle(ButtonStyle.Danger);
 
                     const reactivatedRow = new ActionRowBuilder().addComponents(reactivatedButton);
@@ -460,7 +463,7 @@ async function handleInteraction(interaction, context) {
     }
 
     // معالجة تفاعلات الموافقة والرفض على طلب إنهاء الإجازة
-    if (interaction.customId.startsWith('vac_approve_termination_') || interaction.customId.startsWith('vac_reject_termination_')) {
+        if (interaction.isButton() && (interaction.customId.startsWith('vac_approve_termination_') || interaction.customId.startsWith('vac_reject_termination_'))) {
         const parts = interaction.customId.split('_');
         const action = parts[1]; // approve or reject
         const userId = parts[3];
@@ -524,12 +527,12 @@ async function handleInteraction(interaction, context) {
                     vacationManager.saveVacations(currentVacations);
 
                     const successEmbed = new EmbedBuilder()
-                        .setTitle('✅ تم قبول إنهاء الإجازة')
+                        .setTitle('✅Accepted')
                         .setColor(colorManager.getColor('approved') || '#2ECC71')
                         .setDescription(`**تمت الموافقة على طلب إنهاء إجازة <@${userId}> مبكراً بنجاح.**`)
                         .setThumbnail(requestedUser?.displayAvatarURL({ size: 128 }) || null)
                         .addFields([
-                            { name: 'العضو', value: `<@${userId}>`, inline: true },
+                            { name: 'الإداري', value: `<@${userId}>`, inline: true },
                             { name: 'المسؤول', value: `<@${interaction.user.id}>`, inline: true },
                             { name: 'تاريخ الإنهاء', value: `<t:${Math.floor(Date.now() / 1000)}:f>`, inline: true }
                         ])
@@ -537,19 +540,17 @@ async function handleInteraction(interaction, context) {
                         .setTimestamp();
 
                     await interaction.editReply({ embeds: [successEmbed] });
+                  
+        
                     if (interaction.message) {
                         const disabledRow = new ActionRowBuilder().addComponents(
                             new ButtonBuilder()
                                 .setCustomId(`vac_approve_termination_${userId}`)
-                                .setLabel("موافقة على الإنهاء")
+                            .setLabel ("Aprroved.")
                                 .setStyle(ButtonStyle.Success)
+                                  .setEmoji("<:emoji_42:1430334150057001042>")
                                 .setDisabled(true),
-                            new ButtonBuilder()
-                                .setCustomId(`vac_reject_termination_${userId}`)
-                                .setLabel("رفض الإنهاء")
-                                .setStyle(ButtonStyle.Danger)
-                                .setDisabled(true)
-                        );
+);
                         await interaction.message.edit({ components: [disabledRow] }).catch(() => {});
                     }
                 } else {
@@ -584,13 +585,13 @@ async function handleInteraction(interaction, context) {
         const rejectEmbed = new EmbedBuilder()
             .setColor(colorManager.getColor('rejected') || '#E74C3C')
             .setTitle('❌ Request Rejected (Early Termination)')
-            .setDescription(`**تم رفض طلب إنهاء إجازتك مبكراً.**`)
+            .setDescription(`**تم رفض طلب إنهاء إجازه مبكراً.**`)
             .setThumbnail(interaction.user.displayAvatarURL({ size: 128 }))
             .addFields([
-                { name: 'العضو', value: `<@${userId}>`, inline: true },
+                { name: 'الإداري', value: `<@${userId}>`, inline: true },
                 { name: 'المسؤول', value: `<@${interaction.user.id}>`, inline: true },
                 { name: 'سبب الرفض', value: reason, inline: false },
-                { name: 'الكولداون', value: `${rejectCooldownHours} ساعة`, inline: true }
+                { name: 'الكولداون', value: `${rejectCooldownHours}h`, inline: true }
             ])
             .setFooter({ text: 'Space' })
             .setTimestamp();
@@ -603,8 +604,8 @@ async function handleInteraction(interaction, context) {
         if (user) {
             const dmEmbed = new EmbedBuilder()
                 .setColor(colorManager.getColor('rejected') || '#E74C3C')
-                .setTitle('❌ تم رفض طلب إنهاء إجازتك المبكر')
-                .setDescription(`نعتذر، لقد تم رفض طلب إنهاء الإجازة الخاص بك في **${interaction.guild.name}**`)
+                .setTitle('❌Rejected')
+                .setDescription(`**نعتذر، لقد تم رفض طلب إنهاء الإجازة الخاص بك في ${interaction.guild.name}**`)
                 .setThumbnail(interaction.user.displayAvatarURL({ size: 128 }))
                 .addFields(
                     { name: "المسؤول", value: `${interaction.user.tag}`, inline: true },
@@ -621,15 +622,11 @@ async function handleInteraction(interaction, context) {
                 const disabledRow = new ActionRowBuilder().addComponents(
                     new ButtonBuilder()
                         .setCustomId(`vac_approve_termination_${userId}`)
-                        .setLabel("موافقة على الإنهاء")
-                        .setStyle(ButtonStyle.Success)
-                        .setDisabled(true),
-                    new ButtonBuilder()
-                        .setCustomId(`vac_reject_termination_${userId}`)
-                        .setLabel("رفض الإنهاء")
+                        .setLabel("Rejected.")
+                           .setEmoji("<:emoji_45:1430334556078211082>")
                         .setStyle(ButtonStyle.Danger)
-                        .setDisabled(true)
-                );
+                        .setDisabled(true),
+                                   );
                 await originalMessage.edit({ components: [disabledRow] }).catch(() => {});
             }
         }

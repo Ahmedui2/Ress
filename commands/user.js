@@ -85,7 +85,7 @@ module.exports = {
                     name: targetUser.username, 
                     iconURL: targetUser.displayAvatarURL({ dynamic: true }) 
                 })
-                .setThumbnail(targetUser.displayAvatarURL({ dynamic: true, size: 256 }))
+                .setThumbnail(targetUser.displayAvatarURL({ dynamic: true, size: 128 }))
                 .setDescription(
                     `**تاريخ دخول السيرفر :**\n` +
                     `**${joinDate}**\n\n` +

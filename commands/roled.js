@@ -126,6 +126,7 @@ async function execute(message, args, { client, BOT_OWNERS }) {
         embeds: [buildLoadingEmbed(message.guild, message.author.id, checked, allRoles.length, matchedRoles.length)]
     });
 
+    let lastProgressUpdateAt = 0;
     for (const entry of allRoles) {
         checked += 1;
         const role = entry.role;
@@ -139,9 +140,14 @@ async function execute(message, args, { client, BOT_OWNERS }) {
             });
         }
 
-        await loadingMessage.edit({
-            embeds: [buildLoadingEmbed(message.guild, message.author.id, checked, allRoles.length, matchedRoles.length)]
-        });
+        const now = Date.now();
+        const shouldUpdate = checked === allRoles.length || checked % 10 === 0 || (now - lastProgressUpdateAt) > 2000;
+        if (shouldUpdate) {
+            lastProgressUpdateAt = now;
+            await loadingMessage.edit({
+                embeds: [buildLoadingEmbed(message.guild, message.author.id, checked, allRoles.length, matchedRoles.length)]
+            }).catch(() => {});
+        }
     }
 
     if (matchedRoles.length === 0) {
@@ -226,6 +232,7 @@ async function execute(message, args, { client, BOT_OWNERS }) {
                     await entry.role.delete(`roled command by ${message.author.tag}`);
                     success += 1;
                 } catch (error) {
+                    console.error(`Failed to delete role ${entry.role?.id || 'unknown'} in roled command:`, error);
                     failed += 1;
                 }
             }
@@ -256,7 +263,9 @@ async function execute(message, args, { client, BOT_OWNERS }) {
             await loadingMessage.edit({
                 components: buildActionRows(page, totalPages, true)
             });
-        } catch (error) {}
+        } catch (error) {
+            console.error('roled collector end edit error:', error);
+        }
     });
 }
 

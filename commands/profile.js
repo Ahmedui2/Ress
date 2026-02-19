@@ -31,7 +31,7 @@ async function sendLevelUpNotification(client, userId, oldVoiceLevel, newVoiceLe
 
         // فحص الفويس
         if (newVoiceLevel > oldVoiceLevel) {
-            changesText += `<:emoji_42:1434229586761089174> **voice :**\n`;
+            changesText += `**voice :**\n`;
             changesText += `*Your Level* :**${newVoiceLevel}**\n`;
             changesText += `*Your Xp* : **${voiceXP.toLocaleString()}**\n\n`;
             levelUpType.push('Voice');
@@ -39,8 +39,8 @@ async function sendLevelUpNotification(client, userId, oldVoiceLevel, newVoiceLe
 
         // فحص الشات
         if (newChatLevel > oldChatLevel) {
-            changesText += `<:emoji_44:1434229626695323698> **chat :**\n`;
-            changesText += `*Your Level**${newChatLevel}**\n`;
+            changesText += `**chat :**\n`;
+            changesText += `*Your Level* **${newChatLevel}**\n`;
             changesText += `*Your Xp* : **${chatXP.toLocaleString()}**\n\n`;
             levelUpType.push('Chat');
         }
@@ -48,7 +48,7 @@ async function sendLevelUpNotification(client, userId, oldVoiceLevel, newVoiceLe
         if (levelUpType.length === 0) return;
 
         embed.addFields([
-            { name: '<:emoji_45:1434229687177052284> Changes', value: changesText, inline: false }
+            { name: 'Changes', value: changesText, inline: false }
         ]);
 
         // حساب المتبقي للمستوى التالي
@@ -70,7 +70,7 @@ async function sendLevelUpNotification(client, userId, oldVoiceLevel, newVoiceLe
 
         if (nextLevelInfo) {
             embed.addFields([
-                { name: '<:emoji_45:1434229687177052284> Next Level', value: nextLevelInfo, inline: false }
+                { name: 'To Next Level', value: nextLevelInfo, inline: false }
             ]);
         }
 

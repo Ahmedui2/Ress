@@ -91,7 +91,7 @@ function buildActivityComponents(userId, activePeriod, isAfterSelected) {
                 {
                     label: 'After Date',
                     value: 'after',
-                    emoji: '📅',
+                    emoji: '<:emoji_19:1457493164826034186>',
                     default: Boolean(isAfterSelected)
                 }
             )
@@ -420,29 +420,25 @@ module.exports = {
         const fromTimestamp = dateMoment.valueOf();
         const activityTotals = await dbManager.get(`
             SELECT SUM(messages) as messages,
-                   SUM(reactions) as reactions,
-                   SUM(voice_joins) as voiceJoins,
-                   SUM(voice_time) as voiceTime
+                   SUM(reactions) as reactions
             FROM daily_activity
             WHERE user_id = ? AND date >= ?
         `, [targetUserId, fromDate]);
 
-        let voiceTime = activityTotals?.voiceTime || 0;
-        if (timeInput) {
-            const voiceTotals = await dbManager.get(`
-                SELECT SUM(duration) as voiceTime
-                FROM voice_sessions
-                WHERE user_id = ? AND start_time >= ?
-            `, [targetUserId, fromTimestamp]);
-            voiceTime = voiceTotals?.voiceTime || 0;
-        }
+        const voiceSessionStats = await dbManager.get(`
+            SELECT SUM(duration) as voiceTime,
+                   COUNT(*) as voiceJoins
+            FROM voice_sessions
+            WHERE user_id = ? AND start_time >= ?
+        `, [targetUserId, fromTimestamp]);
+        let voiceTime = voiceSessionStats?.voiceTime || 0;
 
         const liveDuration = getLiveVoiceDuration(targetUserId, fromTimestamp);
         voiceTime += liveDuration;
 
         const messages = activityTotals?.messages || 0;
         const reactions = activityTotals?.reactions || 0;
-        const voiceJoins = activityTotals?.voiceJoins || 0;
+        const voiceJoins = voiceSessionStats?.voiceJoins || 0;
         const noActivity = !messages && !reactions && !voiceJoins && !voiceTime;
 
         let memberDisplay = targetUserId;
@@ -472,12 +468,19 @@ module.exports = {
         `, [targetUserId, fromTimestamp]) || { channel_id: null, channel_name: 'No Data', total_time: 0, session_count: 0 };
 
         const voiceChannelMention = topVoiceChannel?.channel_id ? `<#${topVoiceChannel.channel_id}>` : 'No Data';
-        const messageChannelMention = 'No Data';
+        const topMessageChannel = await dbManager.get(`
+            SELECT channel_id, channel_name, message_count, last_message
+            FROM message_channels
+            WHERE user_id = ? AND last_message >= ?
+            ORDER BY message_count DESC
+            LIMIT 1
+        `, [targetUserId, fromTimestamp]) || { channel_id: null, channel_name: 'No Data', message_count: 0 };
+        const messageChannelMention = topMessageChannel?.channel_id ? `<#${topMessageChannel.channel_id}>` : 'No Data';
         const xp = Math.floor((messages || 0) / 10);
 
         const summaryEmbed = colorManager.createEmbed()
             .setTitle('After Date')
-            .setDescription(`**تفاعل ${memberDisplay}**\n**من:** ${dateMoment.format('YYYY-MM-DD hh:mm A')} (بتوقيت الرياض)${noActivity ? '\n**لا يوجد نشاط مسجل بعد هذا التاريخ.**' : ''}`)
+            .setDescription(`**تفاعل ${memberDisplay}**\n**من :** ${dateMoment.format('YYYY-MM-DD hh:mm A')} ${noActivity ? '\n**لا يوجد نشاط مسجل بعد هذا التاريخ.**' : ''}`)
             .addFields(
                 { name: '# <:emoji_85:1442986413510627530> **Voice**', value: '** **', inline: false },
                 { name: '**الوقت**', value: `**${formatDuration(voiceTime)}**`, inline: true },

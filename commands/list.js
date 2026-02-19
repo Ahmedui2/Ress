@@ -92,13 +92,15 @@ function buildListComponents(page, totalPages) {
   if (totalPages <= 1) return [];
   const prevButton = new ButtonBuilder()
     .setCustomId('customroles_list_prev')
-    .setLabel('<:emoji_13:1429263136136888501>')
+    .setLabel('Prev')
+  .setEmoji('<:emoji_13:1429263136136888501>')
     .setStyle(ButtonStyle.Secondary)
     .setDisabled(page <= 1);
   const nextButton = new ButtonBuilder()
     .setCustomId('customroles_list_next')
-    .setLabel('<:emoji_14:1429263186539974708>')
+    .setLabel('Next')
     .setStyle(ButtonStyle.Secondary)
+  .setEmoji('<:emoji_14:1429263186539974708>')
     .setDisabled(page >= totalPages);
   return [new ActionRowBuilder().addComponents(prevButton, nextButton)];
 }

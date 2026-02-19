@@ -244,7 +244,7 @@ function initRouter(client) {
   if (!client._permRouterInitialized) {
     interactionRouter.register('perm_', async (interaction, routerContext = {}) => {
       try {
-        const resolvedClient = routerContext.client || routerContext || client;
+        const resolvedClient = routerContext.client || (routerContext.ws ? routerContext : client);
         await handleInteraction(interaction, { client: resolvedClient });
       } catch (err) {
         console.error('Error in perm router handler:', err);

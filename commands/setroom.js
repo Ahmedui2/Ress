@@ -1717,6 +1717,17 @@ function parseScheduleTime(timeString) {
 // معالجة اختيار الألوان
 async function handleColorSelection(interaction, client) {
     try {
+        // Acknowledge the interaction immediately to prevent "Unknown interaction" errors
+        // by deferring the reply. Using an initial deferred reply ensures the interaction
+        // does not time out while we perform potentially long-running role operations.
+        if (!interaction.deferred && !interaction.replied) {
+            try {
+                await interaction.deferReply({ephemeral: true});
+            } catch (deferErr) {
+                // If defer fails (unlikely), log and continue; we'll attempt to reply directly later.
+                console.error('فشل في deferReply عند اختيار اللون:', deferErr.message);
+            }
+        }
         const selectedValue = interaction.values[0];
         const guild = interaction.guild;
         const member = interaction.member;
@@ -1725,7 +1736,8 @@ async function handleColorSelection(interaction, client) {
         const guildConfig = config[guild.id];
 
         if (!guildConfig || !guildConfig.colorRoleIds) {
-            await interaction.reply({ content: '❌ **النظام غير مُعد بعد!**', flags: 64 });
+            // System not configured; update the deferred reply
+            await interaction.editReply({ content: '❌ **النظام غير مُعد بعد!**' });
             return;
         }
 
@@ -1736,9 +1748,8 @@ async function handleColorSelection(interaction, client) {
             );
 
             if (currentColorRoles.size === 0) {
-                await interaction.reply({ 
-                    content: '✅ **ليس لديك أي رولات ألوان حالياً**', 
-                    flags: 64 
+                await interaction.editReply({ 
+                    content: '✅ **ليس لديك أي رولات ألوان حالياً**'
                 });
                 return;
             }
@@ -1756,8 +1767,8 @@ async function handleColorSelection(interaction, client) {
             const successEmbed = colorManager.createEmbed()
                 .setTitle('✅ Done')
                 .setDescription(`تم إزالة ${removedCount} رول لون من حسابك`);
-
-            await interaction.reply({ embeds: [successEmbed], flags: 64 });
+            // Update the deferred reply with the removal confirmation embed
+            await interaction.editReply({ embeds: [successEmbed] });
 
             // تحديث منيو الألوان بعد إزالة جميع الألوان
             try {
@@ -1780,7 +1791,8 @@ async function handleColorSelection(interaction, client) {
         // اختيار لون جديد
         const selectedRole = guild.roles.cache.get(selectedValue);
         if (!selectedRole) {
-            await interaction.reply({ content: '❌ **الدور غير موجود!**', flags: 64 });
+            // Selected role not found
+            await interaction.editReply({ content: '❌ **الدور غير موجود!**' });
             return;
         }
 
@@ -1789,9 +1801,8 @@ async function handleColorSelection(interaction, client) {
         );
 
         if (currentColorRoles.has(selectedValue)) {
-            await interaction.reply({ 
-                content: `✅ **لديك هذا اللون بالفعل : ${selectedRole.name}**`, 
-                flags: 64 
+            await interaction.editReply({ 
+                content: `✅ **لديك هذا اللون بالفعل : ${selectedRole.name}**`
             });
             return;
         }
@@ -1814,8 +1825,8 @@ async function handleColorSelection(interaction, client) {
                 .setTitle('✅ Done')
                 .setDescription(`**اللون الجديد :** ${selectedRole.name}\n**الكود :** ${selectedRole.hexColor}`)
                 .setColor(selectedRole.color);
-
-            await interaction.reply({ embeds: [successEmbed], flags: 64 });
+            // Update the deferred reply with the success embed
+            await interaction.editReply({ embeds: [successEmbed] });
             console.log(`✅ تم إضافة الدور ${selectedRole.name} لـ ${member.user.tag}`);
 
             // تحديث منيو الألوان في رسالة السيتب ليعود لحالته الافتراضية
@@ -1837,16 +1848,22 @@ async function handleColorSelection(interaction, client) {
 
         } catch (error) {
             console.error(`فشل إضافة الدور ${selectedRole.name}:`, error.message);
-            await interaction.reply({ 
-                content: '❌ **فشل تغيير اللون! تأكد من أن البوت لديه الصلاحيات المناسبة.**', 
-                flags: 64 
+            await interaction.editReply({ 
+                content: '❌ **فشل تغيير اللون! تأكد من أن البوت لديه الصلاحيات المناسبة.**'
             });
         }
 
     } catch (error) {
         console.error('خطأ في معالجة اختيار اللون:', error);
-        if (!interaction.replied && !interaction.deferred) {
-            await interaction.reply({ content: '❌ **حدث خطأ!**', flags: 64 }).catch(() => {});
+        // If something goes wrong after deferring, attempt to edit the reply with a generic error
+        try {
+            if (interaction.deferred || interaction.replied) {
+                await interaction.editReply({ content: '❌ **حدث خطأ!**' });
+            } else {
+                await interaction.reply({ content: '❌ **حدث خطأ!**', flags: 64 });
+            }
+        } catch (_) {
+            // ignore additional errors
         }
     }
 }
@@ -2295,7 +2312,6 @@ async function execute(message, args, { BOT_OWNERS, client }) {
                             const newRole = await message.guild.roles.create({
                                 name: i.toString(),
                                 color: color,
-                                permissions: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages],
                                 reason: 'تم إنشاء رول لون تلقائياً بواسطة نظام setroom'
                             });
 

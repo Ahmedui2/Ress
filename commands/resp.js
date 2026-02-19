@@ -1,6 +1,9 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, ComponentType, StringSelectMenuBuilder } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, ComponentType, StringSelectMenuBuilder, AttachmentBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
+const axios = require('axios');
+const dns = require('dns').promises;
+const net = require('net');
 const colorManager = require('../utils/colorManager.js');
 
 // نظام الكولداون
@@ -54,6 +57,97 @@ function isValidImageUrl(url) {
         return parsed.hostname.includes('discord') || parsed.hostname.includes('imgur') || parsed.hostname.includes('cdn');
     } catch (_) {
         return false;
+    }
+}
+
+function getGuildRespConfig(guildId) {
+    const config = readJSONFile(DATA_FILES.respConfig, { guilds: {} });
+    if (!config.guilds) config.guilds = {};
+    if (!config.guilds[guildId]) config.guilds[guildId] = {};
+    return config;
+}
+
+function getFullResponsibilities(guildId) {
+    const config = getGuildRespConfig(guildId);
+    const fullList = config.guilds[guildId].fullResponsibilities;
+    return Array.isArray(fullList) ? fullList : [];
+}
+
+function isResponsibilityFull(guildId, responsibilityName) {
+    return getFullResponsibilities(guildId).includes(responsibilityName);
+}
+
+function getImageNameFromUrl(url) {
+    try {
+        const parsed = new URL(url);
+        const ext = path.extname(parsed.pathname) || '.png';
+        return `resp_image${ext}`;
+    } catch (_) {
+        return 'resp_image.png';
+    }
+}
+
+async function createImageAttachment(url) {
+    try {
+        const parsedUrl = new URL(url);
+
+        if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+            console.log('⚠️ تم رفض رابط صورة ببروتوكول غير مسموح');
+            return null;
+        }
+
+        const hostname = parsedUrl.hostname.toLowerCase();
+        if (hostname === 'localhost' || hostname.endsWith('.localhost')) {
+            console.log('⚠️ تم رفض رابط صورة يشير إلى localhost');
+            return null;
+        }
+
+        const isPrivateIp = (ip) => {
+            if (!net.isIP(ip)) return false;
+            if (ip === '127.0.0.1' || ip === '::1') return true;
+            if (ip.startsWith('10.') || ip.startsWith('192.168.')) return true;
+            if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(ip)) return true;
+            if (ip.startsWith('169.254.')) return true;
+            if (ip.startsWith('fc') || ip.startsWith('fd') || ip.startsWith('fe80')) return true;
+            return false;
+        };
+
+        if (net.isIP(hostname) && isPrivateIp(hostname)) {
+            console.log('⚠️ تم رفض رابط صورة يشير إلى عنوان IP داخلي');
+            return null;
+        }
+
+        if (!net.isIP(hostname)) {
+            const records = await dns.lookup(hostname, { all: true }).catch(() => []);
+            if (!records.length || records.some((record) => isPrivateIp(record.address))) {
+                console.log('⚠️ تم رفض رابط صورة بسبب DNS غير موثوق/داخلي');
+                return null;
+            }
+        }
+
+        const response = await axios.get(url, {
+            responseType: 'arraybuffer',
+            timeout: 10000,
+            maxRedirects: 5,
+            maxContentLength: 8 * 1024 * 1024,
+            maxBodyLength: 8 * 1024 * 1024,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (compatible; RespBot/1.0)',
+                'Accept': 'image/*,*/*'
+            }
+        });
+
+        const contentType = String(response.headers?.['content-type'] || '').toLowerCase();
+        if (!contentType.startsWith('image/')) {
+            console.log('⚠️ تم رفض رابط لأن المحتوى ليس صورة');
+            return null;
+        }
+
+        const fileName = getImageNameFromUrl(url);
+        return new AttachmentBuilder(Buffer.from(response.data), { name: fileName });
+    } catch (error) {
+        console.log(`⚠️ تعذر تحميل صورة المسؤوليات كرابط مرفق: ${error.message}`);
+        return null;
     }
 }
 
@@ -291,8 +385,8 @@ function createSuggestionButton() {
     return createSuggestionComponents();
 }
 
-// دالة لتحديث جميع رسائل الايمبد
-async function updateEmbedMessage(client) {
+// دالة لتحديث رسائل الايمبد (كل السيرفرات أو سيرفر محدد)
+async function updateEmbedMessage(client, targetGuildId = null) {
     try {
         const { dbManager } = require('../utils/database.js');
         const responsibilities = await dbManager.getResponsibilities();
@@ -307,25 +401,40 @@ async function updateEmbedMessage(client) {
         // فحص وجود صورة لنظام المسؤوليات في السيرفر
         const config = readJSONFile(DATA_FILES.respConfig, { guilds: {} });
 
-        for (const [guildId, embedData] of embedMessages.entries()) {
+        const entries = targetGuildId
+            ? (embedMessages.has(targetGuildId) ? [[targetGuildId, embedMessages.get(targetGuildId)]] : [])
+            : [...embedMessages.entries()];
+
+        for (const [guildId, embedData] of entries) {
             try {
-                const globalImageUrl = config.guilds?.[guildId]?.globalImageUrl;
-                const format = config.guilds[guildId]?.messageFormat || embedData.format || 'embed';
-                
+                const guildConfig = config.guilds?.[guildId] || {};
+                const globalImageUrl = guildConfig.globalImageUrl;
+                const format = guildConfig.messageFormat || embedData.format || 'embed';
+
+                const imageAttachment = globalImageUrl ? await createImageAttachment(globalImageUrl) : null;
+                const imageFiles = imageAttachment ? [imageAttachment] : [];
+
                 let editOptions;
                 if (format === 'text') {
                     editOptions = {
                         content: newText,
                         embeds: [],
                         components: components,
-                        files: globalImageUrl ? [globalImageUrl] : []
+                        files: imageFiles
                     };
                 } else {
+                    const embedForGuild = EmbedBuilder.from(newEmbed);
+                    if (imageAttachment) {
+                        embedForGuild.setImage(`attachment://${imageAttachment.name}`);
+                    } else if (globalImageUrl) {
+                        embedForGuild.setImage(globalImageUrl);
+                    }
+
                     editOptions = {
                         content: null,
-                        embeds: [newEmbed],
+                        embeds: [embedForGuild],
                         components: components,
-                        files: globalImageUrl ? [globalImageUrl] : []
+                        files: imageFiles
                     };
                 }
                 
@@ -348,18 +457,32 @@ async function updateEmbedMessage(client) {
                         // إذا كانت الرسالة محذوفة، يفضل إرسال واحدة جديدة أو تنبيه المالك
                     }
                 } else {
-                    const fallbackChannelId = embedData.channelId || config.guilds?.[guildId]?.embedChannel;
-                    const fallbackChannel = fallbackChannelId ? await client.channels.fetch(fallbackChannelId).catch(() => null) : null;
+                    const fallbackCandidates = [
+                        config.guilds?.[guildId]?.embedChannel,
+                        embedData.channelId
+                    ].filter(Boolean);
 
-                    if (fallbackChannel && fallbackChannel.isTextBased()) {
-                        const newMessage = await fallbackChannel.send(editOptions);
+                    let fallbackChannel = null;
+                    for (const candidateId of fallbackCandidates) {
+                        const candidate = await client.channels.fetch(candidateId).catch(() => null);
+                        if (candidate && candidate.isTextBased()) {
+                            fallbackChannel = candidate;
+                            break;
+                        }
+                    }
+
+                    if (fallbackChannel) {
+                        const sendOptions = { ...editOptions };
+                        if (sendOptions.content === null) delete sendOptions.content;
+
+                        const newMessage = await fallbackChannel.send(sendOptions);
                         embedMessages.set(guildId, {
                             messageId: newMessage.id,
                             channelId: fallbackChannel.id,
                             message: newMessage,
                             format
                         });
-                        updateStoredEmbedData();
+                        updateStoredEmbedData(guildId);
                         console.log(`✅ تم إنشاء رسالة مسؤوليات جديدة تلقائياً في السيرفر ${guildId}`);
                     } else {
                         console.log(`⚠️ لم يتم العثور على رسالة المسؤوليات أو القناة الاحتياطية في السيرفر ${guildId}`);
@@ -640,12 +763,18 @@ async function handleApplyRespButton(interaction, client) {
             .sort((a, b) => (a[1].order || 0) - (b[1].order || 0))
             .slice(0, 25);
         
+        const fullResponsibilities = getFullResponsibilities(interaction.guild.id);
         const options = sortedResps.map(([name, data]) => {
             const isAlreadyResponsible = data.responsibles && data.responsibles.includes(interaction.user.id);
+            const isFull = fullResponsibilities.includes(name);
             return {
                 label: name,
                 value: name,
-                description: isAlreadyResponsible ? 'أنت بالفعل مسؤول في هذه المسؤولية' : `عدد المسؤولين : ${data.responsibles ? data.responsibles.length : 0}`
+                description: isAlreadyResponsible
+                    ? 'أنت بالفعل مسؤول في هذه المسؤولية'
+                    : isFull
+                        ? 'مكتملة: لا يمكن التقديم حالياً'
+                        : `عدد المسؤولين : ${data.responsibles ? data.responsibles.length : 0}`
             };
         });
         
@@ -694,6 +823,13 @@ async function handleApplyRespSelect(interaction, client) {
 
         const selectedResp = interaction.values[0];
         const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
+
+        if (isResponsibilityFull(interaction.guild.id, selectedResp)) {
+            return await interaction.reply({
+                content: `❌ **عدد المسؤولين مكتمل في "${selectedResp}"، لا يمكنك التقديم على هذه المسؤولية حالياً.**`,
+                ephemeral: true
+            });
+        }
 
         // التحقق من أن العضو ليس مسؤولاً بالفعل في هذه المسؤولية
         if (currentResps[selectedResp] && currentResps[selectedResp].responsibles && currentResps[selectedResp].responsibles.includes(interaction.user.id)) {
@@ -749,6 +885,12 @@ async function handleApplyRespModal(interaction, client) {
         const guildId = interaction.guild.id;
       
         const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
+
+        if (isResponsibilityFull(guildId, respName)) {
+            return await interaction.editReply({
+                content: `❌ **عدد المسؤولين مكتمل في "${respName}"، لا يمكنك التقديم على هذه المسؤولية حالياً.**`
+            });
+        }
         
         // التحقق من أن العضو ليس مسؤولاً بالفعل في هذه المسؤولية
         if (currentResps[respName] && currentResps[respName].responsibles && currentResps[respName].responsibles.includes(interaction.user.id)) {
@@ -1163,7 +1305,7 @@ if (subCommand === 'delete' && args[1] === 'all') {
 
     // تحديث إيمبد العرض تلقائياً ليعكس التغييرات
     try {
-        await updateEmbedMessage(message.client);
+        await updateEmbedMessage(message.client, guildId);
     } catch (error) {
         console.error('Error updating embed message after delete all:', error);
     }
@@ -1241,7 +1383,7 @@ if (subCommand === 'delete' && args[1] === 'all') {
             }
         } catch (_) {}
 
-        await updateEmbedMessage(message.client);
+        await updateEmbedMessage(message.client, guildId);
 
         return message.reply({
             content: `✅ تم تعيين الصورة لجميع المسؤوليات (${respKeys.length}) بنجاح.`
@@ -1275,12 +1417,158 @@ if (subCommand === 'delete' && args[1] === 'all') {
         }
     } catch (_) {}
 
-    await updateEmbedMessage(message.client);
+    await updateEmbedMessage(message.client, guildId);
 
     return message.reply({
         content: `✅ تم تعيين الصورة للمسؤولية "**${respName}**" بنجاح.`
     });
 }
+
+        if (subCommand === 'full') {
+            const currentResps = global.responsibilities || readJSONFile(DATA_FILES.responsibilities, {});
+            const orderedRespNames = Object.entries(currentResps)
+                .sort((a, b) => (a[1].order || 0) - (b[1].order || 0))
+                .map(([name]) => name);
+
+            if (orderedRespNames.length === 0) {
+                return message.reply({ content: '❌ لا توجد مسؤوليات حالياً.' });
+            }
+
+            const configData = getGuildRespConfig(guildId);
+            const initialFull = new Set(Array.isArray(configData.guilds[guildId].fullResponsibilities)
+                ? configData.guilds[guildId].fullResponsibilities
+                : []);
+
+            const selected = new Set(initialFull);
+            let page = 0;
+            const pageSize = 25;
+            const totalPages = Math.ceil(orderedRespNames.length / pageSize);
+            const sessionId = `${message.author.id}_${Date.now()}`;
+
+            const buildState = (currentPage) => {
+                const start = currentPage * pageSize;
+                const pageItems = orderedRespNames.slice(start, start + pageSize);
+                const options = pageItems.map((respName) => {
+                    const count = currentResps[respName]?.responsibles?.length || 0;
+                    return {
+                        label: respName.substring(0, 100),
+                        value: respName,
+                        default: selected.has(respName),
+                        description: `المسؤولين: ${count}`.substring(0, 100)
+                    };
+                });
+
+                const menu = new StringSelectMenuBuilder()
+                    .setCustomId(`resp_full_select_${sessionId}_${currentPage}`)
+                    .setPlaceholder(`حدد المسؤوليات المكتملة (صفحة ${currentPage + 1}/${totalPages})`)
+                    .setMinValues(0)
+                    .setMaxValues(options.length)
+                    .addOptions(options);
+
+                const navRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`resp_full_prev_${sessionId}`)
+                        .setLabel('السابق')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(currentPage === 0),
+                    new ButtonBuilder()
+                        .setCustomId(`resp_full_info_${sessionId}`)
+                        .setLabel(`صفحة ${currentPage + 1}/${totalPages}`)
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(true),
+                    new ButtonBuilder()
+                        .setCustomId(`resp_full_next_${sessionId}`)
+                        .setLabel('التالي')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(currentPage >= totalPages - 1)
+                );
+
+                const actionRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`resp_full_save_${sessionId}`)
+                        .setLabel('حفظ')
+                        .setStyle(ButtonStyle.Success),
+                    new ButtonBuilder()
+                        .setCustomId(`resp_full_cancel_${sessionId}`)
+                        .setLabel('إلغاء')
+                        .setStyle(ButtonStyle.Danger)
+                );
+
+                return {
+                    content: `**إدارة المسؤوليات المكتملة للتقديم**\n- اختر المسؤوليات المكتملة (لا يمكن التقديم عليها).\n- الإزالة تكون بإلغاء التحديد ثم حفظ.\n\nالمحدد حالياً: **${selected.size}**`,
+                    components: [new ActionRowBuilder().addComponents(menu), navRow, actionRow]
+                };
+            };
+
+            const panelMessage = await message.channel.send(buildState(page));
+
+            const collector = panelMessage.createMessageComponentCollector({
+                time: 10 * 60 * 1000,
+                filter: (i) => i.user.id === message.author.id && i.customId.includes(sessionId)
+            });
+
+            collector.on('collect', async (interaction) => {
+                try {
+                    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('resp_full_select_')) {
+                        const parts = interaction.customId.split('_');
+                        const currentPage = Number(parts[parts.length - 1]);
+                        const start = currentPage * pageSize;
+                        const pageItems = orderedRespNames.slice(start, start + pageSize);
+
+                        for (const name of pageItems) selected.delete(name);
+                        for (const name of interaction.values) selected.add(name);
+
+                        await interaction.update(buildState(page));
+                        return;
+                    }
+
+                    if (interaction.customId === `resp_full_prev_${sessionId}`) {
+                        page = Math.max(0, page - 1);
+                        await interaction.update(buildState(page));
+                        return;
+                    }
+
+                    if (interaction.customId === `resp_full_next_${sessionId}`) {
+                        page = Math.min(totalPages - 1, page + 1);
+                        await interaction.update(buildState(page));
+                        return;
+                    }
+
+                    if (interaction.customId === `resp_full_cancel_${sessionId}`) {
+                        collector.stop('cancelled');
+                        await interaction.update({ content: '❌ تم إلغاء العملية.', components: [] });
+                        return;
+                    }
+
+                    if (interaction.customId === `resp_full_save_${sessionId}`) {
+                        const updatedConfig = getGuildRespConfig(guildId);
+                        updatedConfig.guilds[guildId].fullResponsibilities = [...selected];
+                        writeJSONFile(DATA_FILES.respConfig, updatedConfig);
+
+                        collector.stop('saved');
+                        await interaction.update({
+                            content: `✅ تم حفظ المسؤوليات المكتملة بنجاح. العدد الحالي: **${selected.size}**`,
+                            components: []
+                        });
+                    }
+                } catch (err) {
+                    console.error('خطأ في إدارة resp full:', err);
+                }
+            });
+
+            collector.on('end', async (_collected, reason) => {
+                if (!['saved', 'cancelled'].includes(reason)) {
+                    await panelMessage.edit({
+                        content: '⌛ انتهى وقت إعداد المسؤوليات المكتملة. أعد الأمر إذا لزم.',
+                        components: []
+                    }).catch((err) => {
+                        console.error('Failed to edit message on collector timeout:', err);
+                    });
+                }
+            });
+
+            return;
+        }
 
 
         if (args[0] === 'chat') {
@@ -1440,20 +1728,29 @@ function setGuildConfig(guildId, updates) {
 }
 
 // دالة لحفظ بيانات الايمبد في الكونفيغ
-function updateStoredEmbedData() {
-    for (const [guildId, embedData] of embedMessages.entries()) {
-        setGuildConfig(guildId, {
-            embedData: {
-                messageId: embedData.messageId,
-                channelId: embedData.channelId
-            }
-        });
+function updateStoredEmbedData(targetGuildId = null) {
+    const config = readJSONFile(DATA_FILES.respConfig, { guilds: {} });
+    if (!config.guilds) config.guilds = {};
+
+    const entries = targetGuildId
+        ? (embedMessages.has(targetGuildId) ? [[targetGuildId, embedMessages.get(targetGuildId)]] : [])
+        : [...embedMessages.entries()];
+
+    for (const [guildId, embedData] of entries) {
+        if (!config.guilds[guildId]) config.guilds[guildId] = {};
+        config.guilds[guildId].embedData = {
+            messageId: embedData.messageId,
+            channelId: embedData.channelId
+        };
     }
+
+    writeJSONFile(DATA_FILES.respConfig, config);
 }
 
 // دالة لتحميل بيانات الايمبد عند بدء التشغيل
 function loadEmbedData(client) {
     try {
+        embedMessages.clear();
         const config = readJSONFile(DATA_FILES.respConfig, { guilds: {} });
         if (config.guilds) {
             for (const [guildId, guildConfig] of Object.entries(config.guilds)) {

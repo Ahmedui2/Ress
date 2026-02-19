@@ -256,7 +256,7 @@ async function execute(message, args, context) {
   if (!client._mushkilaRouterRegistered) {
     const ownersList = context.BOT_OWNERS || [];
     interactionRouter.register('mushkila_', async (interaction, routerContext = {}) => {
-      const resolvedClient = routerContext.client || routerContext || client;
+      const resolvedClient = routerContext.client || (routerContext.ws ? routerContext : client);
       const resolvedOwners = routerContext.BOT_OWNERS || ownersList;
       await handleInteraction(interaction, { client: resolvedClient, BOT_OWNERS: resolvedOwners });
     });

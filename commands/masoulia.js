@@ -43,12 +43,12 @@ module.exports = {
                         .setCustomId(`resp_add_${target.id}`)
                         .setLabel('إضافة مسؤولية')
                         .setStyle(ButtonStyle.Success)
-                        .setEmoji('➕'),
+                        .setEmoji('<:emoji_91:1442990316549312582>'),
                     new ButtonBuilder()
                         .setCustomId(`resp_remove_${target.id}`)
                         .setLabel('إزالة مسؤولية')
                         .setStyle(ButtonStyle.Danger)
-                        .setEmoji('➖')
+                        .setEmoji('<:emoji_90:1442990214925520976>')
                 );
 
             const msg = await message.reply({ embeds: [embed], components: [row] });
@@ -237,13 +237,13 @@ module.exports = {
                     let responseContent = '';
                     if (type === 'add') {
                         responseContent = addedResps.length > 0 
-                            ? `✅ **تم بنجاح منح المسؤوليات التالية للعضو :** ${addedResps.join('  ,  ')}`
+                            ? `✅ **Added **`
                             : `⚠️ **لم يتم إضافة أي مسؤوليات جديدة.**`;
                         
                         if (addedResps.length > 0) {
                             try {
                                 const addEmbed = colorManager.createEmbed()
-                                    .setTitle(' Added')
+                                    .setTitle('✅️ Added')
                                     .setDescription(`تم منحك المسؤوليات التالية : ${addedResps.join(' , ')}\nمن المسؤول : <@${i.user.id}>`)
                                     .setThumbnail(i.user.displayAvatarURL({ size: 128 }))
                                     .setFooter({ text: i.guild.name })
@@ -253,13 +253,13 @@ module.exports = {
                         }
                     } else {
                         responseContent = removedResps.length > 0 
-                            ? `✅ **تم بنجاح سحب المسؤوليات التالية من العضو :** ${removedResps.join('  ,  ')}`
+                         ? `☑️** Removed **`
                             : `⚠️ **لم يتم إزالة أي مسؤوليات.**`;
 
                         if (removedResps.length > 0) {
                             try {
                                 const removeEmbed = colorManager.createEmbed()
-                                    .setTitle('⚠️Removed')
+                                    .setTitle('☑️Removed')
                                     .setDescription(`تم ازالتك من المسؤوليات : ${removedResps.join(' , ')}\nمن المسؤول : <@${i.user.id}>`)
                                     .setThumbnail(i.user.displayAvatarURL({ size: 128 }))
                                     .setFooter({ text: i.guild.name })
@@ -270,7 +270,7 @@ module.exports = {
                     }
 
                     if (errors.length > 0) {
-                        responseContent += `\n\n⚠️ **تنبيهات:**\n- ${errors.join('\n- ')}`;
+                        responseContent += `\n\n⚠️ **Alert :**\n- ${errors.join('\n- ')}`;
                     }
 
                     try {
@@ -283,20 +283,20 @@ module.exports = {
                     }
 
                     const resultEmbed = colorManager.createEmbed()
-                        .setTitle(type === 'add' ? '✅ تم منح المسؤوليات' : '✅ تم سحب المسؤوليات')
-                        .setDescription(`**العضو:** <@${targetId}>\n**المسؤول:** <@${i.user.id}>`)
+                        .setTitle(type === 'add' ? '✅ Added Resp' : '✅ Remove Resp')
+                        .setDescription(`**المسؤول :** <@${targetId}>\n**مسؤول المسؤوليات :** <@${i.user.id}>`)
                         .setThumbnail(member.user.displayAvatarURL({ size: 128 }))
                         .setTimestamp();
 
                     if (type === 'add') {
                         resultEmbed.addFields({
-                            name: 'المسؤوليات المضافة',
+                            name: 'Add',
                             value: addedResps.length > 0 ? addedResps.join(' , ') : 'لا توجد إضافات',
                             inline: false
                         });
                     } else {
                         resultEmbed.addFields({
-                            name: 'المسؤوليات المسحوبة',
+                            name: 'Remove',
                             value: removedResps.length > 0 ? removedResps.join(' , ') : 'لا توجد عمليات سحب',
                             inline: false
                         });
@@ -304,7 +304,7 @@ module.exports = {
 
                     if (errors.length > 0) {
                         resultEmbed.addFields({
-                            name: 'تنبيهات',
+                            name: 'Alert',
                             value: errors.map(err => `- ${err}`).join('\n'),
                             inline: false
                         });

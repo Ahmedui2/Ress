@@ -482,12 +482,6 @@ function userIsModerator(member, adminRoles, owners) {
   if (adminRoles.some((roleId) => member.roles.cache.has(roleId))) return true;
   return false;
 }
-function isProblemOwner(member, owners) {
-  if (!member) return false;
-  if (member.id === member.guild.ownerId) return true;
-  return Array.isArray(owners) && owners.includes(member.id);
-}
-
 
 // Determine if a member is an owner or responsible (BOT_OWNERS).  This
 // helper distinguishes super moderators from regular admin roles.
@@ -581,7 +575,7 @@ async function execute(message, args, context) {
   if (!client._problemRouterRegistered) {
     const ownersList = context.BOT_OWNERS || [];
     interactionRouter.register('problem_', async (interaction, context = {}) => {
-      const resolvedClient = context.client || context;
+      const resolvedClient = context.client || (context.ws ? context : client);
       return handleInteraction(interaction, { client: resolvedClient, BOT_OWNERS: context.BOT_OWNERS || ownersList });
     });
     client._problemRouterRegistered = true;
@@ -2419,6 +2413,40 @@ async function closeProblem(key, guild, context) {
       roleReaddWarned.delete(sId);
 }
 
+function buildProblemSetupControls(adminProblemEnabled = true) {
+  const controlsRow1 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('problem_setup_set_channel')
+      .setLabel('تعيين روم السجلات')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('problem_setup_set_role')
+      .setLabel('تعيين رول الميوت')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('problem_setup_set_time')
+      .setLabel('تعيين مدة الميوت')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('problem_setup_set_responsible_roles')
+      .setLabel('تعيين الرولات المسؤولة')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('problem_setup_set_separator')
+      .setLabel('تعيين/تعطيل خط الفاصل')
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  const controlsRow2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('problem_setup_toggle_admin')
+      .setLabel('زر الإدارة (فتح البروبلم)')
+      .setStyle(adminProblemEnabled === false ? ButtonStyle.Danger : ButtonStyle.Success)
+  );
+
+  return [controlsRow1, controlsRow2];
+}
+
 // The problem setup command.  This command now provides an interactive
 // configuration embed with buttons to set the logs channel, mute role,
 // and mute duration.  When invoked, it displays the current settings
@@ -2466,37 +2494,9 @@ async function executeSetup(message, args, context) {
       { name: 'وضع الإدارة لفتح البروبلم', value: adminProblemDisplay, inline: false }
     )
     .setTimestamp();
-  // Create action rows for settings controls
-  const row1 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('problem_setup_set_channel')
-      .setLabel('تعيين روم السجلات')
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId('problem_setup_set_role')
-      .setLabel('تعيين رول الميوت')
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId('problem_setup_set_time')
-      .setLabel('تعيين مدة الميوت')
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId('problem_setup_set_responsible_roles')
-      .setLabel('تعيين الرولات المسؤولة')
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId('problem_setup_set_separator')
-      .setLabel('تعيين/تعطيل خط الفاصل')
-      .setStyle(ButtonStyle.Secondary)
-  );
-  const row2 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('problem_setup_toggle_admin')
-      .setLabel('زر الإدارة (فتح البروبلم)')
-      .setStyle(currentConfig.adminProblemEnabled === false ? ButtonStyle.Danger : ButtonStyle.Success)
-  );
+  const setupControls = buildProblemSetupControls(currentConfig.adminProblemEnabled);
   // Send embed and buttons
-  const sent = await message.channel.send({ embeds: [embed], components: [row1, row2] });
+  const sent = await message.channel.send({ embeds: [embed], components: setupControls });
   // Session store for setup flows (per user)
   const sessionStore = getSessionStore(client);
   sessionStore.set(message.author.id, {
@@ -2509,7 +2509,7 @@ async function executeSetup(message, args, context) {
   if (!client._problemSetupRouterRegistered) {
     const ownersList = context.BOT_OWNERS || [];
     interactionRouter.register('problem_setup_', async (interaction, context = {}) => {
-      const resolvedClient = context.client || context;
+      const resolvedClient = context.client || (context.ws ? context : client);
       return handleSetupInteraction(interaction, { client: resolvedClient, BOT_OWNERS: context.BOT_OWNERS || ownersList });
     });
     client._problemSetupRouterRegistered = true;
@@ -2625,35 +2625,8 @@ async function handleSetupInteraction(interaction, context) {
       .setTimestamp();
     const msg = await interaction.channel.messages.fetch(session.messageId).catch(() => null);
     if (msg) {
-      const controlsRow1 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId('problem_setup_set_channel')
-          .setLabel('تعيين روم السجلات')
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId('problem_setup_set_role')
-          .setLabel('تعيين رول الميوت')
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId('problem_setup_set_time')
-          .setLabel('تعيين مدة الميوت')
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId('problem_setup_set_responsible_roles')
-          .setLabel('تعيين الرولات المسؤولة')
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId('problem_setup_set_separator')
-          .setLabel('تعيين/تعطيل خط الفاصل')
-          .setStyle(ButtonStyle.Secondary)
-      );
-      const controlsRow2 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId('problem_setup_toggle_admin')
-          .setLabel('زر الإدارة (فتح البروبلم)')
-          .setStyle(cfg.adminProblemEnabled === false ? ButtonStyle.Danger : ButtonStyle.Success)
-      );
-      await msg.edit({ embeds: [newEmbed], components: [controlsRow1, controlsRow2] }).catch(() => {});
+      const setupControls = buildProblemSetupControls(cfg.adminProblemEnabled);
+      await msg.edit({ embeds: [newEmbed], components: setupControls }).catch(() => {});
     }
   }
   // Determine which setting to update based on button clicked
@@ -2662,7 +2635,7 @@ async function handleSetupInteraction(interaction, context) {
     cfg.adminProblemEnabled = cfg.adminProblemEnabled === false ? true : false;
     saveProblemConfig(cfg);
     const stateText = cfg.adminProblemEnabled === false
-      ? '❌ **تم قفل فتح البروبلم للإدارة. الآن فقط الأونرز يمكنهم فتح بروبلم.**'
+      ? '❌ **تم قفل فتح البروبلم للإدارة. الآن المسموح: مالك السيرفر + الرولات المسؤولة + أونرز البوت.**'
       : '✅ **تم تفعيل فتح البروبلم للإدارة (نفس المنطق الحالي).**';
     await interaction.followUp({ content: stateText, ephemeral: true });
     await refreshEmbed();
