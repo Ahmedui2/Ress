@@ -421,9 +421,10 @@ async function handleInteraction(interaction) {
             saveSettings(settings);
             return interaction.reply({ content: `⚠️ <@${request.targetId}> لديه بالفعل الرول المستثنى.`, ephemeral: true }).catch(() => {});
         }
+if (typeof global.markInteractiveRoleGrant === 'function') {
 
-        if (typeof global.markInteractiveRoleGrant === 'function') {
             global.markInteractiveRoleGrant(interaction.guild.id, targetMember.id, role.id);
+
         }
         await targetMember.roles.add(role).catch(() => {});
         try {
@@ -605,7 +606,9 @@ async function handleInteraction(interaction) {
         if (targetMember && role) {
             // Assign the role to the member
             if (typeof global.markInteractiveRoleGrant === 'function') {
+
                 global.markInteractiveRoleGrant(interaction.guild.id, targetMember.id, role.id);
+
             }
             await targetMember.roles.add(role).catch(() => {});
             try {

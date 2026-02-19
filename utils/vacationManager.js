@@ -250,27 +250,27 @@ async function notifyAdminsVacationEnded(client, guild, vacation, userId, reason
 
         let durationText = '';
         if (days > 0) {
-            durationText += `${days} d `;
+            durationText += `${days}d `;
         }
         if (hours > 0) {
-            durationText += `${hours} h `;
+            durationText += `${hours}h `;
         }
         if (minutes > 0) {
-            durationText += `${minutes} m `;
+            durationText += `${minutes}m `;
         }
         if (seconds > 0 || durationText === '') {
-            durationText += `${seconds} s`;
+            durationText += `${seconds}s`;
         }
         durationText = durationText.trim();
 
         const embed = colorManager.createEmbed()
-            .setTitle('إجازة منتهية')
+            .setTitle('Vacation')
             .setColor(colorManager.getColor('ended') || '#FFA500')
             .setDescription(`تم إنهاء إجازة العضو <@${userId}> بنجاح واستعادة صلاحياته.`)
             .addFields(
-                { name: 'العضو', value: `<@${userId}>`, inline: true },
-                { name: 'المدة', value: `\`${durationText}\``, inline: true },
-                { name: 'السبب', value: reason || 'غير محدد', inline: false },
+                { name: 'لإداري', value: `<@${userId}>`, inline: true },
+                { name: 'المدة', value: `___${durationText}___`, inline: true },
+                { name: 'الحالة', value: reason || 'غير محدد', inline: false },
                 { name: 'الرولات', value: rolesRestored.map(id => `<@&${id}>`).join(' ') || '`لا توجد`', inline: false },
                 { name: 'البدء', value: `<t:${Math.floor(new Date(vacation.startDate).getTime() / 1000)}:f>`, inline: true },
                 { name: 'الانتهاء', value: `<t:${Math.floor(actualEndDate.getTime() / 1000)}:f>`, inline: true }
@@ -623,7 +623,7 @@ async function endVacation(guild, client, userId, reason = 'انتهت فترة 
             try {
                 const user = await client.users.fetch(userId).catch(() => null);
 
-                let rolesText = 'لا توجد رولات';
+                let rolesText = '*لا توجد رولات*';
                 let detailsText = '';
 
                 // استخدام البيانات المحفوظة في JSON
@@ -636,19 +636,19 @@ async function endVacation(guild, client, userId, reason = 'انتهت فترة 
                         roleTexts.push(`${wasRestored ? '✅' : '⏳'} **${roleData.name}**`);
                     }
 
-                    rolesText = roleTexts.length > 0 ? roleTexts.join('\n') : 'جميع الرولات محذوفة';
+                    rolesText = roleTexts.length > 0 ? roleTexts.join('\n') : '*جميع الرولات محذوفه *';
                     
                     if (memberNotFound) {
                         // المستخدم غير موجود في السيرفر
-                        detailsText = `📦 تم حفظ ${savedRolesData.length} رول للاستعادة عند عودتك`;
+                        detailsText = `**📦 تم حفظ ${savedRolesData.length} رول للاستعادة عند عودتك**`;
                         if (deletedRoles.length > 0) {
-                            detailsText += `\n⚠️ ${deletedRoles.length} رول محذوف من السيرفر`;
+                            detailsText += `\n⚠️ **${deletedRoles.length} رول محذوف من السيرفر**`;
                         }
                     } else {
                         // المستخدم موجود في السيرفر
-                        detailsText = `المحفوظة: ${savedRolesData.length} | المستعادة: ${uniqueRolesRestored.length}`;
+                        detailsText = `** Saved : ${savedRolesData.length} | Restored : ${uniqueRolesRestored.length}**`;
                         if (deletedRoles.length > 0) {
-                            detailsText += ` | محذوفة: ${deletedRoles.length}`;
+                            detailsText += ` **| Deleted : ${deletedRoles.length}**`;
                         }
                     }
                 } else {
@@ -656,18 +656,17 @@ async function endVacation(guild, client, userId, reason = 'انتهت فترة 
                 }
 
                 const embed = new EmbedBuilder()
-                    .setTitle('انتهت الإجازة')
+                    .setTitle('Vacation Ended')
                     .setColor(colorManager.getColor('ended') || '#FFA500')
                     .setDescription(memberNotFound ? 
                         `**تم إنهاء إجازتك**\n\nستتم استعادة رولاتك تلقائياً عند عودتك للسيرفر.` : 
-                        `**انتهت إجازتك. مرحباً بعودتك!**`)
-                    .addFields(
-                        { name: '___سبب الإنهاء___', value: reason },
-                        { name: '___الرولات___', value: rolesText },
-                        { name: '___تفاصيل___', value: detailsText || 'لا توجد تفاصيل' }
-                    )
+                        `**انتهت إجازتك . مرحباً بعودتك**`)
+                        .addFields(
+                        { name: 'Alert', value: reason },
+                        { name: 'Roles', value: rolesText },
+                        { name: 'Detaila', value: detailsText || '*لا توجد تفاصيل*' }, )
+                .setThumbnail('https://cdn.discordapp.com/attachments/1393840634149736508/1468175299601633364/info_1.png?ex=6983104c&is=6981becc&hm=e5ec42e46368e60486eb8d9ec9289affbba2d16971897b9c60322179fd2db47c&')       
                     .setTimestamp();
-
                 if (user) {
                     await user.send({ embeds: [embed] });
                     console.log(`📧 تم إرسال رسالة انتهاء الإجازة للمستخدم ${user.tag} (${memberNotFound ? 'غير موجود في السيرفر' : 'موجود في السيرفر'})`);
@@ -767,7 +766,7 @@ async function checkVacations(client) {
                         continue;
                     }
                     
-                    const result = await endVacation(guild, client, userId, 'انتهت فترة الإجازة تلقائياً');
+                    const result = await endVacation(guild, client, userId, 'Auto');
 
                     if (result.success) {
                         console.log(`✅ تم إنهاء إجازة المستخدم ${userId} تلقائياً بنجاح`);
@@ -1072,22 +1071,23 @@ async function handleMemberJoin(member) {
                 const vacation = pendingRestoration.vacationData;
                 const rolesData = vacation.rolesData || [];
 
-                let rolesText = 'لا توجد أدوار';
+                let rolesText = '*لا توجد رولات*';
                 if (rolesData.length > 0) {
                     const roleTexts = rolesData
                         .filter(rd => rolesRestored.includes(rd.id))
                         .map(rd => `✅ **${rd.name}**`);
-                    rolesText = roleTexts.length > 0 ? roleTexts.join('\n') : 'جميع الرولات محذوفة';
+                    rolesText = roleTexts.length > 0 ? roleTexts.join('\n') : '*جميع الرولات محذوفة*';
                 }
 
                 const embed = new EmbedBuilder()
                     .setTitle(' Welcome Back !')
                     .setColor(colorManager.getColor('ended') || '#FFA500')
                     .setDescription(`**انتهت إجازتك أثناء غيابك وتم استعادة رولاتك الآن**`)
+                        .setThumbnail('https://cdn.discordapp.com/attachments/1393840634149736508/1468175299601633364/info_1.png?ex=6983104c&is=6981becc&hm=e5ec42e46368e60486eb8d9ec9289affbba2d16971897b9c60322179fd2db47c&')
                     .addFields(
-                        { name: '___سبب الإنهاء___', value: pendingRestoration.reason },
-                        { name: '___الرولات المستعادة___', value: rolesText },
-                        { name: '___تفاصيل___', value: `المستعادة: ${rolesRestored.length}${rolesFailed.length > 0 ? ` | فشلت: ${rolesFailed.length}` : ''}` }
+                        { name: 'Alert', value: pendingRestoration.reason },
+                        { name: 'Roles', value: rolesText },
+                        { name: 'Details', value: `**Restored : ${rolesRestored.length}${rolesFailed.length > 0 ? ` | Failed : ${rolesFailed.length}` : ''}**` }
                     )
                     .setTimestamp();
 

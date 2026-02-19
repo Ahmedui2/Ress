@@ -67,43 +67,6 @@ class DatabaseManager {
                     console.log('⚠️ Adding missing "image" column to responsibilities table');
                     await this.run('ALTER TABLE responsibilities ADD COLUMN image TEXT');
                 }
-                const ticketTableInfo = await this.all("PRAGMA table_info(tickets)");
-                if (ticketTableInfo.length > 0) {
-                    const hasCustomReason = ticketTableInfo.some(col => col.name === 'custom_reason');
-                    if (!hasCustomReason) {
-                        console.log('⚠️ Adding missing "custom_reason" column to tickets table');
-                        await this.run('ALTER TABLE tickets ADD COLUMN custom_reason TEXT');
-                    }
-                    const hasResponsibility = ticketTableInfo.some(col => col.name === 'responsibility');
-                    if (!hasResponsibility) {
-                        console.log('⚠️ Adding missing "responsibility" column to tickets table');
-                        await this.run('ALTER TABLE tickets ADD COLUMN responsibility TEXT');
-                    }
-                    const hasPanelId = ticketTableInfo.some(col => col.name === 'panel_id');
-                    if (!hasPanelId) {
-                        console.log('⚠️ Adding missing "panel_id" column to tickets table');
-                        await this.run('ALTER TABLE tickets ADD COLUMN panel_id TEXT');
-                    }
-                }
-
-                const reasonTableInfo = await this.all("PRAGMA table_info(ticket_reasons)");
-                if (reasonTableInfo.length > 0) {
-                    const hasAcceptanceMode = reasonTableInfo.some(col => col.name === 'acceptance_mode');
-                    if (!hasAcceptanceMode) {
-                        console.log('⚠️ Adding missing "acceptance_mode" column to ticket_reasons table');
-                        await this.run('ALTER TABLE ticket_reasons ADD COLUMN acceptance_mode TEXT');
-                    }
-                    const hasInsideMessage = reasonTableInfo.some(col => col.name === 'inside_ticket_message');
-                    if (!hasInsideMessage) {
-                        console.log('⚠️ Adding missing "inside_ticket_message" column to ticket_reasons table');
-                        await this.run('ALTER TABLE ticket_reasons ADD COLUMN inside_ticket_message TEXT');
-                    }
-                    const hasFormSchema = reasonTableInfo.some(col => col.name === 'form_schema');
-                    if (!hasFormSchema) {
-                        console.log('⚠️ Adding missing "form_schema" column to ticket_reasons table');
-                        await this.run('ALTER TABLE ticket_reasons ADD COLUMN form_schema TEXT');
-                    }
-                }
             } catch (migrationError) {
                 console.error('❌ Migration Error:', migrationError);
             }
@@ -245,98 +208,6 @@ class DatabaseManager {
             `CREATE TABLE IF NOT EXISTS responsibilities (
                 name TEXT PRIMARY KEY,
                 config TEXT
-            )`,
-            // جداول نظام التكت
-            `CREATE TABLE IF NOT EXISTS ticket_settings (
-                setting_key TEXT PRIMARY KEY,
-                setting_value TEXT,
-                updated_at INTEGER
-            )`,
-            `CREATE TABLE IF NOT EXISTS ticket_reasons (
-                reason_id TEXT PRIMARY KEY,
-                reason_name TEXT NOT NULL,
-                reason_emoji TEXT DEFAULT '🎫',
-                reason_description TEXT,
-                category_id TEXT,
-                acceptance_channel_id TEXT,
-                acceptance_mode TEXT,
-                ticket_name_format TEXT DEFAULT 't-{number}',
-                ticket_message TEXT,
-                acceptance_message TEXT,
-                inside_ticket_message TEXT,
-                form_schema TEXT,
-                role_to_give TEXT,
-                display_roles TEXT,
-                created_at INTEGER DEFAULT (strftime('%s', 'now')),
-                updated_at INTEGER
-            )`,
-            `CREATE TABLE IF NOT EXISTS tickets (
-                ticket_id TEXT PRIMARY KEY,
-                ticket_number INTEGER,
-                channel_id TEXT UNIQUE,
-                user_id TEXT,
-                reason_id TEXT,
-                custom_reason TEXT,
-                staff_id TEXT,
-                status TEXT DEFAULT 'open',
-                category_id TEXT,
-                responsibility TEXT,
-                panel_id TEXT,
-                claimed_by TEXT,
-                created_at INTEGER DEFAULT (strftime('%s', 'now')),
-                closed_at INTEGER,
-                closed_by TEXT
-            )`,
-            `CREATE TABLE IF NOT EXISTS ticket_blocks (
-                user_id TEXT PRIMARY KEY,
-                blocked_by TEXT,
-                reason TEXT,
-                blocked_at INTEGER DEFAULT (strftime('%s', 'now'))
-            )`,
-            `CREATE TABLE IF NOT EXISTS ticket_cooldowns (
-                user_id TEXT PRIMARY KEY,
-                cooldown_type TEXT,
-                expires_at INTEGER
-            )`,
-            `CREATE TABLE IF NOT EXISTS ticket_admin_roles (
-                role_id TEXT PRIMARY KEY,
-                added_by TEXT,
-                added_at INTEGER DEFAULT (strftime('%s', 'now'))
-            )`,
-            `CREATE TABLE IF NOT EXISTS ticket_managers (
-                manager_id TEXT,
-                manager_type TEXT,
-                responsibility TEXT,
-                added_by TEXT,
-                added_at INTEGER DEFAULT (strftime('%s', 'now')),
-                PRIMARY KEY (manager_id, responsibility)
-            )`,
-            `CREATE TABLE IF NOT EXISTS ticket_points (
-                user_id TEXT PRIMARY KEY,
-                total_points INTEGER DEFAULT 0,
-                tickets_handled INTEGER DEFAULT 0,
-                last_point_at INTEGER,
-                updated_at INTEGER DEFAULT (strftime('%s', 'now'))
-            )`,
-            `CREATE TABLE IF NOT EXISTS ticket_manager_points (
-                user_id TEXT PRIMARY KEY,
-                total_points INTEGER DEFAULT 0,
-                tickets_deleted INTEGER DEFAULT 0,
-                last_point_at INTEGER,
-                updated_at INTEGER DEFAULT (strftime('%s', 'now'))
-            )`,
-            `CREATE TABLE IF NOT EXISTS ticket_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ticket_id TEXT,
-                user_id TEXT,
-                staff_id TEXT,
-                reason_id TEXT,
-                manager_id TEXT,
-                points_given INTEGER DEFAULT 0,
-                action_type TEXT,
-                transcript_path TEXT,
-                metadata TEXT,
-                created_at INTEGER DEFAULT (strftime('%s', 'now'))
             )`,
             // جدول الجلسات الصوتية
             `CREATE TABLE IF NOT EXISTS voice_sessions (
@@ -491,11 +362,7 @@ class DatabaseManager {
             'CREATE INDEX IF NOT EXISTS idx_channel_users_channel_id ON channel_users(channel_id)',
             'CREATE INDEX IF NOT EXISTS idx_user_totals_last_activity ON user_totals(last_activity)',
             'CREATE INDEX IF NOT EXISTS idx_message_channels_user_id ON message_channels(user_id)',
-            'CREATE INDEX IF NOT EXISTS idx_user_levels_user_id ON user_levels(user_id)',
-            'CREATE INDEX IF NOT EXISTS idx_tickets_user_id ON tickets(user_id)',
-            'CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)',
-            'CREATE INDEX IF NOT EXISTS idx_ticket_logs_ticket_id ON ticket_logs(ticket_id)',
-            'CREATE INDEX IF NOT EXISTS idx_ticket_logs_created_at ON ticket_logs(created_at)'
+            'CREATE INDEX IF NOT EXISTS idx_user_levels_user_id ON user_levels(user_id)'
         ];
 
         for (const sql of indexes) {
