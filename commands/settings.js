@@ -488,40 +488,12 @@ const deleteButton = new ButtonBuilder()
 
       activeCollectors.set(responsibilityName, messageCollector);
 
-      // إضافة collector للأزرار في صفحة إدارة المسؤولين
-      const buttonFilter = i => i.user.id === interaction.user.id && i.customId.startsWith('search_');
-      const buttonCollector = message.channel.createMessageComponentCollector({ 
-        filter: buttonFilter,
-        time: 3600000 // ساعة واحدة
-      });
-
-      buttonCollector.on('collect', async (buttonInt) => {
-        try {
-          if (buttonInt.customId === `search_${responsibilityName}`) {
-            // إظهار نافذة البحث عن الأعضاء
-            const modal = new ModalBuilder()
-              .setCustomId(`search_members_modal_${responsibilityName}`)
-              .setTitle('بحث عن أعضاء');
-
-            const searchInput = new TextInputBuilder()
-              .setCustomId('search_query')
-              .setLabel('اكتب اسم العضو للبحث')
-              .setStyle(TextInputStyle.Short)
-              .setRequired(true)
-              .setPlaceholder('مثال: Ahmed, محمد, Ali');
-
-            const actionRow = new ActionRowBuilder().addComponents(searchInput);
-            modal.addComponents(actionRow);
-            await buttonInt.showModal(modal);
-          }
-        } catch (error) {
-          console.error('خطأ في معالج أزرار إدارة المسؤولين:', error);
-        }
-      });
-
-      messageCollector.on('end', () => {
-        buttonCollector.stop();
-      });
+      // ملاحظة مهمة:
+      // زر البحث (search_*) تتم معالجته في الـ collector الرئيسي لأمر settings.
+      // عدم إنشاء collector إضافي هنا يمنع تكرار التعامل مع نفس الـ interaction
+      // وبالتالي يمنع أخطاء:
+      // - Interaction has already been acknowledged (40060)
+      // - Unknown interaction (10062)
 
       messageCollector.on('collect', async (msg) => {
         try {
