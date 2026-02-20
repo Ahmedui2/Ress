@@ -1002,8 +1002,10 @@ client.once(Events.ClientReady, async () => {
     // تشغيل المزامنة فور الجاهزية
     await syncAllResponsibilityRoles(client);
 
-    // فحص وتحديث رسالة المسؤوليات عند كل تشغيل/إعادة تشغيل
-    await ensureRespMessageFreshness(client, 'startup');
+    // فحص وتحديث رسالة المسؤوليات بعد بدء التشغيل بدقيقتين (لتجنب الضغط المبكر)
+    setTimeout(async () => {
+      await ensureRespMessageFreshness(client, 'startup+2m');
+    }, 2 * 60 * 1000);
   } catch (dbError) {
     console.error('❌ Error initializing database/responsibilities:', dbError);
   }
@@ -3995,11 +3997,13 @@ client.on('interactionCreate', async (interaction) => {
         interaction.customId === 'edit_category' ||
         interaction.customId === 'delete_category' ||
         interaction.customId === 'manage_category_resps' ||
+        interaction.customId === 'reorder_category_resps' ||
         interaction.customId.startsWith('select_category_') ||
         interaction.customId.startsWith('confirm_delete_') ||
         interaction.customId === 'cancel_delete' ||
         interaction.customId.startsWith('save_category_resps_') ||
-        interaction.customId.startsWith('add_resps_to_category_')
+        interaction.customId.startsWith('add_resps_to_category_') ||
+        interaction.customId.startsWith('category_resps_nav_')
     )) {
         const ctgCommand = client.commands.get('ctg');
         if (ctgCommand && typeof ctgCommand.handleInteraction === 'function') {
@@ -4010,7 +4014,8 @@ client.on('interactionCreate', async (interaction) => {
 
     // Handle category modal submissions
     if (interaction.isModalSubmit() && (interaction.customId === 'add_category_modal' ||
-        interaction.customId.startsWith('edit_category_modal_'))) {
+        interaction.customId.startsWith('edit_category_modal_') ||
+        interaction.customId === 'reorder_category_resps_modal')) {
         const ctgCommand = client.commands.get('ctg');
         if (ctgCommand && typeof ctgCommand.handleModalSubmit === 'function') {
             await ctgCommand.handleModalSubmit(interaction, client);
