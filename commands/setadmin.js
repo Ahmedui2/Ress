@@ -94,6 +94,14 @@ function loadAdminApplicationSettings() {
     }
 }
 
+
+
+function normalizeSelectLabel(value, fallback) {
+    const text = String(value || '').trim();
+    if (!text) return fallback;
+    return text.slice(0, 100);
+}
+
 // دالة لحفظ إعدادات التقديم الإداري
 function saveAdminApplicationSettings(data) {
     try {
@@ -450,9 +458,9 @@ async function handleSelectRoles(interaction, settings) {
             .setPlaceholder('اختر الرولات التي يمكنها الموافقة على الطلبات')
             .setMaxValues(Math.min(roles.length, 25))
             .addOptions(
-                roles.map(role => ({
-                    label: role.name,
-                    description: `أعضاء: ${role.members.size}`,
+                roles.map((role, index) => ({
+                    label: normalizeSelectLabel(role.name, `Role ${index + 1}`),
+                    description: normalizeSelectLabel(`أعضاء: ${role.members.size}`, 'أعضاء: 0'),
                     value: role.id
                 }))
             );
@@ -622,7 +630,9 @@ async function handleSelectResponsibility(interaction, settings) {
         }
 
         const responsibilitiesData = JSON.parse(fs.readFileSync(responsibilitiesPath, 'utf8'));
-        const allResponsibilities = Object.keys(responsibilitiesData);
+        const allResponsibilities = Object.keys(responsibilitiesData)
+            .map(name => String(name || '').trim())
+            .filter(Boolean);
 
         if (allResponsibilities.length === 0) {
             return interaction.update({
@@ -647,9 +657,9 @@ async function handleSelectResponsibility(interaction, settings) {
                 .setCustomId('select_approver_responsibility')
                 .setPlaceholder('اختر المسؤولية التي يمكن لأصحابها الموافقة')
                 .addOptions(
-                    responsibilities.map(resp => ({
-                        label: resp,
-                        description: `أصحاب مسؤولية ${resp}`,
+                    responsibilities.map((resp, index) => ({
+                        label: normalizeSelectLabel(resp, `Responsibility ${index + 1}`),
+                        description: normalizeSelectLabel(`أصحاب مسؤولية ${resp}`, 'أصحاب المسؤولية'),
                         value: resp
                     }))
                 );
@@ -2004,9 +2014,9 @@ async function handleSetAcceptanceRoleInteraction(interaction, settings) {
             .setPlaceholder('اختر الرول الذي يُعطى عند القبول')
             .setMaxValues(Math.min(roles.length, 25))
             .addOptions(
-                roles.map(role => ({
-                    label: role.name,
-                    description: `أعضاء: ${role.members.size}`,
+                roles.map((role, index) => ({
+                    label: normalizeSelectLabel(role.name, `Role ${index + 1}`),
+                    description: normalizeSelectLabel(`أعضاء: ${role.members.size}`, 'أعضاء: 0'),
                     value: role.id
                 }))
             );

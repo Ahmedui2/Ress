@@ -103,6 +103,11 @@ async function handleMessage(message) {
 
         const normalizedContent = message.content.toLowerCase();
         const exceptions = settings.settings.exceptions || [];
+        const exceptionRoleIds = new Set(
+            exceptions
+                .map((entry) => entry?.roleId)
+                .filter((roleId) => typeof roleId === 'string' && roleId.length > 0)
+        );
         const matchedException = exceptions
             .map((entry) => {
                 if (!entry || !entry.roleId || !Array.isArray(entry.keywords)) return null;
@@ -113,9 +118,12 @@ async function handleMessage(message) {
             .find(Boolean);
         const isExceptionAllowed = matchedException && !targetMember.roles.cache.has(matchedException.roleId);
 
-        // Check if member already has any of the interactive roles
-        const hasInteractiveRole = targetMember.roles.cache.some(r => settings.settings.interactiveRoles.includes(r.id));
-        if (hasInteractiveRole && !isExceptionAllowed) {
+        // Check if member already has any *non-exception* interactive role.
+        // Exception roles are allowed to coexist and should not block normal requests.
+        const hasNonExceptionInteractiveRole = targetMember.roles.cache.some(
+            (r) => settings.settings.interactiveRoles.includes(r.id) && !exceptionRoleIds.has(r.id)
+        );
+        if (hasNonExceptionInteractiveRole && !isExceptionAllowed) {
             const reply = await message.channel.send(`⚠️ <@${targetId}> لديه بالفعل رولات تفاعلية.`);
             setTimeout(() => reply.delete().catch(() => {}), 5000);
             return;
@@ -194,15 +202,15 @@ async function handleMessage(message) {
                 ]);
 
             const row2 = new ActionRowBuilder().addComponents(detailsMenu);
+            if (globalImageUrl) {
+                statsEmbed.setImage(globalImageUrl);
+            }
+
             const messageOptions = {
                 content: `**طلب مستثنى من <@${message.author.id}> بخصوص <@${targetId}>**`,
                 embeds: [statsEmbed],
                 components: [row1, row2]
             };
-
-            if (globalImageUrl) {
-                messageOptions.files = [globalImageUrl];
-            }
 
             try {
                 sentMessage = await message.channel.send(messageOptions);
@@ -293,16 +301,15 @@ async function handleMessage(message) {
 
         const row2 = new ActionRowBuilder().addComponents(detailsMenu);
 
+        if (globalImageUrl) {
+            statsEmbed.setImage(globalImageUrl);
+        }
+
         const messageOptions = {
             content: `**طلب جديد من <@${message.author.id}> بخصوص <@${targetId}>**`,
             embeds: [statsEmbed],
             components: [row1, row2]
         };
-
-        // إرسال الصورة كملف مرفق إذا وجدت (بدلاً من رابط)
-        if (globalImageUrl) {
-            messageOptions.files = [globalImageUrl];
-        }
 
         const sentMessage = await message.channel.send(messageOptions);
 
