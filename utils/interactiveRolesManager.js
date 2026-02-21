@@ -202,15 +202,15 @@ async function handleMessage(message) {
                 ]);
 
             const row2 = new ActionRowBuilder().addComponents(detailsMenu);
+            if (globalImageUrl) {
+                statsEmbed.setImage(globalImageUrl);
+            }
+
             const messageOptions = {
                 content: `**طلب مستثنى من <@${message.author.id}> بخصوص <@${targetId}>**`,
                 embeds: [statsEmbed],
                 components: [row1, row2]
             };
-
-            if (globalImageUrl) {
-                messageOptions.files = [globalImageUrl];
-            }
 
             try {
                 sentMessage = await message.channel.send(messageOptions);
@@ -301,16 +301,15 @@ async function handleMessage(message) {
 
         const row2 = new ActionRowBuilder().addComponents(detailsMenu);
 
+        if (globalImageUrl) {
+            statsEmbed.setImage(globalImageUrl);
+        }
+
         const messageOptions = {
             content: `**طلب جديد من <@${message.author.id}> بخصوص <@${targetId}>**`,
             embeds: [statsEmbed],
             components: [row1, row2]
         };
-
-        // إرسال الصورة كملف مرفق إذا وجدت (بدلاً من رابط)
-        if (globalImageUrl) {
-            messageOptions.files = [globalImageUrl];
-        }
 
         const sentMessage = await message.channel.send(messageOptions);
 
