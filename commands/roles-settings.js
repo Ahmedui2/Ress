@@ -18,8 +18,10 @@ const pendingPanelSetup = new Map();
 const pendingPanelTimeouts = new Map();
 const pendingBulkDeletes = new Map();
 const pendingRoleApprovals = new Set();
+const restoreSessions = new Map();
 const adminRolesPath = path.join(__dirname, '..', 'data', 'adminRoles.json');
 const REQUEST_REAPPLY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const RESTORE_PAGE_SIZE = 25;
 
 function scheduleDelete(message, delay = 180000) {
   if (!message) return;
@@ -243,6 +245,64 @@ function buildAdminRoleMenu(action, userId, guild, query = '') {
     .addOptions(roleOptions);
 
   return new ActionRowBuilder().addComponents(menu);
+}
+
+function getRestorableDeletedRoles(guildId) {
+  const deletedRoles = getDeletedRoles(guildId)
+    .sort((a, b) => (b.deletedAt || b.updatedAt || 0) - (a.deletedAt || a.updatedAt || 0));
+
+  const dedupedByOwner = new Map();
+  for (const entry of deletedRoles) {
+    if (!entry?.roleId) continue;
+    const ownerKey = entry.ownerId ? `owner:${entry.ownerId}` : `role:${entry.roleId}`;
+    if (!dedupedByOwner.has(ownerKey)) {
+      dedupedByOwner.set(ownerKey, entry);
+    }
+  }
+
+  return [...dedupedByOwner.values()]
+    .filter(entry => !(entry.ownerId && findRoleByOwner(guildId, entry.ownerId)))
+    .sort((a, b) => (b.deletedAt || b.updatedAt || 0) - (a.deletedAt || a.updatedAt || 0));
+}
+
+function buildRestoreComponents(sessionId, userId, deletedRoles, page = 0) {
+  if (!deletedRoles.length) return { content: '❌ لا توجد رولات محذوفة.', components: [] };
+
+  const totalPages = Math.max(1, Math.ceil(deletedRoles.length / RESTORE_PAGE_SIZE));
+  const safePage = Math.min(Math.max(page, 0), totalPages - 1);
+  const start = safePage * RESTORE_PAGE_SIZE;
+  const currentPageRoles = deletedRoles.slice(start, start + RESTORE_PAGE_SIZE);
+  const options = currentPageRoles.map(entry => ({
+    label: (entry.name || entry.roleId).slice(0, 100),
+    value: entry.roleId,
+    description: `مالك: ${entry.ownerId || 'غير معروف'}`.slice(0, 100)
+  }));
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`customroles_restore_select_${sessionId}_${userId}`)
+    .setPlaceholder('اختر رولاً للاسترجاع...')
+    .setMinValues(1)
+    .setMaxValues(1)
+    .addOptions(options);
+
+  const navRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`customroles_restore_prev_${sessionId}`)
+      .setLabel('السابق')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(safePage === 0),
+    new ButtonBuilder()
+      .setCustomId(`customroles_restore_next_${sessionId}`)
+      .setLabel('التالي')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(safePage >= totalPages - 1)
+  );
+
+  return {
+    content: `اختر الرول المطلوب لاسترجاعه:\nالصفحة **${safePage + 1}/${totalPages}** • العدد **${deletedRoles.length}**`,
+    components: [new ActionRowBuilder().addComponents(menu), navRow],
+    page: safePage
+  };
 }
 
 async function showCustomRoleSearchModal(interaction, action) {
@@ -1745,35 +1805,83 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       return;
     }
     await interaction.deferReply({ ephemeral: true });
-    const deleted = getDeletedRoles(interaction.guild.id);
+    const deleted = getRestorableDeletedRoles(interaction.guild.id);
     if (deleted.length === 0) {
       await interaction.editReply({ content: '❌ لا توجد رولات محذوفة.' });
       return;
     }
-    const options = deleted.slice(0, 25).map(entry => ({
-      label: entry.name || entry.roleId,
-      value: entry.roleId,
-      description: `مالك: ${entry.ownerId}`
-    }));
-    const menu = new StringSelectMenuBuilder()
-      .setCustomId(`customroles_restore_select_${interaction.user.id}`)
-      .setPlaceholder('اختر رولاً للاسترجاع...')
-      .setMinValues(1)
-      .setMaxValues(1)
-      .addOptions(options);
-    const row = new ActionRowBuilder().addComponents(menu);
-    await interaction.editReply({ content: 'اختر الرول المطلوب لاسترجاعه:', components: [row] });
+    const sessionId = `${interaction.user.id}_${Date.now().toString(36)}`;
+    restoreSessions.set(sessionId, {
+      guildId: interaction.guild.id,
+      userId: interaction.user.id,
+      page: 0,
+      updatedAt: Date.now()
+    });
+    const render = buildRestoreComponents(sessionId, interaction.user.id, deleted, 0);
+    await interaction.editReply({ content: render.content, components: render.components });
+    return;
+  }
+
+  if (interaction.customId.startsWith('customroles_restore_prev_') || interaction.customId.startsWith('customroles_restore_next_')) {
+    const isNext = interaction.customId.startsWith('customroles_restore_next_');
+    const sessionId = interaction.customId.replace(isNext ? 'customroles_restore_next_' : 'customroles_restore_prev_', '');
+    const session = restoreSessions.get(sessionId);
+    if (!session) {
+      await interaction.reply({ content: '❌ انتهت الجلسة، أعد فتح قائمة الاسترجاع.', ephemeral: true });
+      return;
+    }
+    if (session.userId !== interaction.user.id) {
+      await interaction.reply({ content: '❌ هذا الزر ليس لك.', ephemeral: true });
+      return;
+    }
+
+    await interaction.deferUpdate();
+    const deleted = getRestorableDeletedRoles(session.guildId);
+    if (!deleted.length) {
+      restoreSessions.delete(sessionId);
+      await interaction.editReply({ content: '❌ لا توجد رولات محذوفة حالياً.', components: [] });
+      return;
+    }
+
+    const nextPage = isNext ? session.page + 1 : session.page - 1;
+    const render = buildRestoreComponents(sessionId, session.userId, deleted, nextPage);
+    session.page = render.page;
+    session.updatedAt = Date.now();
+    restoreSessions.set(sessionId, session);
+    await interaction.editReply({ content: render.content, components: render.components });
     return;
   }
 
   if (interaction.isStringSelectMenu() && interaction.customId.startsWith('customroles_restore_select_')) {
-    const targetUserId = interaction.customId.split('_').pop();
+    const parts = interaction.customId.split('_');
+    const targetUserId = parts.pop();
+    const sessionId = parts.slice(3).join('_');
+    const session = restoreSessions.get(sessionId);
+    if (!session) {
+      await interaction.reply({ content: '❌ انتهت الجلسة، أعد فتح قائمة الاسترجاع.', ephemeral: true });
+      return;
+    }
     if (targetUserId !== interaction.user.id) {
       await interaction.reply({ content: '❌ هذا الاختيار ليس لك.', ephemeral: true });
       return;
     }
     await interaction.deferUpdate();
     const roleId = interaction.values[0];
+    const validDeletedRoles = getRestorableDeletedRoles(session.guildId);
+    const stillValid = validDeletedRoles.some(entry => entry.roleId === roleId);
+    if (!stillValid) {
+      if (!validDeletedRoles.length) {
+        restoreSessions.delete(sessionId);
+        await interaction.editReply({ content: '❌ لا توجد رولات محذوفة حالياً.', components: [] });
+        return;
+      }
+      const render = buildRestoreComponents(sessionId, session.userId, validDeletedRoles, session.page);
+      session.page = render.page || 0;
+      restoreSessions.set(sessionId, session);
+      await interaction.editReply({ content: '⚠️ تم تحديث القائمة، اختر أحدث رول مفقود للمالك.', components: render.components });
+      return;
+    }
+
     const existingRole = interaction.guild.roles.cache.get(roleId);
     if (existingRole) {
       const existingEntry = getDeletedRoleEntry(roleId);
@@ -1788,6 +1896,7 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       if (restored) {
         restored.updatedAt = Date.now();
         addRoleEntry(roleId, restored);
+        restoreSessions.delete(sessionId);
         await interaction.editReply({
           embeds: [buildAdminSummaryEmbed('✅ تم استرجاع الرول.', [
             { name: 'الرول', value: `<@&${roleId}>`, inline: true },
@@ -1868,6 +1977,7 @@ async function handleCustomRolesInteraction(interaction, client, BOT_OWNERS) {
       memberMeta: restoredMemberMeta
     });
     removeDeletedRoleEntry(roleId);
+    restoreSessions.delete(sessionId);
 
     await interaction.editReply({
       embeds: [buildAdminSummaryEmbed('✅ تم إنشاء الرول واسترجاعه.', [
