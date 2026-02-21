@@ -143,6 +143,16 @@ function deleteRoleEntry(roleId, deletedBy) {
   const data = getRolesData();
   const entry = data.roles[roleId];
   if (!entry) return null;
+
+  if (entry.guildId && entry.ownerId) {
+    for (const [deletedRoleId, deletedEntry] of Object.entries(data.deleted)) {
+      if (deletedRoleId === roleId) continue;
+      if (deletedEntry.guildId === entry.guildId && deletedEntry.ownerId === entry.ownerId) {
+        delete data.deleted[deletedRoleId];
+      }
+    }
+  }
+
   const deletedEntry = {
     ...entry,
     deletedAt: Date.now(),
