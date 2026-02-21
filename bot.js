@@ -2578,8 +2578,43 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
                 const interactiveRoles = interactiveData?.settings?.interactiveRoles || [];
                 const pendingRequests = interactiveData?.pendingRequests || {};
                 const pendingExceptionRequests = interactiveData?.pendingExceptionRequests || {};
-                const hasPendingInteractive = Boolean(pendingRequests[userId])
+                let hasPendingInteractive = Boolean(pendingRequests[userId])
                     || Object.values(pendingExceptionRequests).some(req => req?.targetId === userId);
+
+                // Validate pending interactive request to avoid false positives from stale JSON entries.
+                if (hasPendingInteractive && pendingRequests[userId]) {
+                    const requestChannelId = interactiveData?.settings?.requestChannel;
+                    const requestChannel = requestChannelId ? newMember.guild.channels.cache.get(requestChannelId) : null;
+                    const pendingRecord = pendingRequests[userId];
+                    let validPendingRequest = false;
+
+                    if (requestChannel && pendingRecord?.messageId) {
+                        const pendingMessage = await requestChannel.messages.fetch(pendingRecord.messageId).catch(() => null);
+                        validPendingRequest = Boolean(pendingMessage);
+                    }
+
+                    if (!validPendingRequest && requestChannel) {
+                        const recentMessages = await requestChannel.messages.fetch({ limit: 50 }).catch(() => null);
+                        if (recentMessages) {
+                            validPendingRequest = recentMessages.some((msg) => {
+                                const hasTarget = typeof msg.content === 'string' && msg.content.includes(`<@${userId}>`);
+                                const hasInteractiveControls = Array.isArray(msg.components) && msg.components.some((row) =>
+                                    Array.isArray(row.components) && row.components.some((component) => {
+                                        const customId = component?.customId || '';
+                                        return customId.startsWith('int_approve_') || customId.startsWith('int_reject_trigger_');
+                                    })
+                                );
+                                return hasTarget && hasInteractiveControls;
+                            });
+                        }
+                    }
+
+                    if (!validPendingRequest) {
+                        delete interactiveData.pendingRequests[userId];
+                        hasPendingInteractive = Object.values(pendingExceptionRequests).some(req => req?.targetId === userId);
+                        fs.writeFileSync(interactiveRolesPath, JSON.stringify(interactiveData, null, 2));
+                    }
+                }
 
                 if (interactiveRoles.length > 0 && hasPendingInteractive) {
                     for (const [roleId, role] of addedRoles) {

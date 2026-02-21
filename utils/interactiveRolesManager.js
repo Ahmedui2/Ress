@@ -56,6 +56,60 @@ function saveSettings(data) {
     }
 }
 
+async function hasRecentPendingRequestMessage(guild, requestChannelId, targetId, limit = 50) {
+    if (!requestChannelId) return false;
+
+    const requestChannel = guild.channels.cache.get(requestChannelId);
+    if (!requestChannel || typeof requestChannel.messages?.fetch !== 'function') return false;
+
+    try {
+        const recentMessages = await requestChannel.messages.fetch({ limit });
+        return recentMessages.some((msg) => {
+            const hasTargetInContent = typeof msg.content === 'string' && msg.content.includes(`<@${targetId}>`);
+            const hasInteractiveRequestEmbed = msg.embeds?.some((embed) => {
+                const title = (embed.title || '').toLowerCase();
+                return title.includes('طلب رول تفاعلي');
+            });
+            const hasReviewComponents = Array.isArray(msg.components)
+                && msg.components.some((row) => Array.isArray(row.components)
+                    && row.components.some((component) => {
+                        const customId = component?.customId || '';
+                        return customId.startsWith('int_approve_') || customId.startsWith('int_reject_trigger_');
+                    }));
+
+            return hasTargetInContent && hasInteractiveRequestEmbed && hasReviewComponents;
+        });
+    } catch (error) {
+        console.error('Error while scanning recent interactive request messages:', error);
+        return false;
+    }
+}
+
+async function hasValidPendingRequest(settings, guild, targetId) {
+    const pendingRequest = settings.pendingRequests?.[targetId];
+    if (!pendingRequest) return false;
+
+    const requestChannelId = settings.settings?.requestChannel;
+    const requestChannel = requestChannelId ? guild.channels.cache.get(requestChannelId) : null;
+
+    if (requestChannel && pendingRequest.messageId) {
+        try {
+            const pendingMessage = await requestChannel.messages.fetch(pendingRequest.messageId);
+            if (pendingMessage) return true;
+        } catch (error) {
+            // Request message no longer exists, continue to fallback checks.
+        }
+    }
+
+    const foundRecentRequest = await hasRecentPendingRequestMessage(guild, requestChannelId, targetId, 50);
+    if (foundRecentRequest) return true;
+
+    // The pending entry is stale and should be cleaned up.
+    delete settings.pendingRequests[targetId];
+    saveSettings(settings);
+    return false;
+}
+
 async function handleMessage(message) {
     if (message.author.bot) return;
     
@@ -245,8 +299,8 @@ async function handleMessage(message) {
             return;
         }
 
-        // Check if already pending (In JSON)
-        if (settings.pendingRequests[targetId]) {
+        // Check if already pending (In JSON + channel validation to avoid stale entries)
+        if (await hasValidPendingRequest(settings, message.guild, targetId)) {
             const reply = await message.channel.send(`⚠️ <@${targetId}> لديه طلب معلق بالفعل.`);
             setTimeout(() => reply.delete().catch(() => {}), 5000);
             return;
